@@ -230,9 +230,8 @@ def main():
         client.events.append(event)
         await interaction.response.send_message(f'{interaction.user.mention} wants to create an event called {event.name}. Check your DMs to share your availability!')
 
-        button_flag = False
-
         for participant in event.participants:
+            button_flag = False
             await participant.member.send('Loading buttons, please wait!')
 
             for button_label in timestamps.all_timestamps:
@@ -241,8 +240,7 @@ def main():
                 label_minutes = int(label_time[2])
 
                 if not button_flag:
-                    # I hate this
-                    # TODO: verify if it even works
+                    # I hate this but it seems to be working
                     button_flag = (hour == 0 and minutes < 30 and label_hour == 0 and label_minutes == 30) or \
                                   (hour == 0 and minutes < 30 and label_hour == 1) or \
                                   (hour == 0 and minutes >= 30 and label_hour == 1) or \
