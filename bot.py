@@ -128,9 +128,11 @@ def main():
             self.created = False
             self.start_time = None
             self.end_time = None
+            self.valid = True
 
         def check_times(self):
             self.changed = False
+            self.ready_to_create = False
             for participant in self.participants:
                 if not participant.answered:
                     return
@@ -147,7 +149,7 @@ def main():
                     break
             if shared_time_slot == '':
                 print('Unable to find common availability')
-                self.interaction.followup(f'Failed to find common availability for {self.name}.')
+                self.valid = False
                 return
             partitioned_shared_time_slot = shared_time_slot.partition(':')
             hour = int(partitioned_shared_time_slot[0])
@@ -204,8 +206,8 @@ def main():
 
     @client.event
     async def on_ready():
-        if not create_guild.is_running():
-            create_guild.start()
+        if not create_guild_event.is_running():
+            create_guild_event.start()
         print(f'{client.user} has connected to Discord!')
 
     @client.tree.command(name='schedule', description='Create a scheduling event.')
@@ -255,20 +257,28 @@ def main():
             await participant.member.send(f'Select all of the 30 minute blocks you will be available to attend {event.name}!')
         print(f'Done DMing participants')
 
-    
-    @tasks.loop(minutes=1)
-    async def create_guild():
+
+    @tasks.loop(seconds=15)
+    async def create_guild_event():
+        for event in client.events.copy():
+            if event.created or not event.valid:
+                if not event.valid:
+                    await event.interaction.followup.send('Not everyone is available at any time. The event scheduling has been cancelled.')
+                client.events.remove(event)
+                print(f'Removed event {event.name}')
+
         for event in client.events:
             if event.ready_to_create and not event.created:
                 print(f'Creating guild event {event.name} starting at {event.start_time} and ending at {event.end_time}')
                 privacy_level = discord.PrivacyLevel.guild_only
                 await event.guild.create_scheduled_event(name=event.name, description='Automatically generated event', start_time=event.start_time, end_time=event.end_time, channel=event.voice_channel, privacy_level=privacy_level)
+                print(f'Created event {event.name}')
                 event.ready_to_create = False
                 event.created = True
                 mentions = ''
                 for participant in event.participants:
                     mentions += f'{participant.member.mention} '
-                event.interaction.followup(f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time}.')
+                await event.interaction.followup.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time}.')
 
     client.run(discord_token)
 
