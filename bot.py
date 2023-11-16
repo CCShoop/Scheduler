@@ -132,7 +132,7 @@ def main():
 
         def check_times(self):
             # Find first available shared time block and configure start/end times
-            print('Comparing availabilities')
+            print(f'Comparing availabilities for {self.name}')
             shared_time_slot = ''
             for time_slot in timestamps.all_timestamps:
                 shared_availability = True
@@ -142,7 +142,7 @@ def main():
                     shared_time_slot = time_slot
                     break
             if shared_time_slot == '':
-                print('Unable to find common availability')
+                print(f'Unable to find common availability for {self.name}')
                 self.valid = False
                 return
             partitioned_shared_time_slot = shared_time_slot.partition(':')
@@ -176,6 +176,7 @@ def main():
                 else:
                     button.style = ButtonStyle.red
                 await interaction.response.edit_message(view=self)
+                print(f'{self.participant.name} toggled availability to {self.participant.is_available(self.label)} at {self.label} for {self.event.name}')
 
             button.callback = button_callback
             self.add_item(button)
@@ -200,6 +201,7 @@ def main():
                 else:
                     button.style = ButtonStyle.blurple
                 await interaction.response.edit_message(view=self)
+                print(f'{self.participant.name} is unavailable for {self.event.name}')
 
             button.callback = button_callback
             self.add_item(button)
@@ -225,6 +227,7 @@ def main():
                 else:
                     button.style = ButtonStyle.blurple
                 await interaction.response.edit_message(view=self)
+                print(f'{self.participant.name} unsubscribed from {self.event.name}')
 
             button.callback = button_callback
             self.add_item(button)
