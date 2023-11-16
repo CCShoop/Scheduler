@@ -302,7 +302,7 @@ def main():
             
             await participant.member.send(view=NoneButton(participant=participant, event=event))
             await participant.member.send(view=UnsubButton(participant=participant, event=event))
-            await participant.member.send(f'Select all of the 30 minute blocks you will be available to attend {event.name}!')
+            await participant.member.send(f'Select all of the 30 minute blocks you will be available to attend {event.name}!\n"None" will stop the event from being created, so if you want the event to occur without you, click "Unsubscribe."\nThe event will be created or cancelled 1-2 minutes after the last person responds.')
         print(f'Done DMing participants')
 
 
@@ -334,18 +334,23 @@ def main():
                 print(f'Created event {event.name}')
                 event.ready_to_create = False
                 event.created = True
+
                 mentions = ''
+                unsubbed = ''
                 for participant in event.participants:
-                    mentions += f'{participant.member.mention} '
+                    if participant.subscribed:
+                        mentions += f'{participant.member.mention} '
+                    else:
+                        unsubbed += f'{participant.member.name}'
                 channel = client.get_channel(int(event.interaction.channel_id))
                 if event.start_time.hour < 10 and event.start_time.minute < 10:
-                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:0{event.start_time.minute}.')
+                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:0{event.start_time.minute}.\nUnsubscribed: ' + unsubbed)
                 elif event.start_time.hour < 10 and event.start_time.minute >= 10:
-                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:{event.start_time.minute}.')
+                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:{event.start_time.minute}.\nUnsubscribed: ' + unsubbed)
                 elif event.start_time.hour >= 10 and event.start_time.minute < 10:
-                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:0{event.start_time.minute}.')
+                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:0{event.start_time.minute}.\nUnsubscribed: ' + unsubbed)
                 else:
-                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:{event.start_time.minute}.')
+                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:{event.start_time.minute}.\nUnsubscribed: ' + unsubbed)
 
     client.run(discord_token)
 
