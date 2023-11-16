@@ -3,7 +3,6 @@
 import os
 import discord
 import timestamps
-import asyncio
 import datetime
 from time import sleep
 from dotenv import load_dotenv
@@ -123,22 +122,16 @@ def main():
             self.voice_channel = voice_channel
             self.participants = participants
             self.interaction = interaction
-            self.changed = False
             self.ready_to_create = False
             self.created = False
+            self.changed = False
             self.start_time = None
             self.end_time = None
             self.valid = True
 
         def check_times(self):
-            self.changed = False
-            self.ready_to_create = False
-            for participant in self.participants:
-                if not participant.answered:
-                    return
-
             # Find first available shared time block and configure start/end times
-            print('Calculating availability')
+            print('Comparing availabilities')
             shared_time_slot = ''
             for time_slot in timestamps.all_timestamps:
                 shared_availability = True
@@ -158,7 +151,7 @@ def main():
             self.start_time = self.start_time.replace(hour=hour, minute=minute, second=0, microsecond=0)
             self.end_time = self.start_time + datetime.timedelta(minutes=30)
 
-            print('Ready to create guild event')
+            print(f'Ready to create event {self.name} at {hour}:{minute}')
             self.ready_to_create = True
 
 
@@ -174,6 +167,7 @@ def main():
             button = Button(label=self.label, style=ButtonStyle.red)
             async def button_callback(interaction: Interaction):
                 self.event.changed = True
+                self.event.ready_to_create = False
                 self.participant.answered = True
                 self.participant.toggle_availability(self.label)
                 if button.style == ButtonStyle.red:
@@ -182,9 +176,30 @@ def main():
                     button.style = ButtonStyle.red
                 await interaction.response.edit_message(view=self)
 
-                sleep(.2)
-                print('Starting check_times')
-                await asyncio.to_thread(self.event.check_times)
+            button.callback = button_callback
+            self.add_item(button)
+
+
+    class NoneButton(View):
+        def __init__(self, participant: Participant, event: Event):
+            super().__init__(timeout=None)
+            self.label = "None"
+            self.participant = participant
+            self.event = event
+            self.add_button()
+
+        def add_button(self):
+            button = Button(label=self.label, style=ButtonStyle.blurple)
+            async def button_callback(interaction: Interaction):
+                self.event.changed = True
+                self.event.ready_to_create = False
+                self.participant.answered = True
+                if button.style == ButtonStyle.blurple:
+                    button.style = ButtonStyle.gray
+                else:
+                    button.style = ButtonStyle.blurple
+                await interaction.response.edit_message(view=self)
+
             button.callback = button_callback
             self.add_item(button)
 
@@ -222,10 +237,15 @@ def main():
                 participant = Participant(member)
                 participants.append(participant)
 
-        hour, minutes = get_time()
-        if hour == 1 and minutes >= 30 and hour < 7:
+        curHour, curMinute = get_time()
+
+        if curHour == 1 and curMinute >= 30 and curHour < 7:
             await interaction.response.send_message(f'It\'s late, you should go to bed. Try again later today.')
             return
+
+        curTimeObj = datetime.datetime(2000, 1, 1, curHour, curMinute)
+        if curHour < 2:
+            curTimeObj += datetime.timedelta(days=1)
 
         # Make event object
         event = Event(event_name, voice_channel, participants, interaction)
@@ -233,42 +253,51 @@ def main():
         await interaction.response.send_message(f'{interaction.user.mention} wants to create an event called {event.name}. Check your DMs to share your availability!')
 
         for participant in event.participants:
-            button_flag = False
-            await participant.member.send('Loading buttons, please wait!')
+            buttonFlag = False
+            await participant.member.send('Loading buttons, please wait.')
 
             for button_label in timestamps.all_timestamps:
-                label_time = button_label.partition(':')
-                label_hour = int(label_time[0])
-                label_minutes = int(label_time[2])
+                labelTime = button_label.partition(':')
+                labelHour = int(labelTime[0])
+                labelMinute = int(labelTime[2])
 
-                if not button_flag:
-                    # I hate this but it seems to be working
-                    button_flag = (hour == 0 and minutes < 30 and label_hour == 0 and label_minutes == 30) or \
-                                  (hour == 0 and minutes < 30 and label_hour == 1) or \
-                                  (hour == 0 and minutes >= 30 and label_hour == 1) or \
-                                  (hour >= 2 and hour < 13) or \
-                                  (hour == label_hour and minutes < label_minutes) or \
-                                  (hour >= 13 and label_hour > hour and minutes < label_minutes) or \
-                                  (hour >= 13 and label_hour > hour)
-                if button_flag:
+                if not buttonFlag:
+                    labelTimeObj = datetime.datetime(2000, 1, 1, labelHour, labelMinute)
+                    if labelHour < 2:
+                        labelTimeObj += datetime.timedelta(days=1)
+                    buttonFlag = curTimeObj + datetime.timedelta(minutes=5) < labelTimeObj
+
+                if buttonFlag:
                     print(f'Making button {button_label} for {participant.member.name}')
                     await participant.member.send(view=TimeButton(label=button_label, participant=participant, event=event))
+            
+            await participant.member.send(view=NoneButton(participant=participant, event=event))
             
             await participant.member.send(f'Select all of the 30 minute blocks you will be available to attend {event.name}!')
         print(f'Done DMing participants')
 
 
-    @tasks.loop(seconds=15)
+    @tasks.loop(minutes=1)
     async def create_guild_event():
         for event in client.events.copy():
             if event.created or not event.valid:
                 if not event.valid:
-                    await event.interaction.followup.send('Not everyone is available at any time. The event scheduling has been cancelled.')
+                    channel = client.get_channel(int(event.interaction.channel_id))
+                    await channel.send('Not everyone is available at any time. The event scheduling has been cancelled.')
                 client.events.remove(event)
-                print(f'Removed event {event.name}')
+                print(f'Removed event {event.name} from memory')
 
         for event in client.events:
-            if event.ready_to_create and not event.created:
+            everyoneResponded = True
+            for participant in event.participants:
+                everyoneResponded = everyoneResponded and participant.answered
+            if event.created or event.changed or not everyoneResponded:
+                event.changed = False
+                return
+
+            event.check_times()
+
+            if event.ready_to_create:
                 print(f'Creating guild event {event.name} starting at {event.start_time} and ending at {event.end_time}')
                 privacy_level = discord.PrivacyLevel.guild_only
                 await event.guild.create_scheduled_event(name=event.name, description='Automatically generated event', start_time=event.start_time, end_time=event.end_time, channel=event.voice_channel, privacy_level=privacy_level)
@@ -278,7 +307,15 @@ def main():
                 mentions = ''
                 for participant in event.participants:
                     mentions += f'{participant.member.mention} '
-                await event.interaction.followup.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time}.')
+                channel = client.get_channel(int(event.interaction.channel_id))
+                if event.start_time.hour < 10 and event.start_time.minute < 10:
+                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:0{event.start_time.minute}.')
+                elif event.start_time.hour < 10 and event.start_time.minute >= 10:
+                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:{event.start_time.minute}.')
+                elif event.start_time.hour >= 10 and event.start_time.minute < 10:
+                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:0{event.start_time.minute}.')
+                else:
+                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:{event.start_time.minute}.')
 
     client.run(discord_token)
 
