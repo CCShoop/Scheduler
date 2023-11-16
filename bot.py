@@ -56,6 +56,7 @@ def main():
             self.member = member
             self.availability = Participant.Availability()
             self.answered = False
+            self.subscribed = True
 
         def toggle_availability(self, label):
             if label == timestamps.thirteen_hundred_hours:                 self.availability.thirteen_hundred               = not self.availability.thirteen_hundred
@@ -204,6 +205,31 @@ def main():
             self.add_item(button)
 
 
+    class UnsubButton(View):
+        def __init__(self, participant: Participant, event: Event):
+            super().__init__(timeout=None)
+            self.label = "Unsubscribe"
+            self.participant = participant
+            self.event = event
+            self.add_button()
+
+        def add_button(self):
+            button = Button(label=self.label, style=ButtonStyle.blurple)
+            async def button_callback(interaction: Interaction):
+                self.event.changed = True
+                self.event.ready_to_create = False
+                self.participant.answered = True
+                self.participant.subscribed = not self.participant.subscribed
+                if button.style == ButtonStyle.blurple:
+                    button.style = ButtonStyle.gray
+                else:
+                    button.style = ButtonStyle.blurple
+                await interaction.response.edit_message(view=self)
+
+            button.callback = button_callback
+            self.add_item(button)
+
+
     class SchedulerClient(Client):
         FILENAME = 'info.json'
 
@@ -272,7 +298,7 @@ def main():
                     await participant.member.send(view=TimeButton(label=button_label, participant=participant, event=event))
             
             await participant.member.send(view=NoneButton(participant=participant, event=event))
-            
+            await participant.member.send(view=UnsubButton(participant=participant, event=event))
             await participant.member.send(f'Select all of the 30 minute blocks you will be available to attend {event.name}!')
         print(f'Done DMing participants')
 
@@ -283,14 +309,15 @@ def main():
             if event.created or not event.valid:
                 if not event.valid:
                     channel = client.get_channel(int(event.interaction.channel_id))
-                    await channel.send('Not everyone is available at any time. The event scheduling has been cancelled.')
+                    await channel.send('Not everyone is available at any one time. The event scheduling has been cancelled.')
                 client.events.remove(event)
                 print(f'Removed event {event.name} from memory')
 
         for event in client.events:
             everyoneResponded = True
             for participant in event.participants:
-                everyoneResponded = everyoneResponded and participant.answered
+                if participant.subscribed:
+                    everyoneResponded = everyoneResponded and participant.answered
             if event.created or event.changed or not everyoneResponded:
                 event.changed = False
                 return
