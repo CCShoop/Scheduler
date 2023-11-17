@@ -123,6 +123,7 @@ def main():
             self.voice_channel = voice_channel
             self.participants = participants
             self.interaction = interaction
+            self.buttons = []
             self.ready_to_create = False
             self.created = False
             self.changed = False
@@ -132,7 +133,7 @@ def main():
 
         def check_times(self):
             # Find first available shared time block and configure start/end times
-            print(f'Comparing availabilities for {self.name}')
+            print(f'{self.name}> Comparing availabilities for {self.name}')
             shared_time_slot = ''
             for time_slot in timestamps.all_timestamps:
                 shared_availability = True
@@ -142,7 +143,7 @@ def main():
                     shared_time_slot = time_slot
                     break
             if shared_time_slot == '':
-                print(f'Unable to find common availability for {self.name}')
+                print(f'{self.name}> Unable to find common availability')
                 self.valid = False
                 return
             partitioned_shared_time_slot = shared_time_slot.partition(':')
@@ -152,7 +153,7 @@ def main():
             self.start_time = self.start_time.replace(hour=hour, minute=minute, second=0, microsecond=0)
             self.end_time = self.start_time + datetime.timedelta(minutes=30)
 
-            print(f'Ready to create event {self.name} at {hour}:{minute}')
+            print(f'{self.name}> Ready to create event at {hour}:{minute}')
             self.ready_to_create = True
 
 
@@ -176,7 +177,7 @@ def main():
                 else:
                     button.style = ButtonStyle.red
                 await interaction.response.edit_message(view=self)
-                print(f'{self.participant.name} toggled availability to {self.participant.is_available(self.label)} at {self.label} for {self.event.name}')
+                print(f'{self.event.name}> {self.participant.member.name} toggled availability to {self.participant.is_available(self.label)} at {self.label}')
 
             button.callback = button_callback
             self.add_item(button)
@@ -201,7 +202,7 @@ def main():
                 else:
                     button.style = ButtonStyle.blurple
                 await interaction.response.edit_message(view=self)
-                print(f'{self.participant.name} is unavailable for {self.event.name}')
+                print(f'{self.event.name}> {self.participant.member.name} has no availability')
 
             button.callback = button_callback
             self.add_item(button)
@@ -227,7 +228,7 @@ def main():
                 else:
                     button.style = ButtonStyle.blurple
                 await interaction.response.edit_message(view=self)
-                print(f'{self.participant.name} unsubscribed from {self.event.name}')
+                print(f'{self.event.name}> {self.participant.member.name} unsubscribed')
 
             button.callback = button_callback
             self.add_item(button)
@@ -260,7 +261,7 @@ def main():
     async def schedule_command(interaction: Interaction, event_name: str, voice_channel: discord.VoiceChannel):
         # Put participants into a list
         participants = []
-        print(f'Received event request "{event_name}"')
+        print(f'{event_name}> Received event request')
         for member in interaction.channel.members:
             if not member.bot:
                 participant = Participant(member)
@@ -283,7 +284,7 @@ def main():
 
         for participant in event.participants:
             buttonFlag = False
-            await participant.member.send('Loading buttons, please wait.')
+            await participant.member.send(f'**Loading buttons, please wait.**\n{interaction.user.name} wants to create an event called {event.name}.')
 
             for button_label in timestamps.all_timestamps:
                 labelTime = button_label.partition(':')
@@ -297,13 +298,13 @@ def main():
                     buttonFlag = curTimeObj + datetime.timedelta(minutes=5) < labelTimeObj
 
                 if buttonFlag:
-                    print(f'Making button {button_label} for {participant.member.name}')
+                    print(f'{event_name}> Making button {button_label} for {participant.member.name}')
                     await participant.member.send(view=TimeButton(label=button_label, participant=participant, event=event))
-            
+
             await participant.member.send(view=NoneButton(participant=participant, event=event))
             await participant.member.send(view=UnsubButton(participant=participant, event=event))
-            await participant.member.send(f'Select all of the 30 minute blocks you will be available to attend {event.name}!\n"None" will stop the event from being created, so if you want the event to occur without you, click "Unsubscribe."\nThe event will be created or cancelled 1-2 minutes after the last person responds.')
-        print(f'Done DMing participants')
+            await participant.member.send(f'Select **all** of the 30 minute blocks you could be available to attend {event.name}!\n"None" will stop the event from being created, so if you want the event to occur with or without you, click "Unsubscribe."\nThe event will be either created or cancelled 1-2 minutes after the last person responds, which renders the buttons useless.')
+        print(f'{event_name}> Done DMing participants')
 
 
     @tasks.loop(minutes=1)
@@ -314,7 +315,7 @@ def main():
                     channel = client.get_channel(int(event.interaction.channel_id))
                     await channel.send('Not everyone is available at any one time. The event scheduling has been cancelled.')
                 client.events.remove(event)
-                print(f'Removed event {event.name} from memory')
+                print(f'{event.name}> Removed event from memory')
 
         for event in client.events:
             everyoneResponded = True
@@ -328,10 +329,10 @@ def main():
             event.check_times()
 
             if event.ready_to_create:
-                print(f'Creating guild event {event.name} starting at {event.start_time} and ending at {event.end_time}')
+                print(f'{event.name}> Creating event')
                 privacy_level = discord.PrivacyLevel.guild_only
                 await event.guild.create_scheduled_event(name=event.name, description='Automatically generated event', start_time=event.start_time, end_time=event.end_time, channel=event.voice_channel, privacy_level=privacy_level)
-                print(f'Created event {event.name}')
+                print(f'{event.name}> Created event starting at {event.start_time} and ending at {event.end_time}')
                 event.ready_to_create = False
                 event.created = True
 
@@ -341,16 +342,18 @@ def main():
                     if participant.subscribed:
                         mentions += f'{participant.member.mention} '
                     else:
-                        unsubbed += f'{participant.member.name}'
+                        unsubbed += f'{participant.member.name} '
+                if unsubbed != '':
+                    unsubbed = 'Unsubscribed: ' + unsubbed
                 channel = client.get_channel(int(event.interaction.channel_id))
                 if event.start_time.hour < 10 and event.start_time.minute < 10:
-                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:0{event.start_time.minute}.\nUnsubscribed: ' + unsubbed)
+                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed)
                 elif event.start_time.hour < 10 and event.start_time.minute >= 10:
-                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:{event.start_time.minute}.\nUnsubscribed: ' + unsubbed)
+                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed)
                 elif event.start_time.hour >= 10 and event.start_time.minute < 10:
-                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:0{event.start_time.minute}.\nUnsubscribed: ' + unsubbed)
+                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed)
                 else:
-                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:{event.start_time.minute}.\nUnsubscribed: ' + unsubbed)
+                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed)
 
     client.run(discord_token)
 
