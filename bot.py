@@ -21,6 +21,17 @@ def get_time():
     return hour, minute
 
 
+def get_datetime_from_label(label: str):
+    partitioned_time = label.partition(':')
+    hour = int(partitioned_time[0])
+    minute = int(partitioned_time[2])
+    time = datetime.datetime.now().astimezone()
+    if time.hour < 2 and hour > 7:
+        time += datetime.timedelta(days=1)
+    time = time.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return time
+
+
 def main():
     class Participant():
         class Availability:
@@ -136,24 +147,28 @@ def main():
             print(f'{self.name}> Comparing availabilities for {self.name}')
             shared_time_slot = ''
             for time_slot in timestamps.all_timestamps:
-                shared_availability = True
-                for participant in self.participants:
-                    shared_availability = shared_availability and participant.is_available(time_slot)
-                if shared_availability:
-                    shared_time_slot = time_slot
-                    break
+                skip_time_slot = False
+                for event in client.events:
+                    check_time_obj = get_datetime_from_label(time_slot)
+                    if (check_time_obj == event.start_time):
+                        print(f'{self.name}> Skipping {time_slot} due to event {event.name} already existing at that time')
+                        skip_time_slot = True
+                        break
+                if not skip_time_slot:
+                    shared_availability = True
+                    for participant in self.participants:
+                        shared_availability = shared_availability and participant.is_available(time_slot)
+                    if shared_availability:
+                        shared_time_slot = time_slot
+                        break
             if shared_time_slot == '':
                 print(f'{self.name}> Unable to find common availability')
                 self.valid = False
                 return
-            partitioned_shared_time_slot = shared_time_slot.partition(':')
-            hour = int(partitioned_shared_time_slot[0])
-            minute = int(partitioned_shared_time_slot[2])
-            self.start_time = datetime.datetime.now().astimezone()
-            self.start_time = self.start_time.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            self.start_time = get_datetime_from_label(shared_time_slot)
             self.end_time = self.start_time + datetime.timedelta(minutes=30)
 
-            print(f'{self.name}> Ready to create event at {hour}:{minute}')
+            print(f'{self.name}> Ready to create event at {self.start_time.hour}:{self.start_time.minute}')
             self.ready_to_create = True
 
 
@@ -307,21 +322,27 @@ def main():
         print(f'{event_name}> Done DMing participants')
 
 
-    @tasks.loop(minutes=1)
+    @tasks.loop(seconds=15)
     async def create_guild_event():
         for event in client.events.copy():
-            if event.created or not event.valid:
-                if not event.valid:
-                    channel = client.get_channel(int(event.interaction.channel_id))
-                    await channel.send('Not everyone is available at any one time. The event scheduling has been cancelled.')
+            if not event.valid:
+                channel = client.get_channel(int(event.interaction.channel_id))
+                await channel.send('No shared availability has been found. The event scheduling has been cancelled.')
                 client.events.remove(event)
-                print(f'{event.name}> Removed event from memory')
+                print(f'{event.name}> Event invalid, removed event from memory')
+            elif event.created and get_datetime_from_label('02:00') <= datetime.datetime.now().astimezone():
+                client.events.remove(event)
+                print(f'{event.name}> Start time passed, removed event from memory')
+
 
         for event in client.events:
             everyoneResponded = True
             for participant in event.participants:
                 if participant.subscribed:
                     everyoneResponded = everyoneResponded and participant.answered
+            print(f'{event.name}> Event created: {event.created} (False to continue)')
+            print(f'{event.name}> Event changed: {event.changed} (False to continue)')
+            print(f'{event.name}> Everyone responded: {everyoneResponded} (True to continue)')
             if event.created or event.changed or not everyoneResponded:
                 event.changed = False
                 return
@@ -331,8 +352,8 @@ def main():
             if event.ready_to_create:
                 print(f'{event.name}> Creating event')
                 privacy_level = discord.PrivacyLevel.guild_only
-                await event.guild.create_scheduled_event(name=event.name, description='Automatically generated event', start_time=event.start_time, end_time=event.end_time, channel=event.voice_channel, privacy_level=privacy_level)
-                print(f'{event.name}> Created event starting at {event.start_time} and ending at {event.end_time}')
+                await event.guild.create_scheduled_event(name=event.name, description='Bot generated event based on participant availabilities provided', start_time=event.start_time, end_time=event.end_time, channel=event.voice_channel, privacy_level=privacy_level)
+                print(f'{event.name}> Created event starting at {event.start_time.hour}:{event.start_time.minute} and ending at {event.end_time.hour}:{event.end_time.minute}')
                 event.ready_to_create = False
                 event.created = True
 
