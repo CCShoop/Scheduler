@@ -1,6 +1,7 @@
 '''Written by Cael Shoop.'''
 
 import os
+import random
 import discord
 import timestamps
 import datetime
@@ -17,7 +18,6 @@ def get_time():
     ct = str(datetime.datetime.now())
     hour = int(ct[11:13])
     minute = int(ct[14:16])
-    print(f'Current time is {hour}:{minute}')
     return hour, minute
 
 
@@ -26,10 +26,25 @@ def get_datetime_from_label(label: str):
     hour = int(partitioned_time[0])
     minute = int(partitioned_time[2])
     time = datetime.datetime.now().astimezone()
-    if time.hour < 2 and hour > 7:
-        time += datetime.timedelta(days=1)
     time = time.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if time.hour < 2 and datetime.datetime.now().astimezone().hour > 7:
+        time += datetime.timedelta(days=1)
     return time
+
+
+def get_log_time():
+    time = datetime.datetime.now().astimezone()
+    output = ''
+    if time.hour < 10:
+        output += '0'
+    output += f'{time.hour}:'
+    if time.minute < 10:
+        output += '0'
+    output += f'{time.minute}:'
+    if time.second < 10:
+        output += '0'
+    output += f'{time.second}'
+    return output
 
 
 def main():
@@ -135,6 +150,8 @@ def main():
             self.participants = participants
             self.interaction = interaction
             self.buttons = []
+            self.nudges = ['respond', 'I showed you my event, pls respond <3', 'I\'m waiting for you', 'my brother in christ, click the buttons', 'nudge', 'plz respond 🥺', 'I\'m literally crying rn omg', 'click button(s)', 'HURRY HURRY HURRY!', 'I want to create event: you sleep']
+            self.nudge_unresponded_timer = 60
             self.ready_to_create = False
             self.created = False
             self.changed = False
@@ -144,14 +161,14 @@ def main():
 
         def check_times(self):
             # Find first available shared time block and configure start/end times
-            print(f'{self.name}> Comparing availabilities for {self.name}')
+            print(f'{get_log_time()}> {self.name}> Comparing availabilities for {self.name}')
             shared_time_slot = ''
             for time_slot in timestamps.all_timestamps:
                 skip_time_slot = False
                 for event in client.events:
                     check_time_obj = get_datetime_from_label(time_slot)
                     if (check_time_obj == event.start_time):
-                        print(f'{self.name}> Skipping {time_slot} due to event {event.name} already existing at that time')
+                        print(f'{get_log_time()}> {self.name}> Skipping {time_slot} due to event {event.name} already existing at that time')
                         skip_time_slot = True
                         break
                 if not skip_time_slot:
@@ -162,14 +179,33 @@ def main():
                         shared_time_slot = time_slot
                         break
             if shared_time_slot == '':
-                print(f'{self.name}> Unable to find common availability')
+                print(f'{get_log_time()}> {self.name}> Unable to find common availability')
                 self.valid = False
                 return
             self.start_time = get_datetime_from_label(shared_time_slot)
             self.end_time = self.start_time + datetime.timedelta(minutes=30)
-
-            print(f'{self.name}> Ready to create event at {self.start_time.hour}:{self.start_time.minute}')
+            print(f'{get_log_time()}> {self.name}> Ready to create event on {self.start_time.month}/{self.start_time.day}/{self.start_time.year} at {self.start_time.hour}:{self.start_time.minute}')
             self.ready_to_create = True
+
+        def hasEveryoneAnswered(self):
+            everyoneAnswered = True
+            for participant in self.participants:
+                if participant.subscribed:
+                    everyoneAnswered = everyoneAnswered and participant.answered
+            return everyoneAnswered
+
+        def nudge_timer(self):
+            self.nudge_unresponded_timer -= 1
+            if self.nudge_unresponded_timer == 0:
+                self.nudge_unresponded_timer = 60
+                return True
+            return False
+
+        def nudge_unresponded_participants(self):
+            for participant in self.participants:
+                if not participant.answered:
+                    participant.member.send(self.nudges[random.randint(0, 9)])
+                    print(f'{get_log_time()}> {self.name}> Nudging {participant.member.name}')
 
 
     class TimeButton(View):
@@ -192,7 +228,7 @@ def main():
                 else:
                     button.style = ButtonStyle.red
                 await interaction.response.edit_message(view=self)
-                print(f'{self.event.name}> {self.participant.member.name} toggled availability to {self.participant.is_available(self.label)} at {self.label}')
+                print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} toggled availability to {self.participant.is_available(self.label)} at {self.label}')
 
             button.callback = button_callback
             self.add_item(button)
@@ -217,7 +253,7 @@ def main():
                 else:
                     button.style = ButtonStyle.blurple
                 await interaction.response.edit_message(view=self)
-                print(f'{self.event.name}> {self.participant.member.name} has no availability')
+                print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} has no availability')
 
             button.callback = button_callback
             self.add_item(button)
@@ -243,7 +279,7 @@ def main():
                 else:
                     button.style = ButtonStyle.blurple
                 await interaction.response.edit_message(view=self)
-                print(f'{self.event.name}> {self.participant.member.name} unsubscribed')
+                print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} unsubscribed')
 
             button.callback = button_callback
             self.add_item(button)
@@ -268,7 +304,7 @@ def main():
     async def on_ready():
         if not create_guild_event.is_running():
             create_guild_event.start()
-        print(f'{client.user} has connected to Discord!')
+        print(f'{get_log_time()}> {client.user} has connected to Discord!')
 
     @client.tree.command(name='schedule', description='Create a scheduling event.')
     @app_commands.describe(event_name='Name for the event.')
@@ -276,7 +312,7 @@ def main():
     async def schedule_command(interaction: Interaction, event_name: str, voice_channel: discord.VoiceChannel):
         # Put participants into a list
         participants = []
-        print(f'{event_name}> Received event request')
+        print(f'{get_log_time()}> {event_name}> Received event request')
         for member in interaction.channel.members:
             if not member.bot:
                 participant = Participant(member)
@@ -299,7 +335,8 @@ def main():
 
         for participant in event.participants:
             buttonFlag = False
-            await participant.member.send(f'**Loading buttons, please wait.**\n{interaction.user.name} wants to create an event called {event.name}.')
+            await participant.member.send(f'⬇️⬇️⬇️⬇️⬇️ __**{event.name}**__ ⬇️⬇️⬇️⬇️⬇️\n**Loading buttons, please wait.**\n{interaction.user.name} wants to create an event called {event.name}.')
+            print(f'{get_log_time()}> {event_name}> Sending buttons to {participant.member.name}')
 
             for button_label in timestamps.all_timestamps:
                 labelTime = button_label.partition(':')
@@ -313,47 +350,46 @@ def main():
                     buttonFlag = curTimeObj + datetime.timedelta(minutes=5) < labelTimeObj
 
                 if buttonFlag:
-                    print(f'{event_name}> Making button {button_label} for {participant.member.name}')
                     await participant.member.send(view=TimeButton(label=button_label, participant=participant, event=event))
 
             await participant.member.send(view=NoneButton(participant=participant, event=event))
             await participant.member.send(view=UnsubButton(participant=participant, event=event))
-            await participant.member.send(f'Select **all** of the 30 minute blocks you could be available to attend {event.name}!\n"None" will stop the event from being created, so if you want the event to occur with or without you, click "Unsubscribe."\nThe event will be either created or cancelled 1-2 minutes after the last person responds, which renders the buttons useless.')
-        print(f'{event_name}> Done DMing participants')
+            await participant.member.send(f'Select **all** of the 30 minute blocks you could be available to attend {event.name}!\n"None" will stop the event from being created, so click "Unsubscribe" if you want the event to occur with or without you.\n'
+                                          f'The event will be either created or cancelled 1-2 minutes after the last person responds, which renders the buttons useless.\n''⬆️⬆️⬆️⬆️⬆️ __**{event.name}**__ ⬆️⬆️⬆️⬆️⬆️')
+        print(f'{get_log_time()}> {event_name}> Done DMing participants')
 
 
-    @tasks.loop(seconds=15)
+    @tasks.loop(minutes=1)
     async def create_guild_event():
         for event in client.events.copy():
             if not event.valid:
                 channel = client.get_channel(int(event.interaction.channel_id))
                 await channel.send('No shared availability has been found. The event scheduling has been cancelled.')
                 client.events.remove(event)
-                print(f'{event.name}> Event invalid, removed event from memory')
-            elif event.created and get_datetime_from_label('02:00') <= datetime.datetime.now().astimezone():
+                print(f'{get_log_time()}> {event.name}> Event invalid, removed event from memory')
+            elif event.created and get_datetime_from_label('01:30') <= datetime.datetime.now().astimezone():
                 client.events.remove(event)
-                print(f'{event.name}> Start time passed, removed event from memory')
+                print(f'{get_log_time()}> {event.name}> last time slot passed, removed event from memory')
 
 
         for event in client.events:
-            everyoneResponded = True
-            for participant in event.participants:
-                if participant.subscribed:
-                    everyoneResponded = everyoneResponded and participant.answered
-            print(f'{event.name}> Event created: {event.created} (False to continue)')
-            print(f'{event.name}> Event changed: {event.changed} (False to continue)')
-            print(f'{event.name}> Everyone responded: {everyoneResponded} (True to continue)')
-            if event.created or event.changed or not everyoneResponded:
+            everyoneAnswered = event.hasEveryoneAnswered()
+
+            if not everyoneAnswered and event.nudge_timer():
+                event.nudge_unresponded_participants()
+
+            if event.created or event.changed or not everyoneAnswered:
+                print(f'{get_log_time()}> {event.name}> Event changed:      {event.changed} (False to continue)')
+                print(f'{get_log_time()}> {event.name}> Everyone responded: {everyoneAnswered} (True to continue)')
                 event.changed = False
                 return
 
             event.check_times()
 
             if event.ready_to_create:
-                print(f'{event.name}> Creating event')
                 privacy_level = discord.PrivacyLevel.guild_only
                 await event.guild.create_scheduled_event(name=event.name, description='Bot generated event based on participant availabilities provided', start_time=event.start_time, end_time=event.end_time, channel=event.voice_channel, privacy_level=privacy_level)
-                print(f'{event.name}> Created event starting at {event.start_time.hour}:{event.start_time.minute} and ending at {event.end_time.hour}:{event.end_time.minute}')
+                print(f'{get_log_time()}> {event.name}> Created event starting at {event.start_time.hour}:{event.start_time.minute} and ending at {event.end_time.hour}:{event.end_time.minute}')
                 event.ready_to_create = False
                 event.created = True
 
