@@ -150,8 +150,8 @@ def main():
             self.participants = participants
             self.interaction = interaction
             self.buttons = []
-            self.nudges = ['respond', 'I showed you my event, pls respond <3', 'I\'m waiting for you', 'my brother in christ, click the buttons', 'nudge', 'plz respond 🥺', 'I\'m literally crying rn omg', 'click button(s)', 'HURRY HURRY HURRY!', 'I want to create event: you sleep']
-            self.nudge_unresponded_timer = 60
+            self.nudges = ['respond', 'I showed you my event, pls respond', 'I\'m waiting for you', 'my brother in christ, click button(s)', 'nudge', 'plz respond 🥺', 'I\'m literally crying rn omg', 'click button(s)', 'HURRY HURRY HURRY!', 'I want to create event: you sleep']
+            self.nudge_unresponded_timer = 30
             self.ready_to_create = False
             self.created = False
             self.changed = False
@@ -164,9 +164,11 @@ def main():
             print(f'{get_log_time()}> {self.name}> Comparing availabilities for {self.name}')
             shared_time_slot = ''
             for time_slot in timestamps.all_timestamps:
+                check_time_obj = get_datetime_from_label(time_slot)
+                if datetime.datetime.now().astimezone() > check_time_obj - datetime.timedelta(minutes=5):
+                    continue
                 skip_time_slot = False
                 for event in client.events:
-                    check_time_obj = get_datetime_from_label(time_slot)
                     if (check_time_obj == event.start_time):
                         print(f'{get_log_time()}> {self.name}> Skipping {time_slot} due to event {event.name} already existing at that time')
                         skip_time_slot = True
@@ -197,15 +199,15 @@ def main():
         def nudge_timer(self):
             self.nudge_unresponded_timer -= 1
             if self.nudge_unresponded_timer == 0:
-                self.nudge_unresponded_timer = 60
+                self.nudge_unresponded_timer = 30
                 return True
             return False
 
-        def nudge_unresponded_participants(self):
+        async def nudge_unresponded_participants(self):
             for participant in self.participants:
                 if not participant.answered:
-                    participant.member.send(self.nudges[random.randint(0, 9)])
-                    print(f'{get_log_time()}> {self.name}> Nudging {participant.member.name}')
+                    await participant.member.send(self.nudges[random.randint(0, 9)])
+                    print(f'{get_log_time()}> {self.name}> Nudged {participant.member.name}')
 
 
     class TimeButton(View):
@@ -223,7 +225,7 @@ def main():
                 self.event.ready_to_create = False
                 self.participant.answered = True
                 self.participant.toggle_availability(self.label)
-                if button.style == ButtonStyle.red:
+                if self.participant.is_available(self.label):
                     button.style = ButtonStyle.green
                 else:
                     button.style = ButtonStyle.red
@@ -234,54 +236,74 @@ def main():
             self.add_item(button)
 
 
-    class NoneButton(View):
+    class OtherButtons(View):
         def __init__(self, participant: Participant, event: Event):
             super().__init__(timeout=None)
-            self.label = "None"
+            self.all_label = "All"
+            self.none_label = "None"
+            self.unsub_label = "Unsubscribe"
             self.participant = participant
             self.event = event
-            self.add_button()
+            self.add_all_button()
+            self.add_none_button()
+            self.add_unsub_button()
 
-        def add_button(self):
-            button = Button(label=self.label, style=ButtonStyle.blurple)
-            async def button_callback(interaction: Interaction):
+        def add_all_button(self):
+            button = Button(label=self.all_label, style=ButtonStyle.blurple)
+            async def all_button_callback(interaction: Interaction):
                 self.event.changed = True
                 self.event.ready_to_create = False
                 self.participant.answered = True
+                for time_slot in timestamps.all_timestamps:
+                    if not self.participant.is_available(time_slot):
+                        self.participant.toggle_availability(time_slot)
                 if button.style == ButtonStyle.blurple:
-                    button.style = ButtonStyle.gray
+                    button.style = ButtonStyle.green
+                    print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} selected full availability')
                 else:
                     button.style = ButtonStyle.blurple
+                    print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} deselected full availability')
                 await interaction.response.edit_message(view=self)
-                print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} has no availability')
 
-            button.callback = button_callback
+            button.callback = all_button_callback
             self.add_item(button)
 
+        def add_none_button(self):
+            button = Button(label=self.none_label, style=ButtonStyle.blurple)
+            async def none_button_callback(interaction: Interaction):
+                self.event.changed = True
+                self.event.ready_to_create = False
+                self.participant.answered = True
+                for time_slot in timestamps.all_timestamps:
+                    if self.participant.toggle_availability(time_slot):
+                        self.participant.toggle_availability(time_slot)
+                if button.style == ButtonStyle.blurple:
+                    button.style = ButtonStyle.gray
+                    print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} selected no availability')
+                else:
+                    button.style = ButtonStyle.blurple
+                    print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} deselected no availability')
+                await interaction.response.edit_message(view=self)
 
-    class UnsubButton(View):
-        def __init__(self, participant: Participant, event: Event):
-            super().__init__(timeout=None)
-            self.label = "Unsubscribe"
-            self.participant = participant
-            self.event = event
-            self.add_button()
+            button.callback = none_button_callback
+            self.add_item(button)
 
-        def add_button(self):
-            button = Button(label=self.label, style=ButtonStyle.blurple)
-            async def button_callback(interaction: Interaction):
+        def add_unsub_button(self):
+            button = Button(label=self.unsub_label, style=ButtonStyle.blurple)
+            async def unsub_button_callback(interaction: Interaction):
                 self.event.changed = True
                 self.event.ready_to_create = False
                 self.participant.answered = True
                 self.participant.subscribed = not self.participant.subscribed
                 if button.style == ButtonStyle.blurple:
                     button.style = ButtonStyle.gray
+                    print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} unsubscribed')
                 else:
                     button.style = ButtonStyle.blurple
+                    print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} resubscribed')
                 await interaction.response.edit_message(view=self)
-                print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} unsubscribed')
 
-            button.callback = button_callback
+            button.callback = unsub_button_callback
             self.add_item(button)
 
 
@@ -352,10 +374,9 @@ def main():
                 if buttonFlag:
                     await participant.member.send(view=TimeButton(label=button_label, participant=participant, event=event))
 
-            await participant.member.send(view=NoneButton(participant=participant, event=event))
-            await participant.member.send(view=UnsubButton(participant=participant, event=event))
+            await participant.member.send(view=OtherButtons(participant=participant, event=event))
             await participant.member.send(f'Select **all** of the 30 minute blocks you could be available to attend {event.name}!\n"None" will stop the event from being created, so click "Unsubscribe" if you want the event to occur with or without you.\n'
-                                          f'The event will be either created or cancelled 1-2 minutes after the last person responds, which renders the buttons useless.\n''⬆️⬆️⬆️⬆️⬆️ __**{event.name}**__ ⬆️⬆️⬆️⬆️⬆️')
+                                          f'The event will be either created or cancelled 1-2 minutes after the last person responds, which renders the buttons useless.\n'f'⬆️⬆️⬆️⬆️⬆️ __**{event.name}**__ ⬆️⬆️⬆️⬆️⬆️')
         print(f'{get_log_time()}> {event_name}> Done DMing participants')
 
 
@@ -376,13 +397,15 @@ def main():
             everyoneAnswered = event.hasEveryoneAnswered()
 
             if not everyoneAnswered and event.nudge_timer():
-                event.nudge_unresponded_participants()
+                await event.nudge_unresponded_participants()
 
-            if event.created or event.changed or not everyoneAnswered:
+            if event.created:
+                continue
+            if event.changed or not everyoneAnswered:
                 print(f'{get_log_time()}> {event.name}> Event changed:      {event.changed} (False to continue)')
                 print(f'{get_log_time()}> {event.name}> Everyone responded: {everyoneAnswered} (True to continue)')
                 event.changed = False
-                return
+                continue
 
             event.check_times()
 
