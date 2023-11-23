@@ -169,8 +169,8 @@ def main():
                     continue
                 skip_time_slot = False
                 for event in client.events:
-                    if (check_time_obj == event.start_time):
-                        print(f'{get_log_time()}> {self.name}> Skipping {time_slot} due to event {event.name} already existing at that time')
+                    if self != event and check_time_obj == event.start_time and self.shares_participants(event):
+                        print(f'{get_log_time()}> {self.name}> Skipping {time_slot} due to event {event.name} already existing at that time with shared participant(s)')
                         skip_time_slot = True
                         break
                 if not skip_time_slot:
@@ -189,7 +189,14 @@ def main():
             print(f'{get_log_time()}> {self.name}> Ready to create event on {self.start_time.month}/{self.start_time.day}/{self.start_time.year} at {self.start_time.hour}:{self.start_time.minute}')
             self.ready_to_create = True
 
-        def hasEveryoneAnswered(self):
+        def shares_participants(self, event):
+            for self_participant in self.participants:
+                for other_participant in event.participants:
+                    if self_participant.name == other_participant.name:
+                        return True
+            return False
+
+        def has_everyone_answered(self):
             everyoneAnswered = True
             for participant in self.participants:
                 if participant.subscribed:
@@ -394,7 +401,7 @@ def main():
 
 
         for event in client.events:
-            everyoneAnswered = event.hasEveryoneAnswered()
+            everyoneAnswered = event.has_everyone_answered()
 
             if not everyoneAnswered and event.nudge_timer():
                 await event.nudge_unresponded_participants()
