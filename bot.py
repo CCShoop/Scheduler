@@ -83,6 +83,7 @@ def main():
             self.availability = Participant.Availability()
             self.answered = False
             self.subscribed = True
+            self.msg_lock = False
 
         def toggle_availability(self, label):
             if label == timestamps.thirteen_hundred_hours:                 self.availability.thirteen_hundred               = not self.availability.thirteen_hundred
@@ -169,8 +170,8 @@ def main():
                     continue
                 skip_time_slot = False
                 for event in client.events:
-                    if self != event and check_time_obj == event.start_time and self.shares_participants(event):
-                        print(f'{get_log_time()}> {self.name}> Skipping {time_slot} due to event {event.name} already existing at that time with shared participant(s)')
+                    if self != event and check_time_obj == event.start_time and (self.shares_participants(event) or self.voice_channel == event.voice_channel):
+                        print(f'{get_log_time()}> {self.name}> Skipping {time_slot} due to event {event.name} already existing at that time with shared participant(s) or shared location')
                         skip_time_slot = True
                         break
                 if not skip_time_slot:
@@ -364,6 +365,9 @@ def main():
 
         for participant in event.participants:
             buttonFlag = False
+            while (participant.msg_lock):
+                sleep(1)
+            participant.msg_lock = True
             await participant.member.send(f'⬇️⬇️⬇️⬇️⬇️ __**{event.name}**__ ⬇️⬇️⬇️⬇️⬇️\n**Loading buttons, please wait.**\n{interaction.user.name} wants to create an event called {event.name}.')
             print(f'{get_log_time()}> {event_name}> Sending buttons to {participant.member.name}')
 
@@ -384,6 +388,7 @@ def main():
             await participant.member.send(view=OtherButtons(participant=participant, event=event))
             await participant.member.send(f'Select **all** of the 30 minute blocks you could be available to attend {event.name}!\n"None" will stop the event from being created, so click "Unsubscribe" if you want the event to occur with or without you.\n'
                                           f'The event will be either created or cancelled 1-2 minutes after the last person responds, which renders the buttons useless.\n'f'⬆️⬆️⬆️⬆️⬆️ __**{event.name}**__ ⬆️⬆️⬆️⬆️⬆️')
+            participant.msg_lock = False
         print(f'{get_log_time()}> {event_name}> Done DMing participants')
 
 
