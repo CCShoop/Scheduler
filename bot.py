@@ -193,7 +193,7 @@ def main():
         def shares_participants(self, event):
             for self_participant in self.participants:
                 for other_participant in event.participants:
-                    if self_participant.name == other_participant.name:
+                    if self_participant.member == other_participant.member:
                         return True
             return False
 
@@ -262,11 +262,11 @@ def main():
                 self.event.changed = True
                 self.event.ready_to_create = False
                 self.participant.answered = True
-                for time_slot in timestamps.all_timestamps:
-                    if not self.participant.is_available(time_slot):
-                        self.participant.toggle_availability(time_slot)
                 if button.style == ButtonStyle.blurple:
                     button.style = ButtonStyle.green
+                    for time_slot in timestamps.all_timestamps:
+                        if not self.participant.is_available(time_slot):
+                            self.participant.toggle_availability(time_slot)
                     print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} selected full availability')
                 else:
                     button.style = ButtonStyle.blurple
@@ -281,12 +281,13 @@ def main():
             async def none_button_callback(interaction: Interaction):
                 self.event.changed = True
                 self.event.ready_to_create = False
+                self.event.valid = not self.event.valid
                 self.participant.answered = True
-                for time_slot in timestamps.all_timestamps:
-                    if self.participant.toggle_availability(time_slot):
-                        self.participant.toggle_availability(time_slot)
                 if button.style == ButtonStyle.blurple:
                     button.style = ButtonStyle.gray
+                    for time_slot in timestamps.all_timestamps:
+                        if self.participant.toggle_availability(time_slot):
+                            self.participant.toggle_availability(time_slot)
                     print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} selected no availability')
                 else:
                     button.style = ButtonStyle.blurple
@@ -414,8 +415,6 @@ def main():
             if event.created:
                 continue
             if event.changed or not everyoneAnswered:
-                print(f'{get_log_time()}> {event.name}> Event changed:      {event.changed} (False to continue)')
-                print(f'{get_log_time()}> {event.name}> Everyone responded: {everyoneAnswered} (True to continue)')
                 event.changed = False
                 continue
 
