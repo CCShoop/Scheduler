@@ -227,7 +227,7 @@ def main():
             self.add_button()
 
         def add_button(self):
-            button = Button(label=self.label, style=ButtonStyle.red)
+            button = Button(label=self.label + ' EST', style=ButtonStyle.red)
             async def button_callback(interaction: Interaction):
                 self.event.changed = True
                 self.event.ready_to_create = False
