@@ -151,7 +151,8 @@ def main():
             self.participants = participants
             self.interaction = interaction
             self.buttons = []
-            self.nudges = ['respond', 'I showed you my event, pls respond', 'I\'m waiting for you', 'my brother in christ, click button(s)', 'nudge', 'plz respond 🥺', 'I\'m literally crying rn omg', 'click button(s)', 'HURRY HURRY HURRY!', 'I want to create event: you sleep']
+            self.reason = ''
+            self.nudges = ['respond', 'I showed you my event, pls respond', 'I\'m waiting for you', 'my brother in christ, click button(s)', 'your availability. hand it over', 'nudge', 'plz respond 🥺', 'I\'m literally crying rn omg, I need your availability', 'click button(s)', 'HURRY HURRY HURRY!', 'I want to create event: you sleep', 'I **NEED** AVAILABILITY!']
             self.nudge_unresponded_timer = 30
             self.ready_to_create = False
             self.created = False
@@ -214,7 +215,7 @@ def main():
         async def nudge_unresponded_participants(self):
             for participant in self.participants:
                 if not participant.answered:
-                    await participant.member.send(self.nudges[random.randint(0, 9)])
+                    await participant.member.send(random.choice(self.nudges))
                     print(f'{get_log_time()}> {self.name}> Nudged {participant.member.name}')
 
 
@@ -281,16 +282,19 @@ def main():
             async def none_button_callback(interaction: Interaction):
                 self.event.changed = True
                 self.event.ready_to_create = False
-                self.event.valid = not self.event.valid
                 self.participant.answered = True
                 if button.style == ButtonStyle.blurple:
                     button.style = ButtonStyle.gray
                     for time_slot in timestamps.all_timestamps:
                         if self.participant.toggle_availability(time_slot):
                             self.participant.toggle_availability(time_slot)
+                    self.event.reason += f'{self.participant.member.name} has no availability. '
+                    self.event.valid = False
                     print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} selected no availability')
                 else:
                     button.style = ButtonStyle.blurple
+                    self.event.reason.replace(f'{self.participant.member.name} has no availability. ', '')
+                    self.event.valid = True
                     print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} deselected no availability')
                 await interaction.response.edit_message(view=self)
 
@@ -398,7 +402,7 @@ def main():
         for event in client.events.copy():
             if not event.valid:
                 channel = client.get_channel(int(event.interaction.channel_id))
-                await channel.send('No shared availability has been found. The event scheduling has been cancelled.')
+                await channel.send('No shared availability has been found. The event scheduling has been cancelled. ' + event.reason)
                 client.events.remove(event)
                 print(f'{get_log_time()}> {event.name}> Event invalid, removed event from memory')
             elif event.created and get_datetime_from_label('01:30') <= datetime.datetime.now().astimezone():
