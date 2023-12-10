@@ -160,6 +160,8 @@ def main():
             self.start_time = None
             self.end_time = None
             self.valid = True
+            self.sent_5_min_warning = False
+            self.sent_start_warning = False
 
         def check_times(self):
             # Find first available shared time block and configure start/end times
@@ -217,6 +219,14 @@ def main():
                 if not participant.answered:
                     await participant.member.send(random.choice(self.nudges))
                     print(f'{get_log_time()}> {self.name}> Nudged {participant.member.name}')
+
+        async def send_5_min_warning(self):
+            await self.interaction.channel.send(f'**5 minute warning!** {self.name} will begin in 5 minutes.')
+            self.sent_5_min_warning = True
+
+        async def send_start_warning(self):
+            await self.interaction.channel.send(f'**Event starting now!** {self.name} is starting now!')
+            self.sent_start_warning = True
 
 
     class TimeButton(View):
@@ -417,6 +427,10 @@ def main():
                 await event.nudge_unresponded_participants()
 
             if event.created:
+                if not event.sent_5_min_warning and datetime.datetime.now().astimezone().hour == event.start_time.hour and (datetime.datetime.now().astimezone() + datetime.timedelta(minutes=5)).minute == event.start_time.minute:
+                    await event.send_5_min_warning()
+                if not event.sent_start_warning and datetime.datetime.now().astimezone().hour == event.start_time.hour and datetime.datetime.now().astimezone().minute == event.start_time.minute:
+                    await event.send_start_warning()
                 continue
             if event.changed or not everyoneAnswered:
                 event.changed = False
