@@ -84,6 +84,7 @@ def main():
             self.answered = False
             self.subscribed = True
             self.msg_lock = False
+            self.weekly = False
 
         def toggle_availability(self, label):
             if label == timestamps.thirteen_hundred_hours:                 self.availability.thirteen_hundred               = not self.availability.thirteen_hundred
@@ -143,13 +144,14 @@ def main():
 
 
     class Event:
-        def __init__(self, name: str, voice_channel: VoiceChannel, participants: list, interaction: Interaction):
+        def __init__(self, name: str, voice_channel: VoiceChannel, participants: list, interaction: Interaction): #, weekly: bool
             self.name = name
             self.guild = interaction.guild
             self.text_channel = interaction.channel_id
             self.voice_channel = voice_channel
             self.participants = participants
             self.interaction = interaction
+            #self.requested_weekly = weekly
             self.buttons = []
             self.reason = ''
             self.nudges = ['respond', 'I showed you my event, pls respond', 'I\'m waiting for you', 'my brother in christ, click button(s)', 'your availability. hand it over', 'nudge', 'plz respond 🥺', 'I\'m literally crying rn omg, I need your availability', 'click button(s)', 'HURRY HURRY HURRY!', 'I want to create event: you sleep', 'I **NEED** AVAILABILITY!']
@@ -257,11 +259,14 @@ def main():
             self.all_label = "All"
             self.none_label = "None"
             self.unsub_label = "Unsubscribe"
+            self.weekly_label = "Can Attend Weekly"
             self.participant = participant
             self.event = event
             self.add_all_button()
             self.add_none_button()
             self.add_unsub_button()
+            #if self.event.requested_weekly:
+            #    self.add_weekly_button()
 
         def add_all_button(self):
             button = Button(label=self.all_label, style=ButtonStyle.blurple)
@@ -325,6 +330,23 @@ def main():
             button.callback = unsub_button_callback
             self.add_item(button)
 
+        # def add_weekly_button(self):
+        #     button = Button(label=self.weekly_label, style=ButtonStyle.gray)
+        #     async def weekly_button_callback(interaction: Interaction):
+        #         self.event.changed = True
+        #         self.event.ready_to_create = False
+        #         if button.style == ButtonStyle.gray:
+        #             button.style = ButtonStyle.green
+        #             self.participant.weekly = True
+        #             print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} can attend weekly')
+        #         else:
+        #             button.style = ButtonStyle.gray
+        #             self.participant.weekly = False
+        #             print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} cannot attend weekly')
+
+        #     button.callback = weekly_button_callback
+        #     self.add_item(button)
+
 
     class SchedulerClient(Client):
         FILENAME = 'info.json'
@@ -350,7 +372,8 @@ def main():
     @client.tree.command(name='schedule', description='Create a scheduling event.')
     @app_commands.describe(event_name='Name for the event.')
     @app_commands.describe(voice_channel="Voice channel for the event.")
-    async def schedule_command(interaction: Interaction, event_name: str, voice_channel: discord.VoiceChannel):
+    #@app_commands.describe(weekly="Whether you want this to be a weekly reoccuring event.")
+    async def schedule_command(interaction: Interaction, event_name: str, voice_channel: discord.VoiceChannel): #, weekly: bool = False
         # Put participants into a list
         participants = []
         print(f'{get_log_time()}> {event_name}> Received event request')
@@ -361,7 +384,7 @@ def main():
 
         curHour, curMinute = get_time()
 
-        if curHour == 1 and curMinute >= 30 and curHour < 7:
+        if curHour == 1 and curMinute >= 25 and curHour < 7:
             await interaction.response.send_message(f'It\'s late, you should go to bed. Try again later today.')
             return
 
@@ -370,7 +393,7 @@ def main():
             curTimeObj += datetime.timedelta(days=1)
 
         # Make event object
-        event = Event(event_name, voice_channel, participants, interaction)
+        event = Event(event_name, voice_channel, participants, interaction) #, weekly
         client.events.append(event)
         await interaction.response.send_message(f'{interaction.user.mention} wants to create an event called {event.name}. Check your DMs to share your availability!')
 
