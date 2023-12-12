@@ -458,7 +458,8 @@ def main():
         print(f'{get_log_time()}> {client.user} has connected to Discord!')
         for guild in client.guilds:
             for scheduled_event in guild.scheduled_events:
-                client.scheduled_events.append(scheduled_event)
+                if scheduled_event.start_time < datetime.datetime.now().astimezone() + datetime.timedelta(hours=13):
+                    client.scheduled_events.append(scheduled_event)
         await client.parse_scheduled_events()
         if not create_guild_event.is_running():
             create_guild_event.start()
@@ -496,7 +497,8 @@ def main():
     async def reschedule_command(interaction: Interaction, event_name: str, duration: int = 30):
         for guild in client.guilds:
             for scheduled_event in guild.scheduled_events:
-                client.scheduled_events.append(scheduled_event)
+                if scheduled_event.start_time < datetime.datetime.now().astimezone() + datetime.timedelta(hours=13):
+                    client.scheduled_events.append(scheduled_event)
         await client.parse_scheduled_events()
         event_name = event_name.lower()
         for event in client.events:
@@ -535,7 +537,8 @@ def main():
             # Add new events
             for scheduled_event in guild.scheduled_events:
                 if scheduled_event not in client.scheduled_events:
-                    client.scheduled_events.append(scheduled_event)
+                    if scheduled_event.start_time < datetime.datetime.now().astimezone() + datetime.timedelta(hours=13):
+                        client.scheduled_events.append(scheduled_event)
         await client.parse_scheduled_events()
 
         for event in client.events:
