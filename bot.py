@@ -26,9 +26,8 @@ def get_datetime_from_label(label: str):
     partitioned_time = label.partition(':')
     hour = int(partitioned_time[0])
     minute = int(partitioned_time[2])
-    time = datetime.datetime.now().astimezone()
-    time = time.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if time.hour < 2 and datetime.datetime.now().astimezone().hour > 7:
+    time = datetime.datetime.now().astimezone().replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if time.hour < 2 and datetime.datetime.now().astimezone().hour > 6:
         time += datetime.timedelta(days=1)
     return time
 
@@ -403,7 +402,7 @@ def main():
                             found = True
                             touched_events[event] = True
                             event.name = scheduled_event.name
-                            event.start_time = scheduled_event.start_time
+                            event.start_time = scheduled_event.start_time.replace(second=0, microsecond=0)
                             event.end_time = scheduled_event.end_time
                             if scheduled_event.entity_type == EntityType.external:
                                 location = scheduled_event.location
@@ -421,7 +420,7 @@ def main():
                         async for user in scheduled_event.users():
                             participants.append(Participant(user))
                         if scheduled_event.end_time:
-                            time_difference = scheduled_event.end_time - scheduled_event.start_time
+                            time_difference = scheduled_event.end_time.replace(second=0, microsecond=0) - scheduled_event.start_time.replace(second=0, microsecond=0)
                             duration = int(time_difference.total_seconds() / 60)
                         else:
                             duration = 30
@@ -431,8 +430,8 @@ def main():
                             location = client.get_channel(scheduled_event.channel_id)
                         event = Event(scheduled_event.name, scheduled_event.entity_type, location, participants, scheduled_event.guild, scheduled_event.guild.text_channels[0], duration)
                         event.created = True
-                        event.start_time = scheduled_event.start_time
-                        event.end_time = event.start_time + datetime.timedelta(minutes=duration)
+                        event.start_time = scheduled_event.start_time.replace(second=0, microsecond=0)
+                        event.end_time = event.start_time.replace(second=0, microsecond=0) + datetime.timedelta(minutes=duration)
                         event.voice_channel = location
                         event.scheduled_event = scheduled_event
                         self.events.append(event)
