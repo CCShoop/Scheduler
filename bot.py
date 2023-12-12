@@ -212,7 +212,7 @@ def main():
 
         async def dm_all_participants(self, interaction: Interaction, duration: int = 30, reschedule: bool = False):
             curHour, curMinute = get_time()
-            curTimeObj = datetime.datetime(2000, 1, 1, curHour, curMinute)
+            curTimeObj = datetime.datetime(2000, 1, 1, curHour, curMinute).replace(second=0, microsecond=0)
             for participant in self.participants:
                 buttonFlag = False
                 while (participant.msg_lock):
@@ -230,7 +230,7 @@ def main():
                     labelMinute = int(labelTime[2])
 
                     if not buttonFlag:
-                        labelTimeObj = datetime.datetime(2000, 1, 1, labelHour, labelMinute)
+                        labelTimeObj = datetime.datetime(2000, 1, 1, labelHour, labelMinute).replace(second=0, microsecond=0)
                         if labelHour < 2:
                             labelTimeObj += datetime.timedelta(days=1)
                         buttonFlag = curTimeObj + datetime.timedelta(minutes=5) < labelTimeObj
@@ -479,14 +479,9 @@ def main():
                 participants.append(participant)
 
         curHour, curMinute = get_time()
-
         if curHour == 1 and curMinute >= 25 and curHour < 7:
             await interaction.response.send_message(f'It\'s late, you should go to bed. Try again later today.')
             return
-
-        curTimeObj = datetime.datetime(2000, 1, 1, curHour, curMinute)
-        if curHour < 2:
-            curTimeObj += datetime.timedelta(days=1)
 
         # Make event object
         event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, duration) #, weekly
