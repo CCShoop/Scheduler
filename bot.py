@@ -6,8 +6,9 @@ import discord
 import timestamps
 import datetime
 from time import sleep
+from typing import Literal
 from dotenv import load_dotenv
-from discord import app_commands, Interaction, Intents, Client, ButtonStyle, VoiceChannel
+from discord import app_commands, Interaction, Intents, Client, ButtonStyle, EventStatus, EntityType, TextChannel, VoiceChannel, ScheduledEvent, Guild
 from discord.ui import View, Button
 from discord.ext import tasks
 
@@ -144,13 +145,13 @@ def main():
 
 
     class Event:
-        def __init__(self, name: str, voice_channel: VoiceChannel, participants: list, interaction: Interaction): #, weekly: bool
+        def __init__(self, name: str, entity_type: EntityType, voice_channel: VoiceChannel, participants: list, guild: Guild, text_channel: TextChannel, duration: int): #, weekly: bool
             self.name = name
-            self.guild = interaction.guild
-            self.text_channel = interaction.channel_id
+            self.guild = guild
+            self.entity_type = entity_type
+            self.text_channel = text_channel
             self.voice_channel = voice_channel
             self.participants = participants
-            self.interaction = interaction
             #self.requested_weekly = weekly
             self.buttons = []
             self.reason = ''
@@ -158,9 +159,11 @@ def main():
             self.nudge_unresponded_timer = 30
             self.ready_to_create = False
             self.created = False
+            self.scheduled_event: ScheduledEvent
             self.changed = False
             self.start_time = None
             self.end_time = None
+            self.duration = duration
             self.valid = True
 
         def check_times(self):
@@ -189,7 +192,7 @@ def main():
                 self.valid = False
                 return
             self.start_time = get_datetime_from_label(shared_time_slot)
-            self.end_time = self.start_time + datetime.timedelta(minutes=30)
+            self.end_time = self.start_time + datetime.timedelta(minutes=self.duration)
             print(f'{get_log_time()}> {self.name}> Ready to create event on {self.start_time.month}/{self.start_time.day}/{self.start_time.year} at {self.start_time.hour}:{self.start_time.minute}')
             self.ready_to_create = True
 
@@ -207,6 +210,40 @@ def main():
                     everyoneAnswered = everyoneAnswered and participant.answered
             return everyoneAnswered
 
+        async def dm_all_participants(self, interaction: Interaction, duration: int = 30, reschedule: bool = False):
+            curHour, curMinute = get_time()
+            curTimeObj = datetime.datetime(2000, 1, 1, curHour, curMinute)
+            for participant in self.participants:
+                buttonFlag = False
+                while (participant.msg_lock):
+                    sleep(3)
+                participant.msg_lock = True
+                if reschedule:
+                    await participant.member.send(f'⬇️⬇️⬇️⬇️⬇️ __**{self.name}**__ ⬇️⬇️⬇️⬇️⬇️\n**Loading buttons, please wait.**\n{interaction.user.name} wants to **reschedule** {self.name}.\nThe event will last {duration} minutes.')
+                else:
+                    await participant.member.send(f'⬇️⬇️⬇️⬇️⬇️ __**{self.name}**__ ⬇️⬇️⬇️⬇️⬇️\n**Loading buttons, please wait.**\n{interaction.user.name} wants to create an event called {self.name}.\nThe event will last {duration} minutes.')
+                print(f'{get_log_time()}> {self.name}> Sending buttons to {participant.member.name}')
+
+                for button_label in timestamps.all_timestamps:
+                    labelTime = button_label.partition(':')
+                    labelHour = int(labelTime[0])
+                    labelMinute = int(labelTime[2])
+
+                    if not buttonFlag:
+                        labelTimeObj = datetime.datetime(2000, 1, 1, labelHour, labelMinute)
+                        if labelHour < 2:
+                            labelTimeObj += datetime.timedelta(days=1)
+                        buttonFlag = curTimeObj + datetime.timedelta(minutes=5) < labelTimeObj
+
+                    if buttonFlag:
+                        await participant.member.send(view=TimeButton(label=button_label, participant=participant, event=self))
+
+                await participant.member.send(view=OtherButtons(participant=participant, event=self))
+                await participant.member.send(f'Select **all** of the 30 minute blocks you could be available to attend {self.name}!\n"None" will stop the event from being created, so click "Unsubscribe" if you want the event to occur with or without you.\n'
+                                            f'The event will be either created or cancelled 1-2 minutes after the last person responds, which renders the buttons useless.\n'f'⬆️⬆️⬆️⬆️⬆️ __**{self.name}**__ ⬆️⬆️⬆️⬆️⬆️')
+                participant.msg_lock = False
+            print(f'{get_log_time()}> {self.name}> Done DMing participants')
+
         def nudge_timer(self):
             self.nudge_unresponded_timer -= 1
             if self.nudge_unresponded_timer == 0:
@@ -219,12 +256,6 @@ def main():
                 if not participant.answered:
                     await participant.member.send(random.choice(self.nudges))
                     print(f'{get_log_time()}> {self.name}> Nudged {participant.member.name}')
-
-        async def send_5_min_warning(self):
-            await self.interaction.channel.send(f'**5 minute warning!** {self.name} will begin in 5 minutes.')
-
-        async def send_start_warning(self):
-            await self.interaction.channel.send(f'**Event starting now!** {self.name} is starting now!')
 
 
     class TimeButton(View):
@@ -355,6 +386,66 @@ def main():
             super(SchedulerClient, self).__init__(intents=intents)
             self.tree = app_commands.CommandTree(self)
             self.events = []
+            self.scheduled_events = []
+
+        async def parse_scheduled_events(self):
+            # track events that we find an existing scheduled event for
+            touched_events = {}
+            for event in self.events:
+                touched_events[event] = False
+            for scheduled_event in self.scheduled_events:
+                if scheduled_event.status == EventStatus.scheduled:
+                    found = False
+                    for event in self.events:
+                        if not event.created:
+                            continue
+                        if scheduled_event.id == event.scheduled_event.id:
+                            found = True
+                            touched_events[event] = True
+                            event.name = scheduled_event.name
+                            event.start_time = scheduled_event.start_time
+                            event.end_time = scheduled_event.end_time
+                            if scheduled_event.entity_type == EntityType.external:
+                                location = scheduled_event.location
+                            else:
+                                location = client.get_channel(scheduled_event.channel_id)
+                            event.voice_channel = location
+                            participants = []
+                            async for user in scheduled_event.users():
+                                participants.append(Participant(user))
+                            event.participants = participants
+                            break
+                    # create event in memory to match existing scheduled event
+                    if not found:
+                        participants = []
+                        async for user in scheduled_event.users():
+                            participants.append(Participant(user))
+                        if scheduled_event.end_time:
+                            time_difference = scheduled_event.end_time - scheduled_event.start_time
+                            duration = int(time_difference.total_seconds() / 60)
+                        else:
+                            duration = 30
+                        if scheduled_event.entity_type == EntityType.external:
+                            location = scheduled_event.location
+                        else:
+                            location = client.get_channel(scheduled_event.channel_id)
+                        event = Event(scheduled_event.name, scheduled_event.entity_type, location, participants, scheduled_event.guild, scheduled_event.guild.text_channels[0], duration)
+                        event.created = True
+                        event.start_time = scheduled_event.start_time
+                        event.end_time = event.start_time + datetime.timedelta(minutes=duration)
+                        event.voice_channel = location
+                        event.scheduled_event = scheduled_event
+                        self.events.append(event)
+                        print(f'{get_log_time()}> Found event {scheduled_event.name} and added to memory')
+                        for event in self.events:
+                            print(f'{get_log_time()}> {event.name}> participants:')
+                            for participant in participants:
+                                print(f'{get_log_time()}> {event.name}> \t{participant.member.name}')
+            # if a memory event is marked as created but doesn't have a scheduled event, delete it
+            for event in touched_events:
+                if not touched_events[event] and event.created:
+                    self.events.remove(event)
+                    print(f'{get_log_time()}> Did not find event {event.name} and removed from memory')
 
         async def setup_hook(self):
             await self.tree.sync()
@@ -365,18 +456,23 @@ def main():
 
     @client.event
     async def on_ready():
+        print(f'{get_log_time()}> {client.user} has connected to Discord!')
+        for guild in client.guilds:
+            for scheduled_event in guild.scheduled_events:
+                client.scheduled_events.append(scheduled_event)
+        await client.parse_scheduled_events()
         if not create_guild_event.is_running():
             create_guild_event.start()
-        print(f'{get_log_time()}> {client.user} has connected to Discord!')
 
     @client.tree.command(name='schedule', description='Create a scheduling event.')
     @app_commands.describe(event_name='Name for the event.')
     @app_commands.describe(voice_channel="Voice channel for the event.")
+    @app_commands.describe(duration="Event duration in minutes (30 minutes default).")
     #@app_commands.describe(weekly="Whether you want this to be a weekly reoccuring event.")
-    async def schedule_command(interaction: Interaction, event_name: str, voice_channel: discord.VoiceChannel): #, weekly: bool = False
+    async def schedule_command(interaction: Interaction, event_name: str, voice_channel: discord.VoiceChannel, duration: int = 30): #, weekly: bool = False
         # Put participants into a list
         participants = []
-        print(f'{get_log_time()}> {event_name}> Received event request')
+        print(f'{get_log_time()}> {event_name}> Received event request from {interaction.user.name}')
         for member in interaction.channel.members:
             if not member.bot:
                 participant = Participant(member)
@@ -393,51 +489,60 @@ def main():
             curTimeObj += datetime.timedelta(days=1)
 
         # Make event object
-        event = Event(event_name, voice_channel, participants, interaction) #, weekly
+        event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, duration) #, weekly
         client.events.append(event)
         await interaction.response.send_message(f'{interaction.user.mention} wants to create an event called {event.name}. Check your DMs to share your availability!')
 
-        for participant in event.participants:
-            buttonFlag = False
-            while (participant.msg_lock):
-                sleep(1)
-            participant.msg_lock = True
-            await participant.member.send(f'⬇️⬇️⬇️⬇️⬇️ __**{event.name}**__ ⬇️⬇️⬇️⬇️⬇️\n**Loading buttons, please wait.**\n{interaction.user.name} wants to create an event called {event.name}.')
-            print(f'{get_log_time()}> {event_name}> Sending buttons to {participant.member.name}')
+        await event.dm_all_participants(interaction, duration)
 
-            for button_label in timestamps.all_timestamps:
-                labelTime = button_label.partition(':')
-                labelHour = int(labelTime[0])
-                labelMinute = int(labelTime[2])
 
-                if not buttonFlag:
-                    labelTimeObj = datetime.datetime(2000, 1, 1, labelHour, labelMinute)
-                    if labelHour < 2:
-                        labelTimeObj += datetime.timedelta(days=1)
-                    buttonFlag = curTimeObj + datetime.timedelta(minutes=5) < labelTimeObj
-
-                if buttonFlag:
-                    await participant.member.send(view=TimeButton(label=button_label, participant=participant, event=event))
-
-            await participant.member.send(view=OtherButtons(participant=participant, event=event))
-            await participant.member.send(f'Select **all** of the 30 minute blocks you could be available to attend {event.name}!\n"None" will stop the event from being created, so click "Unsubscribe" if you want the event to occur with or without you.\n'
-                                          f'The event will be either created or cancelled 1-2 minutes after the last person responds, which renders the buttons useless.\n'f'⬆️⬆️⬆️⬆️⬆️ __**{event.name}**__ ⬆️⬆️⬆️⬆️⬆️')
-            participant.msg_lock = False
-        print(f'{get_log_time()}> {event_name}> Done DMing participants')
+    @client.tree.command(name='reschedule', description='Reschedule an existing scheduled event.')
+    @app_commands.describe(event_name='Type the name of the event you want to reschedule.')
+    @app_commands.describe(duration='Event duration in minutes (default 30 minutes).')
+    async def reschedule_command(interaction: Interaction, event_name: str, duration: int = 30):
+        for guild in client.guilds:
+            for scheduled_event in guild.scheduled_events:
+                client.scheduled_events.append(scheduled_event)
+        await client.parse_scheduled_events()
+        event_name = event_name.lower()
+        for event in client.events:
+            if event_name == event.name.lower():
+                print(f'{get_log_time()}> {event.name}> {interaction.user.name} requested reschedule')
+                if event.created:
+                    new_event = Event(event.name, event.entity_type, event.voice_channel, event.participants, event.guild, interaction.channel, duration) #, weekly
+                    await event.scheduled_event.cancel()
+                    client.events.remove(event)
+                    client.events.append(new_event)
+                    await interaction.response.send_message(f'{interaction.user.mention} wants to reschedule {new_event.name}. Check your DMs to share your availability!')
+                    await new_event.dm_all_participants(interaction, duration, reschedule=True)
+                else:
+                    await interaction.response.send_message(f'{event.name} has not been created yet. Your buttons will work until it is created or cancelled.')
+                return
+        await interaction.response.send_message(f'Could not find event {event_name}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}')
 
 
     @tasks.loop(minutes=1)
     async def create_guild_event():
+        curTime = datetime.datetime.now().astimezone().replace(second=0, microsecond=0)
         for event in client.events.copy():
             if not event.valid:
-                channel = client.get_channel(int(event.interaction.channel_id))
-                await channel.send('No shared availability has been found. The event scheduling has been cancelled. ' + event.reason)
+                await event.text_channel.send('No shared availability has been found. The event scheduling has been cancelled.\n' + event.reason)
                 client.events.remove(event)
                 print(f'{get_log_time()}> {event.name}> Event invalid, removed event from memory')
-            elif event.created and get_datetime_from_label('01:30') <= datetime.datetime.now().astimezone():
+            elif event.created and get_datetime_from_label('01:30') <= curTime:
                 client.events.remove(event)
                 print(f'{get_log_time()}> {event.name}> last time slot passed, removed event from memory')
 
+        for guild in client.guilds:
+            # Clean removed events
+            for scheduled_event in client.scheduled_events:
+                if scheduled_event not in guild.scheduled_events:
+                    client.scheduled_events.remove(scheduled_event)
+            # Add new events
+            for scheduled_event in guild.scheduled_events:
+                if scheduled_event not in client.scheduled_events:
+                    client.scheduled_events.append(scheduled_event)
+        await client.parse_scheduled_events()
 
         for event in client.events:
             everyoneAnswered = event.has_everyone_answered()
@@ -446,10 +551,16 @@ def main():
                 await event.nudge_unresponded_participants()
 
             if event.created:
-                if datetime.datetime.now().astimezone().hour == event.start_time.hour and (datetime.datetime.now().astimezone() + datetime.timedelta(minutes=5)).minute == event.start_time.minute:
-                    await event.send_5_min_warning()
-                if datetime.datetime.now().astimezone().hour == event.start_time.hour and datetime.datetime.now().astimezone().minute == event.start_time.minute:
-                    await event.send_start_warning()
+                if curTime + datetime.timedelta(minutes=5) == event.start_time:
+                    await event.text_channel.send(f'**5 minute warning!** {event.name} will start in 5 minutes.')
+                elif curTime == event.start_time:
+                    await event.text_channel.send(f'**Event starting now!** {event.name} is starting now.')
+                    await event.scheduled_event.start()
+                elif curTime == event.end_time:
+                    await event.text_channel.send(f'**Event ending now!** {event.name} is ending now.')
+                    await event.scheduled_event.end()
+                    client.scheduled_events.remove(event.scheduled_event)
+                    client.events.remove(event)
                 continue
             if event.changed or not everyoneAnswered:
                 event.changed = False
@@ -459,10 +570,13 @@ def main():
 
             if event.ready_to_create:
                 privacy_level = discord.PrivacyLevel.guild_only
-                await event.guild.create_scheduled_event(name=event.name, description='Bot generated event based on participant availabilities provided', start_time=event.start_time, end_time=event.end_time, channel=event.voice_channel, privacy_level=privacy_level)
-                print(f'{get_log_time()}> {event.name}> Created event starting at {event.start_time.hour}:{event.start_time.minute} and ending at {event.end_time.hour}:{event.end_time.minute}')
+                event.scheduled_event = await event.guild.create_scheduled_event(name=event.name, description='Bot generated event based on participant availabilities provided', start_time=event.start_time, end_time=event.end_time, entity_type=event.entity_type, channel=event.voice_channel, privacy_level=privacy_level)
+                for participant in event.participants:
+                    event.scheduled_event._add_user(participant.member)
+                client.scheduled_events.append(event.scheduled_event)
                 event.ready_to_create = False
                 event.created = True
+                print(f'{get_log_time()}> {event.name}> Created event starting at {event.start_time.hour}:{event.start_time.minute} and ending at {event.end_time.hour}:{event.end_time.minute}')
 
                 mentions = ''
                 unsubbed = ''
@@ -473,15 +587,14 @@ def main():
                         unsubbed += f'{participant.member.name} '
                 if unsubbed != '':
                     unsubbed = '\nUnsubscribed: ' + unsubbed
-                channel = client.get_channel(int(event.interaction.channel_id))
                 if event.start_time.hour < 10 and event.start_time.minute < 10:
-                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed)
+                    await event.text_channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed)
                 elif event.start_time.hour < 10 and event.start_time.minute >= 10:
-                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed)
+                    await event.text_channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed)
                 elif event.start_time.hour >= 10 and event.start_time.minute < 10:
-                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed)
+                    await event.text_channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed)
                 else:
-                    await channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed)
+                    await event.text_channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed)
 
     client.run(discord_token)
 
