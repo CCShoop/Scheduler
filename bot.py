@@ -393,7 +393,7 @@ def main():
             for event in self.events:
                 touched_events[event] = False
             for scheduled_event in self.scheduled_events:
-                if scheduled_event.status == EventStatus.scheduled:
+                if scheduled_event.status == EventStatus.scheduled or scheduled_event.status == EventStatus.active:
                     found = False
                     for event in self.events:
                         if not event.created:
