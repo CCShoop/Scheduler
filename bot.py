@@ -442,7 +442,7 @@ def main():
                                 print(f'{get_log_time()}> {event.name}> \t{participant.member.name}')
             # if a memory event is marked as created but doesn't have a scheduled event, delete it
             for event in touched_events:
-                if not touched_events[event] and event.created:
+                if not touched_events[event] and event.created and not event.scheduled_event:
                     self.events.remove(event)
                     print(f'{get_log_time()}> Did not find event {event.name} and removed from memory')
 
