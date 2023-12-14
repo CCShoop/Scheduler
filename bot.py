@@ -555,7 +555,10 @@ def main():
                     await event.scheduled_event.start()
                 elif curTime == event.end_time:
                     await event.text_channel.send(f'**Event ending now!** {event.name} is ending now.')
-                    await event.scheduled_event.end()
+                    if event.scheduled_event.status == EventStatus.active:
+                        await event.scheduled_event.end()
+                    else:
+                        await event.scheduled_event.cancel()
                     client.scheduled_events.remove(event.scheduled_event)
                     client.events.remove(event)
                 continue
