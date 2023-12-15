@@ -252,7 +252,7 @@ def main():
 
         async def nudge_unresponded_participants(self):
             for participant in self.participants:
-                if self.created and not participant.answered:
+                if participant.answered:
                     await participant.member.send(random.choice(self.nudges))
                     print(f'{get_log_time()}> {self.name}> Nudged {participant.member.name}')
 
@@ -402,6 +402,7 @@ def main():
                             found = True
                             touched_events[event] = True
                             event.name = scheduled_event.name
+                            event.created = True
                             event.start_time = scheduled_event.start_time.replace(second=0, microsecond=0)
                             event.end_time = scheduled_event.end_time
                             if scheduled_event.entity_type == EntityType.external:
@@ -544,7 +545,7 @@ def main():
         for event in client.events:
             everyoneAnswered = event.has_everyone_answered()
 
-            if not everyoneAnswered and event.nudge_timer():
+            if not event.scheduled_event and not everyoneAnswered and event.nudge_timer():
                 await event.nudge_unresponded_participants()
 
             if event.created:
