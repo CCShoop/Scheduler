@@ -252,7 +252,7 @@ def main():
 
         async def nudge_unresponded_participants(self):
             for participant in self.participants:
-                if not participant.answered:
+                if self.created and not participant.answered:
                     await participant.member.send(random.choice(self.nudges))
                     print(f'{get_log_time()}> {self.name}> Nudged {participant.member.name}')
 
