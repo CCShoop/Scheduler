@@ -8,7 +8,7 @@ import datetime
 from time import sleep
 from typing import Literal
 from dotenv import load_dotenv
-from discord import app_commands, Interaction, Intents, Client, ButtonStyle, EventStatus, EntityType, TextChannel, VoiceChannel, ScheduledEvent, Guild
+from discord import app_commands, Interaction, Intents, Client, ButtonStyle, EventStatus, EntityType, TextChannel, VoiceChannel, ScheduledEvent, Guild, Role
 from discord.ui import View, Button
 from discord.ext import tasks
 
@@ -479,21 +479,26 @@ def main():
     @client.tree.command(name='schedule', description='Create a scheduling event.')
     @app_commands.describe(event_name='Name for the event.')
     @app_commands.describe(voice_channel="Voice channel for the event.")
+    @app_commands.describe(role='Only add users with this role as participants.')
     @app_commands.describe(duration="Event duration in minutes (30 minutes default).")
     #@app_commands.describe(weekly="Whether you want this to be a weekly reoccuring event.")
-    async def schedule_command(interaction: Interaction, event_name: str, voice_channel: discord.VoiceChannel, duration: int = 30): #, weekly: bool = False
-        # Put participants into a list
-        participants = []
-        print(f'{get_log_time()}> {event_name}> Received event request from {interaction.user.name}')
-        for member in interaction.channel.members:
-            if not member.bot:
-                participant = Participant(member)
-                participants.append(participant)
-
+    async def schedule_command(interaction: Interaction, event_name: str, voice_channel: VoiceChannel, role: str = None, duration: int = 30): #, weekly: bool = False
         curHour, curMinute = get_time()
         if curHour == 1 and curMinute >= 25 and curHour < 7:
             await interaction.response.send_message(f'It\'s late, you should go to bed. Try again later today.')
             return
+
+        # Put participants into a list
+        participants = []
+        print(f'{get_log_time()}> {event_name}> Received event request from {interaction.user.name}')
+        if role != None:
+            role = discord.utils.find(lambda r: r.name.lower() == role.lower(), interaction.guild.roles)
+        for member in interaction.channel.members:
+            if not member.bot:
+                if role != None and role not in member.roles:
+                    continue
+                participant = Participant(member)
+                participants.append(participant)
 
         # Make event object
         event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, duration) #, weekly
