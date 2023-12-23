@@ -262,6 +262,11 @@ def main():
                 mentions = 'Waiting for a response from these participants:\n' + mentions
                 await self.text_channel.send_message(mentions)
 
+        def remove(self):
+            for participant in self.participants:
+                await participant.member.send(f'Scheduling of {self.name} has been cancelled.')
+            client.events.remove(self)
+
 
     class TimeButton(View):
         def __init__(self, label: str, participant: Participant, event: Event):
@@ -514,7 +519,7 @@ def main():
                 if event.created:
                     new_event = Event(event.name, event.entity_type, event.voice_channel, event.participants, event.guild, interaction.channel, duration) #, weekly
                     await event.scheduled_event.cancel()
-                    client.events.remove(event)
+                    event.remove()
                     client.events.append(new_event)
                     await interaction.response.send_message(f'{interaction.user.mention} wants to reschedule {new_event.name}. Check your DMs to share your availability!')
                     await new_event.dm_all_participants(interaction, duration, reschedule=True)
@@ -530,10 +535,10 @@ def main():
         for event in client.events.copy():
             if not event.valid:
                 await event.text_channel.send('No shared availability has been found. The event scheduling has been cancelled.\n' + event.reason)
-                client.events.remove(event)
+                event.remove()
                 print(f'{get_log_time()}> {event.name}> Event invalid, removed event from memory')
             elif get_datetime_from_label('01:30') <= curTime:
-                client.events.remove(event)
+                event.remove()
                 print(f'{get_log_time()}> {event.name}> last time slot passed, removed event from memory')
 
         for guild in client.guilds:
