@@ -526,7 +526,7 @@ def main():
                 await event.text_channel.send('No shared availability has been found. The event scheduling has been cancelled.\n' + event.reason)
                 client.events.remove(event)
                 print(f'{get_log_time()}> {event.name}> Event invalid, removed event from memory')
-            elif event.created and get_datetime_from_label('01:30') <= curTime:
+            elif get_datetime_from_label('01:30') <= curTime:
                 client.events.remove(event)
                 print(f'{get_log_time()}> {event.name}> last time slot passed, removed event from memory')
 
