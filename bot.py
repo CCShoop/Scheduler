@@ -262,7 +262,7 @@ def main():
                 mentions = 'Waiting for a response from these participants:\n' + mentions
                 await self.text_channel.send_message(mentions)
 
-        def remove(self):
+        async def remove(self):
             for participant in self.participants:
                 await participant.member.send(f'Scheduling of {self.name} has been cancelled.')
             client.events.remove(self)
