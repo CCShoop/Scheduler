@@ -158,7 +158,7 @@ def main():
             self.nudge_unresponded_timer = 30
             self.ready_to_create = False
             self.created = False
-            self.scheduled_event: ScheduledEvent
+            self.scheduled_event: ScheduledEvent = None
             self.changed = False
             self.start_time = None
             self.end_time = None
