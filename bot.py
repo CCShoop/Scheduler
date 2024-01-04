@@ -260,7 +260,7 @@ def main():
                     mentions += f'{participant.member.mention} '
             if mentions != '':
                 mentions = 'Waiting for a response from these participants:\n' + mentions
-                await self.text_channel.send_message(mentions)
+                await self.text_channel.send(mentions)
 
         async def remove(self):
             for participant in self.participants:
