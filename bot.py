@@ -308,8 +308,8 @@ def main():
             self.add_all_button()
             self.add_none_button()
             self.add_unsub_button()
-            #if self.event.requested_weekly:
-            #    self.add_weekly_button()
+            # if self.event.requested_weekly:
+            #     self.add_weekly_button()
 
         def add_all_button(self):
             button = Button(label=self.all_label, style=ButtonStyle.blurple)
@@ -483,7 +483,7 @@ def main():
     @app_commands.describe(voice_channel="Voice channel for the event.")
     @app_commands.describe(role='Only add users with this role as participants.')
     @app_commands.describe(duration="Event duration in minutes (30 minutes default).")
-    #@app_commands.describe(weekly="Whether you want this to be a weekly reoccuring event.")
+    # @app_commands.describe(weekly="Whether you want this to be a weekly reoccuring event.")
     async def schedule_command(interaction: Interaction, event_name: str, voice_channel: VoiceChannel, role: str = None, duration: int = 30): #, weekly: bool = False
         curHour, curMinute = get_time()
         if curHour == 1 and curMinute >= 25 and curHour < 7:
