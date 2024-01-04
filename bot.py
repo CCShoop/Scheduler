@@ -2,13 +2,11 @@
 
 import os
 import random
-import discord
 import timestamps
 import datetime
 from time import sleep
-from typing import Literal
 from dotenv import load_dotenv
-from discord import app_commands, Interaction, Intents, Client, ButtonStyle, EventStatus, EntityType, TextChannel, VoiceChannel, ScheduledEvent, Guild, Role
+from discord import app_commands, Interaction, Intents, Client, ButtonStyle, EventStatus, EntityType, TextChannel, VoiceChannel, ScheduledEvent, Guild, PrivacyLevel, utils
 from discord.ui import View, Button
 from discord.ext import tasks
 
@@ -494,7 +492,7 @@ def main():
         participants = []
         print(f'{get_log_time()}> {event_name}> Received event request from {interaction.user.name}')
         if role != None:
-            role = discord.utils.find(lambda r: r.name.lower() == role.lower(), interaction.guild.roles)
+            role = utils.find(lambda r: r.name.lower() == role.lower(), interaction.guild.roles)
         for member in interaction.channel.members:
             if not member.bot:
                 if role != None and role not in member.roles:
@@ -587,7 +585,7 @@ def main():
             event.check_times()
 
             if event.ready_to_create:
-                privacy_level = discord.PrivacyLevel.guild_only
+                privacy_level = PrivacyLevel.guild_only
                 event.scheduled_event = await event.guild.create_scheduled_event(name=event.name, description='Bot generated event based on participant availabilities provided', start_time=event.start_time, end_time=event.end_time, entity_type=event.entity_type, channel=event.voice_channel, privacy_level=privacy_level)
                 for participant in event.participants:
                     event.scheduled_event._add_user(participant.member)
