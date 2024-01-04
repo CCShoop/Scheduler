@@ -251,8 +251,10 @@ def main():
             return False
 
         async def nudge_unresponded_participants(self):
+            if not self.nudge_timer() or self.created or self.has_everyone_answered():
+                return
             for participant in self.participants:
-                if participant.answered:
+                if not participant.answered:
                     await participant.member.send(random.choice(self.nudges))
                     print(f'{get_log_time()}> {self.name}> Nudged {participant.member.name}')
 
@@ -545,8 +547,7 @@ def main():
         for event in client.events:
             everyoneAnswered = event.has_everyone_answered()
 
-            if not event.scheduled_event and not everyoneAnswered and event.nudge_timer():
-                await event.nudge_unresponded_participants()
+            await event.nudge_unresponded_participants()
 
             if event.created:
                 if curTime + datetime.timedelta(minutes=5) == event.start_time:
