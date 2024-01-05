@@ -537,7 +537,7 @@ def main():
                         client.guild_scheduled_events[guild.name].remove(local_scheduled_event)
                         client.scheduled_events.remove(local_scheduled_event)
                         print(f'{get_log_time()}> {local_scheduled_event.name}> Guild scheduled_event is gone, removed from local scheduled_events')
-            except: print(f'{get_log_time()}> No local scheduled events to remove')
+            except: pass
             # Add new events
             for guild_scheduled_event in guild.scheduled_events:
                 if guild_scheduled_event.name not in local_scheduled_event_names:
@@ -570,16 +570,20 @@ def main():
                 if curTime + timedelta(minutes=5) == event.start_time:
                     await event.text_channel.send(f'**5 minute warning!** {event.name} will start in 5 minutes.')
                 elif curTime == event.start_time:
-                    await event.text_channel.send(f'**Event starting now!** {event.name} is starting now.')
-                    await event.scheduled_event.start(reason='It is the event\'s start time.')
+                    try:
+                        await event.scheduled_event.start(reason='It is the event\'s start time.')
+                        await event.text_channel.send(f'**Event starting now!** {event.name} is starting now.')
+                    except: pass
                 elif curTime == event.end_time:
-                    await event.text_channel.send(f'**Event ending now!** {event.name} is ending now.')
-                    if event.scheduled_event.status == EventStatus.active:
-                        await event.scheduled_event.end(reason='It is the event\'s end time.')
-                    else:
-                        await event.scheduled_event.cancel(reason='It is the event\'s end time.')
-                    client.scheduled_events.remove(event.scheduled_event)
-                    client.events.remove(event)
+                    try:
+                        if event.scheduled_event.status == EventStatus.active:
+                            await event.scheduled_event.end(reason='It is the event\'s end time.')
+                        else:
+                            await event.scheduled_event.cancel(reason='It is the event\'s end time.')
+                        await event.text_channel.send(f'**Event ending now!** {event.name} is ending now.')
+                        client.scheduled_events.remove(event.scheduled_event)
+                        client.events.remove(event)
+                    except: pass
                 continue
             if event.changed or not event.has_everyone_answered():
                 event.changed = False
