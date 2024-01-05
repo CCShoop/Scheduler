@@ -394,6 +394,7 @@ def main():
             self.tree = app_commands.CommandTree(self)
             self.events = []
             self.scheduled_events = []
+            self.guild_scheduled_events = {}
             self.msg_lock = Lock()
 
         async def parse_scheduled_events(self):
@@ -445,11 +446,10 @@ def main():
                         event.voice_channel = location
                         event.scheduled_event = scheduled_event
                         self.events.append(event)
-                        print(f'{get_log_time()}> Found event {scheduled_event.name} and added to memory')
-                        for event in self.events:
-                            print(f'{get_log_time()}> {event.name}> participants:')
-                            for participant in participants:
-                                print(f'{get_log_time()}> {event.name}> \t{participant.member.name}')
+                        print(f'{get_log_time()}> {event.name}> Found event and added to memory')
+                        print(f'{get_log_time()}> {event.name}> participants:')
+                        for participant in event.participants:
+                            print(f'{get_log_time()}> {event.name}> \t{participant.member.name}')
             # if a memory event is marked as created but doesn't have a scheduled event, delete it
             for event in touched_events:
                 if not touched_events[event] and event.created and not event.scheduled_event:
@@ -466,11 +466,6 @@ def main():
     @client.event
     async def on_ready():
         print(f'{get_log_time()}> {client.user} has connected to Discord!')
-        for guild in client.guilds:
-            for scheduled_event in guild.scheduled_events:
-                if scheduled_event.start_time < datetime.now().astimezone() + timedelta(hours=13):
-                    client.scheduled_events.append(scheduled_event)
-        await client.parse_scheduled_events()
         if not create_guild_event.is_running():
             create_guild_event.start()
 
@@ -532,37 +527,41 @@ def main():
 
     @tasks.loop(minutes=1)
     async def create_guild_event():
+        local_scheduled_event_names = [scheduled_event.name for scheduled_event in client.scheduled_events]
+        for guild in client.guilds:
+            guild_scheduled_event_names = [scheduled_event.name for scheduled_event in guild.scheduled_events]
+            # Clean removed events
+            try:
+                for local_scheduled_event in client.guild_scheduled_events[guild.name].copy():
+                    if local_scheduled_event.name not in guild_scheduled_event_names:
+                        client.guild_scheduled_events[guild.name].remove(local_scheduled_event)
+                        client.scheduled_events.remove(local_scheduled_event)
+                        print(f'{get_log_time()}> {local_scheduled_event.name}> Guild scheduled_event is gone, removed from local scheduled_events')
+            except: print(f'{get_log_time()}> No local scheduled events to remove')
+            # Add new events
+            for guild_scheduled_event in guild.scheduled_events:
+                if guild_scheduled_event.name not in local_scheduled_event_names:
+                    try:
+                        guild_events = client.guild_scheduled_events[guild.name]
+                        guild_events.append(guild_scheduled_event)
+                    except:
+                        guild_events = [guild_scheduled_event]
+                    client.guild_scheduled_events[guild.name] = guild_events
+                    client.scheduled_events.append(guild_scheduled_event)
+                    print(f'{get_log_time()}> {guild_scheduled_event.name}> New guild scheduled_event, added to local scheduled_events')
+        await client.parse_scheduled_events()
+
         curTime = datetime.now().astimezone().replace(second=0, microsecond=0)
         for event in client.events.copy():
             if not event.valid:
                 await event.text_channel.send(f'No shared availability has been found. Scheduling for {event.name} has been cancelled.\n' + event.reason)
+                for participant in event.participants:
+                    await participant.member.send(f'Scheduling for {event.name} has been cancelled.')
                 await event.remove()
                 print(f'{get_log_time()}> {event.name}> Event invalid, removed event from memory')
             elif get_datetime_from_label('01:30') <= curTime:
                 await event.remove()
                 print(f'{get_log_time()}> {event.name}> last time slot passed, removed event from memory')
-
-        for guild in client.guilds:
-            # Clean removed events
-            for local_scheduled_event in client.scheduled_events:
-                found = False
-                for guild_scheduled_event in guild.scheduled_events:
-                    if local_scheduled_event.name == guild_scheduled_event.name:
-                        found = True
-                        break
-                if not found:
-                    client.scheduled_events.remove(local_scheduled_event)
-                    print(f'{get_log_time()}> {local_scheduled_event.name}> Guild scheduled_event is gone, removed local scheduled_event from memory')
-            # Add new events
-            for guild_scheduled_event in guild.scheduled_events:
-                found = False
-                for local_scheduled_event in client.scheduled_events:
-                    if guild_scheduled_event.name == local_scheduled_event.name and guild_scheduled_event.start_time < datetime.now().astimezone() + timedelta(hours=13):
-                        found = True
-                if not found:
-                    client.scheduled_events.append(guild_scheduled_event)
-                    print(f'{get_log_time()}> {guild_scheduled_event.name}> New guild scheduled_event, added to local scheduled_events')
-        await client.parse_scheduled_events()
 
         for event in client.events:
             await event.nudge_unresponded_participants()
