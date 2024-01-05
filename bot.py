@@ -257,9 +257,8 @@ def main():
             for participant in self.participants:
                 if not participant.answered:
                     await participant.member.send(random.choice(self.nudges))
-                    print(f'{get_log_time()}> {self.name}> Nudged {participant.member.name}')
-                else:
                     mentions += f'{participant.member.mention} '
+                    print(f'{get_log_time()}> {self.name}> Nudged {participant.member.name}')
             if mentions != '':
                 mentions = 'Waiting for a response from these participants:\n' + mentions
                 await self.text_channel.send(mentions)
