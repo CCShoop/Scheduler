@@ -546,21 +546,25 @@ def main():
 
         for guild in client.guilds:
             # Clean removed events
-            for scheduled_event in client.scheduled_events:
-                if scheduled_event not in guild.scheduled_events:
-                    client.scheduled_events.remove(scheduled_event)
-                    for event in client.events:
-                        if event.scheduled_event == scheduled_event:
-                            await event.remove()
-                            print(f'{get_log_time()}> {scheduled_event.name}> Guild scheduled_event is gone, removed local associated event from memory')
-                            break
-                    print(f'{get_log_time()}> {scheduled_event.name}> Guild scheduled_event is gone, removed local scheduled_event from memory')
+            for local_scheduled_event in client.scheduled_events:
+                for guild_scheduled_event in guild.scheduled_events:
+                    if local_scheduled_event.name == guild_scheduled_event.name:
+                        client.scheduled_events.remove(local_scheduled_event)
+                        for event in client.events:
+                            if event.scheduled_event == local_scheduled_event:
+                                await event.remove()
+                                print(f'{get_log_time()}> {local_scheduled_event.name}> Guild scheduled_event is gone, removed local associated event from memory')
+                                break
+                        print(f'{get_log_time()}> {local_scheduled_event.name}> Guild scheduled_event is gone, removed local scheduled_event from memory')
+                        break
             # Add new events
-            for scheduled_event in guild.scheduled_events:
-                if scheduled_event not in client.scheduled_events:
-                    if scheduled_event.start_time < datetime.now().astimezone() + timedelta(hours=13):
-                        client.scheduled_events.append(scheduled_event)
-                        print(f'{get_log_time()}> {scheduled_event.name}> New guild scheduled_event, added to local scheduled_events')
+            for guild_scheduled_event in guild.scheduled_events:
+                for local_scheduled_event in client.scheduled_events:
+                    if guild_scheduled_event.name == local_scheduled_event.name:
+                        if guild_scheduled_event.start_time < datetime.now().astimezone() + timedelta(hours=13):
+                            client.scheduled_events.append(guild_scheduled_event)
+                            print(f'{get_log_time()}> {guild_scheduled_event.name}> New guild scheduled_event, added to local scheduled_events')
+                        break
         await client.parse_scheduled_events()
 
         for event in client.events:
