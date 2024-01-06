@@ -566,19 +566,16 @@ def main():
             await event.nudge_unresponded_participants()
 
             if event.created:
-                if curTime + timedelta(minutes=5) == event.start_time:
+                if curTime + timedelta(minutes=5) == event.start_time and event.scheduled_event.status == EventStatus.scheduled:
                     await event.text_channel.send(f'**5 minute warning!** {event.name} will start in 5 minutes.')
-                elif curTime == event.start_time:
+                elif curTime == event.start_time and event.scheduled_event.status == EventStatus.scheduled:
                     try:
                         await event.scheduled_event.start(reason='It is the event\'s start time.')
                         await event.text_channel.send(f'**Event starting now!** {event.name} is starting now.')
                     except: pass
-                elif curTime == event.end_time:
+                elif curTime == event.end_time and event.scheduled_event.status == EventStatus.active:
                     try:
-                        if event.scheduled_event.status == EventStatus.active:
-                            await event.scheduled_event.end(reason='It is the event\'s end time.')
-                        else:
-                            await event.scheduled_event.cancel(reason='It is the event\'s end time.')
+                        await event.scheduled_event.end(reason='It is the event\'s end time.')
                         await event.text_channel.send(f'**Event ending now!** {event.name} is ending now.')
                         client.scheduled_events.remove(event.scheduled_event)
                         client.events.remove(event)
