@@ -500,7 +500,7 @@ def main():
         await event.dm_all_participants(interaction, duration)
 
     @client.tree.command(name='reschedule', description='Reschedule an existing scheduled event.')
-    @app_commands.describe(event_name='Type the name of the event you want to reschedule.')
+    @app_commands.describe(event_name='Name of the event to reschedule.')
     @app_commands.describe(duration='Event duration in minutes (default 30 minutes).')
     async def reschedule_command(interaction: Interaction, event_name: str, duration: int = 30):
         for guild in client.guilds:
@@ -515,12 +515,35 @@ def main():
                 if event.created:
                     new_event = Event(event.name, event.entity_type, event.voice_channel, event.participants, event.guild, interaction.channel, duration) #, weekly
                     await event.scheduled_event.cancel()
-                    event.remove()
+                    await event.remove()
                     client.events.append(new_event)
                     await interaction.response.send_message(f'{interaction.user.mention} wants to reschedule {new_event.name}. Check your DMs to share your availability!')
                     await new_event.dm_all_participants(interaction, duration, reschedule=True)
                 else:
                     await interaction.response.send_message(f'{event.name} has not been created yet. Your buttons will work until it is created or cancelled.')
+                return
+        await interaction.response.send_message(f'Could not find event {event_name}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}')
+
+    @client.tree.command(name='cancel', description='Cancel an event.')
+    @app_commands.describe(event_name='Name of the event to cancel.')
+    async def cancel_command(interaction: Interaction, event_name: str):
+        for guild in client.guilds:
+            for scheduled_event in guild.scheduled_events:
+                if scheduled_event.start_time < datetime.now().astimezone() + timedelta(hours=13):
+                    client.scheduled_events.append(scheduled_event)
+        await client.parse_scheduled_events()
+        event_name = event_name.lower()
+        for event in client.events:
+            if event_name == event.name.lower():
+                print(f'{get_log_time()}> {event.name}> {interaction.user.name} cancelled event')
+                if event.created:
+                    await event.scheduled_event.cancel()
+                await event.remove()
+                mentions = ''
+                for participant in event.participants:
+                    if participant.member != interaction.user:
+                        mentions += participant.member.mention
+                await interaction.response.send_message(f'{mentions}\n{interaction.user.mention} has cancelled {event.name}.')
                 return
         await interaction.response.send_message(f'Could not find event {event_name}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}')
 
