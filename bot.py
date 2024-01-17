@@ -182,7 +182,8 @@ def main():
                     if not skip_time_slot:
                         shared_availability = True
                         for participant in self.participants:
-                            shared_availability = shared_availability and participant.is_available(time_slot)
+                            if participant.subscribed:
+                                shared_availability = shared_availability and participant.is_available(time_slot)
                         if shared_availability:
                             shared_time_slot = time_slot
                             break
@@ -203,12 +204,10 @@ def main():
             return False
 
         def has_everyone_answered(self):
-            everyoneAnswered = True
             for participant in self.participants:
                 if participant.subscribed and not participant.answered:
-                    everyoneAnswered = False
-                    print(f'{get_log_time()}> {self.name}> Waiting for response from {participant.member.name}')
-            return everyoneAnswered
+                    return False
+            return True
 
         async def dm_all_participants(self, interaction: Interaction, duration: int = 30, reschedule: bool = False):
             curHour, curMinute = get_time()
