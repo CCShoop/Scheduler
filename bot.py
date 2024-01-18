@@ -453,7 +453,7 @@ def main():
 
         async def make_scheduled_event(self, event):
             event.scheduled_event = await event.guild.create_scheduled_event(name=event.name, description='Bot-generated event', start_time=event.start_time, end_time=event.end_time, entity_type=event.entity_type, channel=event.voice_channel, privacy_level=event.privacy_level)
-            if event.image_url != '':
+            if event.image_url:
                 try:
                     response = requests.get(event.image_url)
                     if response.status_code == 200:
@@ -462,9 +462,9 @@ def main():
                     else:
                         event.image_url = ''
                         print(f'{get_log_time()}> {event.name}> Failed to get image')
-                except:
+                except Exception as e:
                     event.image_url = ''
-                    print(f'{get_log_time()}> {event.name}> Failed to process image')
+                    print(f'{get_log_time()}> {event.name}> Failed to process image: {e}')
             client.scheduled_events.append(event.scheduled_event)
             event.ready_to_create = False
             event.created = True
@@ -483,6 +483,33 @@ def main():
         print(f'{get_log_time()}> {client.user} has connected to Discord!')
         if not create_guild_event.is_running():
             create_guild_event.start()
+
+    @client.event
+    async def on_message(message):
+        if message.author.bot or message.guild or not message.attachments or not message.content:
+            return
+
+        for guild in client.guilds:
+            for scheduled_event in guild.scheduled_events:
+                if scheduled_event.start_time < datetime.now().astimezone() + timedelta(hours=13):
+                    client.scheduled_events.append(scheduled_event)
+        await client.parse_scheduled_events()
+        event_name = message.content.lower()
+        for event in client.events:
+            if event_name == event.name.lower():
+                if event.created:
+                    try:
+                        image_bytes = await message.attachments[0].read()
+                        await event.scheduled_event.edit(image=image_bytes)
+                        await message.channel.send(f'Added your image to {event.name}.')
+                        print(f'{get_log_time()}> {event.name}> {message.author.name} added an image')
+                    except Exception as e:
+                        await message.channel.send(f'Failed to add your image to {event.name}.\nError: {e}')
+                        print(f'{get_log_time()}> {event.name}> Error adding image from {message.author.name}: {e}')
+                else:
+                    await message.channel.send(f'{event.name} has not been created yet. Please send an image after the event is created.')
+                return
+        await message.channel.send(f'Could not find event {event_name}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}')
 
     @client.tree.command(name='create', description='Create an event.')
     @app_commands.describe(event_name='Name for the event.')
@@ -619,22 +646,24 @@ def main():
         for guild in client.guilds:
             guild_scheduled_event_names = [scheduled_event.name for scheduled_event in guild.scheduled_events]
             # Clean removed events
-            try:
-                for local_scheduled_event in client.guild_scheduled_events[guild.name].copy():
-                    if local_scheduled_event.name not in guild_scheduled_event_names:
-                        client.guild_scheduled_events[guild.name].remove(local_scheduled_event)
-                        client.scheduled_events.remove(local_scheduled_event)
-                        print(f'{get_log_time()}> {local_scheduled_event.name}> Guild scheduled_event is gone, removed from local scheduled_events')
-            except: pass
+            if guild.id in client.guild_scheduled_events:
+                try:
+                    for local_scheduled_event in client.guild_scheduled_events[guild.id].copy():
+                        if local_scheduled_event.name not in guild_scheduled_event_names:
+                            client.guild_scheduled_events[guild.id].remove(local_scheduled_event)
+                            client.scheduled_events.remove(local_scheduled_event)
+                            print(f'{get_log_time()}> {local_scheduled_event.name}> Guild scheduled_event is gone, removed from local scheduled_events')
+                except Exception as e: 
+                    print(f'{get_log_time()}> Error removing guild scheduled event: {e}')
             # Add new events
             for guild_scheduled_event in guild.scheduled_events:
                 if guild_scheduled_event.name not in local_scheduled_event_names:
                     try:
-                        guild_events = client.guild_scheduled_events[guild.name]
+                        guild_events = client.guild_scheduled_events[guild.id]
                         guild_events.append(guild_scheduled_event)
                     except:
                         guild_events = [guild_scheduled_event]
-                    client.guild_scheduled_events[guild.name] = guild_events
+                    client.guild_scheduled_events[guild.id] = guild_events
                     client.scheduled_events.append(guild_scheduled_event)
                     print(f'{get_log_time()}> {guild_scheduled_event.name}> New guild scheduled_event, added to local scheduled_events')
         await client.parse_scheduled_events()
@@ -661,13 +690,15 @@ def main():
                     try:
                         await event.scheduled_event.start(reason='It is the event\'s start time.')
                         await event.text_channel.send(f'**Event starting now!** {event.name} is starting now.')
-                    except: pass
+                    except Exception as e:
+                        print(f'{get_log_time()}> {event.name}> Failed to start event: {e}')
                 elif curTime == event.end_time and event.scheduled_event.status == EventStatus.active:
                     try:
                         await event.scheduled_event.end(reason='It is the event\'s end time.')
                         client.scheduled_events.remove(event.scheduled_event)
                         client.events.remove(event)
-                    except: pass
+                    except Exception as e:
+                        print(f'{get_log_time()}> {event.name}> Failed to end event: {e}')
                 continue
 
             if event.changed or not event.has_everyone_answered():
