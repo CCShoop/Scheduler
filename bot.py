@@ -2,12 +2,12 @@
 
 import os
 import random
+import requests
 import timestamps
-from time import sleep
-from dotenv import load_dotenv
 from asyncio import Lock
+from dotenv import load_dotenv
 from datetime import datetime, timedelta
-from discord import app_commands, Interaction, Intents, Client, ButtonStyle, EventStatus, EntityType, TextChannel, VoiceChannel, ScheduledEvent, Guild, PrivacyLevel, utils
+from discord import app_commands, Interaction, Intents, Client, ButtonStyle, EventStatus, EntityType, TextChannel, VoiceChannel, ScheduledEvent, Guild, PrivacyLevel, utils, File
 from discord.ui import View, Button
 from discord.ext import tasks
 
@@ -137,19 +137,16 @@ def main():
             elif label == timestamps.one_hundred_hours:                    return self.availability.one_hundred
             elif label == timestamps.one_hundred_thirty_hours:             return self.availability.one_hundred_thirty
 
-    class MsgLock():
-        def __init__(self, name: str):
-            self.name = name
-            self.msg_lock = False
-
     class Event:
-        def __init__(self, name: str, entity_type: EntityType, voice_channel: VoiceChannel, participants: list, guild: Guild, text_channel: TextChannel, duration: int): #, weekly: bool
+        def __init__(self, name: str, entity_type: EntityType, voice_channel: VoiceChannel, participants: list, guild: Guild, text_channel: TextChannel, image_url: str, duration: int): #, weekly: bool
             self.name = name
             self.guild = guild
             self.entity_type = entity_type
             self.text_channel = text_channel
             self.voice_channel = voice_channel
+            self.privacy_level = PrivacyLevel.guild_only
             self.participants = participants
+            self.image_url = image_url
             #self.requested_weekly = weekly
             self.buttons = []
             self.reason = ''
@@ -171,7 +168,7 @@ def main():
             if self.valid:
                 for time_slot in timestamps.all_timestamps:
                     check_time_obj = get_datetime_from_label(time_slot)
-                    if datetime.now().astimezone() > check_time_obj - timedelta(minutes=5):
+                    if datetime.now().astimezone() > check_time_obj:
                         continue
                     skip_time_slot = False
                     for event in client.events:
@@ -437,7 +434,7 @@ def main():
                             location = scheduled_event.location
                         else:
                             location = client.get_channel(scheduled_event.channel_id)
-                        event = Event(scheduled_event.name, scheduled_event.entity_type, location, participants, scheduled_event.guild, scheduled_event.guild.text_channels[0], duration)
+                        event = Event(scheduled_event.name, scheduled_event.entity_type, location, participants, scheduled_event.guild, scheduled_event.guild.text_channels[0], None, duration)
                         event.created = True
                         event.start_time = scheduled_event.start_time.replace(second=0, microsecond=0)
                         event.end_time = event.start_time.replace(second=0, microsecond=0) + timedelta(minutes=duration)
@@ -452,7 +449,27 @@ def main():
             for event in touched_events:
                 if not touched_events[event] and event.created and not event.scheduled_event:
                     self.events.remove(event)
-                    print(f'{get_log_time()}> Did not find event {event.name} and removed from memory')
+                    print(f'{get_log_time()}> {event.name}> Did not find event and removed from memory')
+
+        async def make_scheduled_event(self, event):
+            event.scheduled_event = await event.guild.create_scheduled_event(name=event.name, description='Bot-generated event', start_time=event.start_time, end_time=event.end_time, entity_type=event.entity_type, channel=event.voice_channel, privacy_level=event.privacy_level)
+            if event.image_url != '':
+                try:
+                    response = requests.get(event.image_url)
+                    if response.status_code == 200:
+                        await event.scheduled_event.edit(image=response.content)
+                        print(f'{get_log_time()}> {event.name}> Processed image')
+                    else:
+                        event.image_url = ''
+                        print(f'{get_log_time()}> {event.name}> Failed to get image')
+                except:
+                    event.image_url = ''
+                    print(f'{get_log_time()}> {event.name}> Failed to process image')
+            client.scheduled_events.append(event.scheduled_event)
+            event.ready_to_create = False
+            event.created = True
+            print(f'{get_log_time()}> {event.name}> Created event starting at {event.start_time.hour}:{event.start_time.minute} and ending at {event.end_time.hour}:{event.end_time.minute}')
+            return event
 
         async def setup_hook(self):
             await self.tree.sync()
@@ -467,13 +484,60 @@ def main():
         if not create_guild_event.is_running():
             create_guild_event.start()
 
-    @client.tree.command(name='schedule', description='Create a scheduling event.')
+    @client.tree.command(name='create', description='Create an event.')
     @app_commands.describe(event_name='Name for the event.')
-    @app_commands.describe(voice_channel="Voice channel for the event.")
+    @app_commands.describe(voice_channel='Voice channel for the event.')
+    @app_commands.describe(start_time='Start time for the event.')
+    @app_commands.describe(image_url="URL to an image for the event.")
     @app_commands.describe(role='Only add users with this role as participants.')
     @app_commands.describe(duration="Event duration in minutes (30 minutes default).")
     # @app_commands.describe(weekly="Whether you want this to be a weekly reoccuring event.")
-    async def schedule_command(interaction: Interaction, event_name: str, voice_channel: VoiceChannel, role: str = None, duration: int = 30): #, weekly: bool = False
+    async def create_command(interaction: Interaction, event_name: str, voice_channel: VoiceChannel, start_time: str, image_url: str = None, role: str = None, duration: int = 30): #, weekly: bool = False
+        curHour, curMinute = get_time()
+        if curHour == 1 and curMinute >= 25 and curHour < 7:
+            await interaction.response.send_message(f'It\'s late, you should go to bed. Try again later today.')
+            return
+
+        # Parse start time
+        start_time = start_time.strip()
+        start_time.replace(':', '')
+        if len(start_time) == 3:
+            start_time = '0' + start_time
+        elif len(start_time) != 4:
+            await interaction.response.send_message(f'Invalid start time format. Examples: "1630" or "00:30"')
+        hour = int(start_time[:1])
+        minute = int(start_time[2:])
+        start_time_obj = get_datetime_from_label(hour + ':' + minute)
+        if start_time_obj <= datetime.now().astimezone():
+            await interaction.response.send_message(f'Start time must be in the future!')
+
+        # Put participants into a list
+        participants = []
+        print(f'{get_log_time()}> {event_name}> Received event request from {interaction.user.name}')
+        if role != None:
+            role = utils.find(lambda r: r.name.lower() == role.lower(), interaction.guild.roles)
+        for member in interaction.channel.members:
+            if not member.bot:
+                if member.name != interaction.user.name and role != None and role not in member.roles:
+                    continue
+                participant = Participant(member)
+                participants.append(participant)
+
+        # Make event
+        event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration) #, weekly
+        event.start_time = start_time_obj
+        client.events.append(event)
+        event.scheduled_event = await client.make_scheduled_event(event)
+        await interaction.response.send_message(f'{interaction.user.mention} created an event called {event.name}.')
+
+    @client.tree.command(name='schedule', description='Create a scheduling event.')
+    @app_commands.describe(event_name='Name for the event.')
+    @app_commands.describe(voice_channel='Voice channel for the event.')
+    @app_commands.describe(image_url="URL to an image for the event.")
+    @app_commands.describe(role='Only add users with this role as participants.')
+    @app_commands.describe(duration="Event duration in minutes (30 minutes default).")
+    # @app_commands.describe(weekly="Whether you want this to be a weekly reoccuring event.")
+    async def schedule_command(interaction: Interaction, event_name: str, voice_channel: VoiceChannel, image_url: str = None, role: str = None, duration: int = 30): #, weekly: bool = False
         curHour, curMinute = get_time()
         if curHour == 1 and curMinute >= 25 and curHour < 7:
             await interaction.response.send_message(f'It\'s late, you should go to bed. Try again later today.')
@@ -486,13 +550,13 @@ def main():
             role = utils.find(lambda r: r.name.lower() == role.lower(), interaction.guild.roles)
         for member in interaction.channel.members:
             if not member.bot:
-                if role != None and role not in member.roles:
+                if member.name != interaction.user.name and role != None and role not in member.roles:
                     continue
                 participant = Participant(member)
                 participants.append(participant)
 
         # Make event object
-        event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, duration) #, weekly
+        event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration) #, weekly
         client.events.append(event)
         await interaction.response.send_message(f'{interaction.user.mention} wants to create an event called {event.name}. Check your DMs to share your availability!')
 
@@ -500,8 +564,9 @@ def main():
 
     @client.tree.command(name='reschedule', description='Reschedule an existing scheduled event.')
     @app_commands.describe(event_name='Name of the event to reschedule.')
+    @app_commands.describe(image_url='URL to an image for the event.')
     @app_commands.describe(duration='Event duration in minutes (default 30 minutes).')
-    async def reschedule_command(interaction: Interaction, event_name: str, duration: int = 30):
+    async def reschedule_command(interaction: Interaction, event_name: str, image_url: str = None, duration: int = 30):
         for guild in client.guilds:
             for scheduled_event in guild.scheduled_events:
                 if scheduled_event.start_time < datetime.now().astimezone() + timedelta(hours=13):
@@ -512,7 +577,7 @@ def main():
             if event_name == event.name.lower():
                 print(f'{get_log_time()}> {event.name}> {interaction.user.name} requested reschedule')
                 if event.created:
-                    new_event = Event(event.name, event.entity_type, event.voice_channel, event.participants, event.guild, interaction.channel, duration) #, weekly
+                    new_event = Event(event.name, event.entity_type, event.voice_channel, event.participants, event.guild, interaction.channel, image_url, duration) #, weekly
                     await event.scheduled_event.cancel()
                     await event.remove()
                     client.events.append(new_event)
@@ -541,6 +606,8 @@ def main():
                 mentions = ''
                 for participant in event.participants:
                     if participant.member != interaction.user:
+                        async with client.msg_lock:
+                            participant.member.send(f'{interaction.user.name} has cancelled {event.name}.')
                         mentions += participant.member.mention
                 await interaction.response.send_message(f'{mentions}\n{interaction.user.mention} has cancelled {event.name}.')
                 return
@@ -598,11 +665,11 @@ def main():
                 elif curTime == event.end_time and event.scheduled_event.status == EventStatus.active:
                     try:
                         await event.scheduled_event.end(reason='It is the event\'s end time.')
-                        await event.text_channel.send(f'**Event ending now!** {event.name} is ending now.')
                         client.scheduled_events.remove(event.scheduled_event)
                         client.events.remove(event)
                     except: pass
                 continue
+
             if event.changed or not event.has_everyone_answered():
                 event.changed = False
                 continue
@@ -610,12 +677,7 @@ def main():
             event.check_times()
 
             if event.ready_to_create:
-                privacy_level = PrivacyLevel.guild_only
-                event.scheduled_event = await event.guild.create_scheduled_event(name=event.name, description='Bot-generated event based on participant availabilities provided', start_time=event.start_time, end_time=event.end_time, entity_type=event.entity_type, channel=event.voice_channel, privacy_level=privacy_level)
-                client.scheduled_events.append(event.scheduled_event)
-                event.ready_to_create = False
-                event.created = True
-                print(f'{get_log_time()}> {event.name}> Created event starting at {event.start_time.hour}:{event.start_time.minute} and ending at {event.end_time.hour}:{event.end_time.minute}')
+                event = await client.make_scheduled_event(event)
 
                 mentions = ''
                 unsubbed = ''
