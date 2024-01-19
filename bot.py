@@ -605,7 +605,10 @@ def main():
                 print(f'{get_log_time()}> {event.name}> {interaction.user.name} requested reschedule')
                 if event.created:
                     new_event = Event(event.name, event.entity_type, event.voice_channel, event.participants, event.guild, interaction.channel, image_url, duration) #, weekly
-                    await event.scheduled_event.cancel()
+                    if event.scheduled_event.status == EventStatus.scheduled:
+                        await event.scheduled_event.cancel()
+                    elif event.scheduled_event.status == EventStatus.active:
+                        await event.scheduled_event.end()
                     await event.remove()
                     client.events.append(new_event)
                     await interaction.response.send_message(f'{interaction.user.mention} wants to reschedule {new_event.name}. Check your DMs to share your availability!')
@@ -628,7 +631,10 @@ def main():
             if event_name == event.name.lower():
                 print(f'{get_log_time()}> {event.name}> {interaction.user.name} cancelled event')
                 if event.created:
-                    await event.scheduled_event.cancel()
+                    if event.scheduled_event.status == EventStatus.scheduled:
+                        await event.scheduled_event.cancel()
+                    elif event.scheduled_event.status == EventStatus.active:
+                        await event.scheduled_event.end()
                 await event.remove()
                 mentions = ''
                 for participant in event.participants:
