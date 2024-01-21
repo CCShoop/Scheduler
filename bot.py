@@ -138,7 +138,7 @@ def main():
             elif label == timestamps.one_hundred_thirty_hours:             return self.availability.one_hundred_thirty
 
     class Event:
-        def __init__(self, name: str, entity_type: EntityType, voice_channel: VoiceChannel, participants: list, guild: Guild, text_channel: TextChannel, image_url: str, duration: int): #, weekly: bool
+        def __init__(self, name: str, entity_type: EntityType, voice_channel: VoiceChannel, participants: list, guild: Guild, text_channel: TextChannel, image_url: str, duration: int = 30, start_time: datetime = None): #, weekly: bool
             self.name = name
             self.guild = guild
             self.entity_type = entity_type
@@ -156,8 +156,11 @@ def main():
             self.created = False
             self.scheduled_event: ScheduledEvent = None
             self.changed = False
-            self.start_time = None
-            self.end_time = None
+            self.start_time = start_time
+            if self.start_time:
+                self.end_time = self.start_time + timedelta(minutes=duration)
+            else:
+                self.end_time = None
             self.duration = duration
             self.valid = True
 
@@ -381,6 +384,111 @@ def main():
         #     button.callback = weekly_button_callback
         #     self.add_item(button)
 
+    class EventButtons(View):
+        def __init__(self, event: Event):
+            super().__init__(timeout=None)
+            self.start_label = "Start"
+            self.end_label = "End"
+            self.reschedule_label = "Reschedule"
+            self.cancel_label = "Cancel"
+            self.event = event
+            self.start_button = Button(label=self.start_label, style=ButtonStyle.blurple)
+            self.end_button = Button(label=self.end_label, style=ButtonStyle.blurple)
+            self.reschedule_button = Button(label=self.reschedule_label, style=ButtonStyle.red)
+            self.cancel_button = Button(label=self.cancel_label, style=ButtonStyle.red)
+            self.add_start_button()
+            self.add_end_button()
+            self.add_reschedule_button()
+            self.add_cancel_button()
+
+        def add_start_button(self):
+            async def start_button_callback(interaction: Interaction):
+                self.event.text_channel = interaction.channel
+                if not self.event.created or self.event.scheduled_event.status != EventStatus.scheduled:
+                    await interaction.response.defer()
+                    return
+                print(f'{get_log_time()}> {self.event.name}> {interaction.user} started by button press')
+                await self.event.scheduled_event.start(reason='Start button pressed.')
+                self.start_button.style = ButtonStyle.green
+                self.start_button.disabled = True
+                self.end_button.disabled = False
+                await interaction.response.edit_message(view=self)
+            self.start_button.callback = start_button_callback
+            self.add_item(self.start_button)
+
+        def add_end_button(self):
+            self.end_button.disabled = True
+            async def end_button_callback(interaction: Interaction):
+                self.event.text_channel = interaction.channel
+                if self.event.scheduled_event.status != EventStatus.active and self.event.scheduled_event.status != EventStatus.scheduled:
+                    await interaction.response.defer()
+                    return
+                print(f'{get_log_time()}> {self.event.name}> {interaction.user} ended by button press')
+                client.scheduled_events.remove(self.event.scheduled_event)
+                await self.event.scheduled_event.delete(reason='End button pressed.')
+                self.event.created = False
+                self.end_button.style = ButtonStyle.gray
+                self.end_button.disabled = True
+                self.reschedule_button.disabled = True
+                self.cancel_button.disabled = True
+                await interaction.response.edit_message(view=self)
+            self.end_button.callback = end_button_callback
+            self.add_item(self.end_button)
+
+        def add_reschedule_button(self):
+            async def reschedule_button_callback(interaction: Interaction):
+                self.event.text_channel = interaction.channel
+                if not self.event.created:
+                    await interaction.response.defer()
+                    return
+                print(f'{get_log_time()}> {self.event.name}> {interaction.user} rescheduled by button press')
+                new_event = Event(self.event.name, self.event.entity_type, self.event.voice_channel, self.event.participants, self.event.guild, interaction.channel, self.event.image_url, self.event.duration) #, weekly
+                client.scheduled_events.remove(self.event.scheduled_event)
+                await self.event.scheduled_event.delete(reason='Reschedule button pressed.')
+                self.event.created = False
+                self.start_button.disabled = True
+                self.start_button.style = ButtonStyle.blurple
+                self.end_button.disabled = True
+                self.end_button.style = ButtonStyle.blurple
+                self.reschedule_button.disabled = True
+                self.cancel_button.disabled = True
+                await interaction.response.edit_message(view=self)
+                await self.event.remove()
+                client.events.append(new_event)
+                mentions = ''
+                for participant in self.event.participants:
+                    if participant.member != interaction.user:
+                        mentions += participant.member.mention
+                await self.event.text_channel.send(f'{mentions}\n{interaction.user.mention} wants to reschedule {new_event.name}. Check your DMs to share your availability!')
+                await new_event.dm_all_participants(interaction, self.event.duration, reschedule=True)
+            self.reschedule_button.callback = reschedule_button_callback
+            self.add_item(self.reschedule_button)
+
+        def add_cancel_button(self):
+            async def cancel_button_callback(interaction: Interaction):
+                self.event.text_channel = interaction.channel
+                if self.event.created:
+                    client.scheduled_events.remove(self.event.scheduled_event)
+                    await self.event.scheduled_event.delete(reason='Cancel button pressed.')
+                    self.event.created = False
+                await self.event.remove()
+                mentions = ''
+                for participant in self.event.participants:
+                    if participant.member != interaction.user:
+                        async with client.msg_lock:
+                            participant.member.send(f'{interaction.user.name} has cancelled {self.event.name}.')
+                        mentions += participant.member.mention
+                print(f'{get_log_time()}> {self.event.name}> {interaction.user} cancelled by button press')
+                self.cancel_button.style = ButtonStyle.gray
+                self.start_button.disabled = True
+                self.end_button.disabled = True
+                self.reschedule_button.disabled = True
+                self.cancel_button.disabled = True
+                await interaction.response.edit_message(view=self)
+                await self.event.text_channel.send(f'{mentions}\n{interaction.user.mention} cancelled {self.event.name}.')
+            self.cancel_button.callback = cancel_button_callback
+            self.add_item(self.cancel_button)
+
     class SchedulerClient(Client):
         FILENAME = 'info.json'
 
@@ -469,7 +577,7 @@ def main():
             event.ready_to_create = False
             event.created = True
             print(f'{get_log_time()}> {event.name}> Created event starting at {event.start_time.hour}:{event.start_time.minute} and ending at {event.end_time.hour}:{event.end_time.minute}')
-            return event
+            return event.scheduled_event
 
         async def setup_hook(self):
             await self.tree.sync()
@@ -532,9 +640,9 @@ def main():
             start_time = '0' + start_time
         elif len(start_time) != 4:
             await interaction.response.send_message(f'Invalid start time format. Examples: "1630" or "00:30"')
-        hour = int(start_time[:1])
+        hour = int(start_time[:2])
         minute = int(start_time[2:])
-        start_time_obj = get_datetime_from_label(hour + ':' + minute)
+        start_time_obj = get_datetime_from_label(f"{hour}:{minute}")
         if start_time_obj <= datetime.now().astimezone():
             await interaction.response.send_message(f'Start time must be in the future!')
 
@@ -551,11 +659,20 @@ def main():
                 participants.append(participant)
 
         # Make event
-        event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration) #, weekly
+        event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration, start_time_obj) #, weekly
         event.start_time = start_time_obj
         client.events.append(event)
         event.scheduled_event = await client.make_scheduled_event(event)
-        await interaction.response.send_message(f'{interaction.user.mention} created an event called {event.name}.')
+        response = ''
+        if event.start_time.hour < 10 and event.start_time.minute < 10:
+            response = f'{interaction.user.mention} created an event called {event.name} starting at 0{event.start_time.hour}:0{event.start_time.minute}.'
+        elif event.start_time.hour >= 10 and event.start_time.minute < 10:
+            response = f'{interaction.user.mention} created an event called {event.name} starting at {event.start_time.hour}:0{event.start_time.minute}.'
+        elif event.start_time.hour < 10 and event.start_time.minute >= 10:
+            response = f'{interaction.user.mention} created an event called {event.name} starting at 0{event.start_time.hour}:{event.start_time.minute}.'
+        else:
+            response = f'{interaction.user.mention} created an event called {event.name} starting at {event.start_time.hour}:{event.start_time.minute}.'
+        await interaction.response.send_message(response, view=EventButtons(event))
 
     @client.tree.command(name='schedule', description='Create a scheduling event.')
     @app_commands.describe(event_name='Name for the event.')
@@ -585,7 +702,7 @@ def main():
         # Make event object
         event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration) #, weekly
         client.events.append(event)
-        await interaction.response.send_message(f'{interaction.user.mention} wants to create an event called {event.name}. Check your DMs to share your availability!')
+        await interaction.response.send_message(f'{interaction.user.mention} wants to create an event called {event.name}. Check your DMs to share your availability!', view=EventButtons(event))
 
         await event.dm_all_participants(interaction, duration)
 
@@ -605,10 +722,8 @@ def main():
                 print(f'{get_log_time()}> {event.name}> {interaction.user.name} requested reschedule')
                 if event.created:
                     new_event = Event(event.name, event.entity_type, event.voice_channel, event.participants, event.guild, interaction.channel, image_url, duration) #, weekly
-                    if event.scheduled_event.status == EventStatus.scheduled:
-                        await event.scheduled_event.cancel()
-                    elif event.scheduled_event.status == EventStatus.active:
-                        await event.scheduled_event.end()
+                    client.scheduled_events.remove(event.scheduled_event)
+                    await event.scheduled_event.delete(reason='Reschedule command issued.')
                     await event.remove()
                     client.events.append(new_event)
                     await interaction.response.send_message(f'{interaction.user.mention} wants to reschedule {new_event.name}. Check your DMs to share your availability!')
@@ -631,10 +746,8 @@ def main():
             if event_name == event.name.lower():
                 print(f'{get_log_time()}> {event.name}> {interaction.user.name} cancelled event')
                 if event.created:
-                    if event.scheduled_event.status == EventStatus.scheduled:
-                        await event.scheduled_event.cancel()
-                    elif event.scheduled_event.status == EventStatus.active:
-                        await event.scheduled_event.end()
+                    client.scheduled_events.remove(event.scheduled_event)
+                    await event.scheduled_event.delete(reason='Cancel command issued.')
                 await event.remove()
                 mentions = ''
                 for participant in event.participants:
@@ -714,7 +827,7 @@ def main():
             event.check_times()
 
             if event.ready_to_create:
-                event = await client.make_scheduled_event(event)
+                event.scheduled_event = await client.make_scheduled_event(event)
 
                 mentions = ''
                 unsubbed = ''
@@ -725,14 +838,16 @@ def main():
                         unsubbed += f'{participant.member.name} '
                 if unsubbed != '':
                     unsubbed = '\nUnsubscribed: ' + unsubbed
+                response = ''
                 if event.start_time.hour < 10 and event.start_time.minute < 10:
-                    await event.text_channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed)
-                elif event.start_time.hour < 10 and event.start_time.minute >= 10:
-                    await event.text_channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed)
+                    response = f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed
                 elif event.start_time.hour >= 10 and event.start_time.minute < 10:
-                    await event.text_channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed)
+                    response = f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed
+                elif event.start_time.hour < 10 and event.start_time.minute >= 10:
+                    response = f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed
                 else:
-                    await event.text_channel.send(f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed)
+                    response = f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed
+                await event.text_channel.send(response, view=EventButtons(event))
 
     client.run(discord_token)
 
