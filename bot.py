@@ -791,6 +791,16 @@ def main():
                     client.guild_scheduled_events[guild.id] = guild_events
                     client.scheduled_events.append(guild_scheduled_event)
                     print(f'{get_log_time()}> {guild_scheduled_event.name}> New guild scheduled_event, added to local scheduled_events')
+                else:
+                    for event in client.events:
+                        if event.name == guild_scheduled_event.name:
+                            async for interested in guild_scheduled_event.users():
+                                participant_names = [participant.member.name for participant in event.participants]
+                                if interested.name not in participant_names:
+                                    event.participants.append(interested)
+                                    print(f'{get_log_time()}> {guild_scheduled_event.name}> Added {interested.name} as a participant')
+                            break
+                    participant_names = []
         await client.parse_scheduled_events()
 
         curTime = datetime.now().astimezone().replace(second=0, microsecond=0)
