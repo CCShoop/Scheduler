@@ -408,6 +408,9 @@ def main():
                     await interaction.response.defer()
                     return
                 print(f'{get_log_time()}> {self.event.name}> {interaction.user} started by button press')
+                participant_names = [participant.member.name for participant in self.event.participants]
+                if interaction.user.name not in participant_names:
+                    self.event.participants.append(interaction.user)
                 await self.event.scheduled_event.start(reason='Start button pressed.')
                 self.start_button.style = ButtonStyle.green
                 self.start_button.disabled = True
@@ -442,6 +445,9 @@ def main():
                     await interaction.response.defer()
                     return
                 print(f'{get_log_time()}> {self.event.name}> {interaction.user} rescheduled by button press')
+                participant_names = [participant.member.name for participant in self.event.participants]
+                if interaction.user.name not in participant_names:
+                    self.event.participants.append(interaction.user)
                 new_event = Event(self.event.name, self.event.entity_type, self.event.voice_channel, self.event.participants, self.event.guild, interaction.channel, self.event.image_url, self.event.duration) #, weekly
                 client.scheduled_events.remove(self.event.scheduled_event)
                 await self.event.scheduled_event.delete(reason='Reschedule button pressed.')
