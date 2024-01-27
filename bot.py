@@ -820,20 +820,20 @@ def main():
 
             if event.created:
                 if curTime + timedelta(minutes=5) == event.start_time and event.scheduled_event.status == EventStatus.scheduled:
-                    await event.text_channel.send(f'**5 minute warning!** {event.name} will start in 5 minutes.')
-                elif curTime == event.start_time and event.scheduled_event.status == EventStatus.scheduled:
-                    try:
-                        await event.scheduled_event.start(reason='It is the event\'s start time.')
-                        await event.text_channel.send(f'**Event starting now!** {event.name} is starting now.')
-                    except Exception as e:
-                        print(f'{get_log_time()}> {event.name}> Failed to start event: {e}')
-                elif curTime == event.end_time and event.scheduled_event.status == EventStatus.active:
-                    try:
-                        await event.scheduled_event.end(reason='It is the event\'s end time.')
-                        client.scheduled_events.remove(event.scheduled_event)
-                        client.events.remove(event)
-                    except Exception as e:
-                        print(f'{get_log_time()}> {event.name}> Failed to end event: {e}')
+                    await event.text_channel.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
+                # elif curTime == event.start_time and event.scheduled_event.status == EventStatus.scheduled:
+                #     try:
+                #         await event.scheduled_event.start(reason='It is the event\'s start time.')
+                #         await event.text_channel.send(f'**Event starting now!** {event.name} is starting now.')
+                #     except Exception as e:
+                #         print(f'{get_log_time()}> {event.name}> Failed to start event: {e}')
+                # elif curTime == event.end_time and event.scheduled_event.status == EventStatus.active:
+                #     try:
+                #         await event.scheduled_event.end(reason='It is the event\'s end time.')
+                #         client.scheduled_events.remove(event.scheduled_event)
+                #         client.events.remove(event)
+                #     except Exception as e:
+                #         print(f'{get_log_time()}> {event.name}> Failed to end event: {e}')
                 continue
 
             if event.changed or not event.has_everyone_answered():
