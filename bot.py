@@ -430,6 +430,7 @@ def main():
                 client.scheduled_events.remove(self.event.scheduled_event)
                 await self.event.scheduled_event.delete(reason='End button pressed.')
                 self.event.created = False
+                await self.event.remove()
                 self.end_button.style = ButtonStyle.gray
                 self.end_button.disabled = True
                 self.reschedule_button.disabled = True
