@@ -483,7 +483,7 @@ def main():
                 for participant in self.event.participants:
                     if participant.member != interaction.user:
                         async with client.msg_lock:
-                            participant.member.send(f'{interaction.user.name} has cancelled {self.event.name}.')
+                            await participant.member.send(f'{interaction.user.name} has cancelled {self.event.name}.')
                         mentions += participant.member.mention
                 print(f'{get_log_time()}> {self.event.name}> {interaction.user} cancelled by button press')
                 self.cancel_button.style = ButtonStyle.gray
