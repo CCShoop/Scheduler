@@ -154,6 +154,7 @@ def main():
             self.nudge_unresponded_timer = 30
             self.ready_to_create = False
             self.created = False
+            self.started = False
             self.scheduled_event: ScheduledEvent = None
             self.changed = False
             self.start_time = start_time
@@ -412,6 +413,7 @@ def main():
                 if interaction.user.name not in participant_names:
                     self.event.participants.append(interaction.user)
                 await self.event.scheduled_event.start(reason='Start button pressed.')
+                self.event.started = True
                 self.start_button.style = ButtonStyle.green
                 self.start_button.disabled = True
                 self.end_button.disabled = False
@@ -538,8 +540,11 @@ def main():
                     # create event in memory to match existing scheduled event
                     if not found:
                         participants = []
-                        async for user in scheduled_event.users():
-                            participants.append(Participant(user))
+                        try:
+                            async for user in scheduled_event.users():
+                                participants.append(Participant(user))
+                        except Exception as e:
+                            print(f'{get_log_time()}> Error looping through participants: {e}')
                         if scheduled_event.end_time:
                             time_difference = scheduled_event.end_time.replace(second=0, microsecond=0) - scheduled_event.start_time.replace(second=0, microsecond=0)
                             duration = int(time_difference.total_seconds() / 60)
@@ -806,65 +811,74 @@ def main():
 
         curTime = datetime.now().astimezone().replace(second=0, microsecond=0)
         for event in client.events.copy():
-            if not event.valid:
-                await event.text_channel.send(f'No shared availability has been found. Scheduling for {event.name} has been cancelled.\n' + event.reason)
-                for participant in event.participants:
-                    await participant.member.send(f'Scheduling for {event.name} has been cancelled.')
-                await event.remove()
-                print(f'{get_log_time()}> {event.name}> Event invalid, removed event from memory')
-            elif get_datetime_from_label('01:30') <= curTime:
-                await event.remove()
-                print(f'{get_log_time()}> {event.name}> last time slot passed, removed event from memory')
+            try:
+                if not event.valid:
+                    await event.text_channel.send(f'No shared availability has been found. Scheduling for {event.name} has been cancelled.\n' + event.reason)
+                    for participant in event.participants:
+                        await participant.member.send(f'Scheduling for {event.name} has been cancelled.')
+                    await event.remove()
+                    print(f'{get_log_time()}> {event.name}> Event invalid, removed event from memory')
+                elif get_datetime_from_label('01:30') <= curTime:
+                    await event.remove()
+                    print(f'{get_log_time()}> {event.name}> last time slot passed, removed event from memory')
+            except Exception as e:
+                print(f'{get_log_time()}> Error invalidating and deleting event: {e}')
 
         for event in client.events:
-            await event.nudge_unresponded_participants()
+            try:
+                await event.nudge_unresponded_participants()
 
-            if event.created:
-                if curTime + timedelta(minutes=5) == event.start_time and event.scheduled_event.status == EventStatus.scheduled:
-                    await event.text_channel.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
-                # elif curTime == event.start_time and event.scheduled_event.status == EventStatus.scheduled:
-                #     try:
-                #         await event.scheduled_event.start(reason='It is the event\'s start time.')
-                #         await event.text_channel.send(f'**Event starting now!** {event.name} is starting now.')
-                #     except Exception as e:
-                #         print(f'{get_log_time()}> {event.name}> Failed to start event: {e}')
-                # elif curTime == event.end_time and event.scheduled_event.status == EventStatus.active:
-                #     try:
-                #         await event.scheduled_event.end(reason='It is the event\'s end time.')
-                #         client.scheduled_events.remove(event.scheduled_event)
-                #         client.events.remove(event)
-                #     except Exception as e:
-                #         print(f'{get_log_time()}> {event.name}> Failed to end event: {e}')
-                continue
+                if event.created:
+                    if curTime + timedelta(minutes=5) == event.start_time and event.scheduled_event.status == EventStatus.scheduled and not event.started:
+                        await event.text_channel.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
+                    # elif curTime == event.start_time and event.scheduled_event.status == EventStatus.scheduled:
+                    #     try:
+                    #         await event.scheduled_event.start(reason='It is the event\'s start time.')
+                    #         await event.text_channel.send(f'**Event starting now!** {event.name} is starting now.')
+                    #     except Exception as e:
+                    #         print(f'{get_log_time()}> {event.name}> Failed to start event: {e}')
+                    # elif curTime == event.end_time and event.scheduled_event.status == EventStatus.active:
+                    #     try:
+                    #         await event.scheduled_event.end(reason='It is the event\'s end time.')
+                    #         client.scheduled_events.remove(event.scheduled_event)
+                    #         client.events.remove(event)
+                    #     except Exception as e:
+                    #         print(f'{get_log_time()}> {event.name}> Failed to end event: {e}')
+                    continue
 
-            if event.changed or not event.has_everyone_answered():
-                event.changed = False
-                continue
+                if event.changed or not event.has_everyone_answered():
+                    event.changed = False
+                    continue
 
-            event.check_times()
+                event.check_times()
+            except Exception as e:
+                print(f'{get_log_time()}> Error nudging or sending 5 minute warning: {e}')
 
             if event.ready_to_create:
-                event.scheduled_event = await client.make_scheduled_event(event)
+                try:
+                    event.scheduled_event = await client.make_scheduled_event(event)
 
-                mentions = ''
-                unsubbed = ''
-                for participant in event.participants:
-                    if participant.subscribed:
-                        mentions += f'{participant.member.mention} '
+                    mentions = ''
+                    unsubbed = ''
+                    for participant in event.participants:
+                        if participant.subscribed:
+                            mentions += f'{participant.member.mention} '
+                        else:
+                            unsubbed += f'{participant.member.name} '
+                    if unsubbed != '':
+                        unsubbed = '\nUnsubscribed: ' + unsubbed
+                    response = ''
+                    if event.start_time.hour < 10 and event.start_time.minute < 10:
+                        response = f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed
+                    elif event.start_time.hour >= 10 and event.start_time.minute < 10:
+                        response = f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed
+                    elif event.start_time.hour < 10 and event.start_time.minute >= 10:
+                        response = f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed
                     else:
-                        unsubbed += f'{participant.member.name} '
-                if unsubbed != '':
-                    unsubbed = '\nUnsubscribed: ' + unsubbed
-                response = ''
-                if event.start_time.hour < 10 and event.start_time.minute < 10:
-                    response = f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed
-                elif event.start_time.hour >= 10 and event.start_time.minute < 10:
-                    response = f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed
-                elif event.start_time.hour < 10 and event.start_time.minute >= 10:
-                    response = f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed
-                else:
-                    response = f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed
-                await event.text_channel.send(response, view=EventButtons(event))
+                        response = f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed
+                    await event.text_channel.send(response, view=EventButtons(event))
+                except Exception as e:
+                    print(f'{get_log_time()}> Error creating event: {e}')
 
     client.run(discord_token)
 
