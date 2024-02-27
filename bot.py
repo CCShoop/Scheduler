@@ -7,7 +7,7 @@ import timestamps
 from asyncio import Lock
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
-from discord import app_commands, Interaction, Intents, Client, ButtonStyle, EventStatus, EntityType, TextChannel, VoiceChannel, ScheduledEvent, Guild, PrivacyLevel, utils, File
+from discord import app_commands, Interaction, Intents, Client, ButtonStyle, EventStatus, EntityType, TextChannel, VoiceChannel, Message, ScheduledEvent, Guild, PrivacyLevel, utils, File
 from discord.ui import View, Button
 from discord.ext import tasks
 
@@ -142,6 +142,8 @@ def main():
             self.name = name
             self.guild = guild
             self.entity_type = entity_type
+            self.og_message = ''
+            self.message:Message = None
             self.text_channel = text_channel
             self.voice_channel = voice_channel
             self.privacy_level = PrivacyLevel.guild_only
@@ -260,8 +262,11 @@ def main():
                     mentions += f'{participant.member.mention} '
                     print(f'{get_log_time()}> {self.name}> Nudged {participant.member.name}')
             if mentions != '':
-                mentions = 'Waiting for a response from these participants:\n' + mentions
-                await self.text_channel.send(mentions)
+                mentions = '\nWaiting for a response from these participants:\n' + mentions
+                if self.message:
+                    await self.message.edit(self.og_message + mentions)
+                else:
+                    await self.text_channel.send(mentions)
 
         async def remove(self):
             client.events.remove(self)
@@ -713,8 +718,14 @@ def main():
 
         # Make event object
         event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration) #, weekly
+        event.og_message = f'{interaction.user.mention} wants to create an event called {event.name}. Check your DMs to share your availability!'
+        mentions = ''
+        for participant in event.participants:
+            mentions += f'{participant.member.mention} '
+        mentions = '\nWaiting for a response from these participants:\n' + mentions
         client.events.append(event)
-        await interaction.response.send_message(f'{interaction.user.mention} wants to create an event called {event.name}. Check your DMs to share your availability!')
+        await interaction.response.send_message(event.og_message + mentions)
+        event.message = interaction.message
 
         await event.dm_all_participants(interaction, duration)
 
