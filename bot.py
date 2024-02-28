@@ -875,7 +875,8 @@ def main():
             if event.ready_to_create:
                 try:
                     event.scheduled_event = await client.make_scheduled_event(event)
-
+                    if event.message:
+                        event.message.edit(event.og_message)
                     mentions = ''
                     unsubbed = ''
                     for participant in event.participants:
