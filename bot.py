@@ -859,6 +859,13 @@ def main():
 
                 if event.changed or not event.has_everyone_answered():
                     event.changed = False
+                    mentions = ''
+                    if self.message:
+                        for participant in event.participants:
+                            if not participant.answered:
+                                mentions += f'{participant.member.mention} '
+                        mentions = '\nWaiting for a response from these participants:\n' + mentions
+                        await self.message.edit(self.og_message + mentions)
                     continue
 
                 event.check_times()
