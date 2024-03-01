@@ -718,7 +718,7 @@ def main():
 
         # Make event object
         event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration) #, weekly
-        event.og_message = f'{interaction.user.mention} wants to create an event called {event.name}. Check your DMs to share your availability!'
+        event.og_message = f'{interaction.user.name} wants to create an event called {event.name}. Check your DMs to share your availability!'
         mentions = ''
         for participant in event.participants:
             mentions += f'{participant.member.mention} '
