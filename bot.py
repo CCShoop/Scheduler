@@ -142,7 +142,7 @@ def main():
             self.name = name
             self.guild = guild
             self.entity_type = entity_type
-            self.og_message = ''
+            self.og_message = f'{interaction.user.name} wants to create an event called {event.name}. Check your DMs to share your availability!'
             self.message:Message = None
             self.text_channel = text_channel
             self.voice_channel = voice_channel
@@ -245,6 +245,17 @@ def main():
                                                   f'The event will be either created or cancelled 1-2 minutes after the last person responds, which renders the buttons useless.\n'f'⬆️⬆️⬆️⬆️⬆️ __**{self.name}**__ ⬆️⬆️⬆️⬆️⬆️')
             print(f'{get_log_time()}> {self.name}> Done DMing participants')
 
+        async def update_message(self):
+            if self.has_everyone_answered():
+                await self.message.edit(content=f'{event.og_message}')
+                return
+            mentions = ''
+            for participant in event.participants:
+                if participant.subscribed and not participant.answered:
+                    mentions += f'{participant.member.mention} '
+            mentions = '\nWaiting for a response from these participants:\n' + mentions
+            await self.message.edit(content=f'{event.og_message}{mentions}')
+
         def nudge_timer(self):
             self.nudge_unresponded_timer -= 1
             if self.nudge_unresponded_timer == 0:
@@ -255,18 +266,10 @@ def main():
         async def nudge_unresponded_participants(self):
             if not self.nudge_timer() or self.created or self.has_everyone_answered():
                 return
-            mentions = ''
             for participant in self.participants:
                 if not participant.answered:
                     await participant.member.send(random.choice(self.nudges))
-                    mentions += f'{participant.member.mention} '
                     print(f'{get_log_time()}> {self.name}> Nudged {participant.member.name}')
-            if mentions != '':
-                mentions = '\nWaiting for a response from these participants:\n' + mentions
-                if self.message:
-                    await self.message.edit(self.og_message + mentions)
-                else:
-                    await self.text_channel.send(mentions)
 
         async def remove(self):
             client.events.remove(self)
@@ -285,6 +288,7 @@ def main():
                 self.event.changed = True
                 self.event.ready_to_create = False
                 self.participant.answered = True
+                await event.update_message()
                 self.participant.toggle_availability(self.label)
                 if self.participant.is_available(self.label):
                     button.style = ButtonStyle.green
@@ -317,6 +321,7 @@ def main():
                 self.event.changed = True
                 self.event.ready_to_create = False
                 self.participant.answered = True
+                await event.update_message()
                 if button.style == ButtonStyle.blurple:
                     button.style = ButtonStyle.green
                     for time_slot in timestamps.all_timestamps:
@@ -337,6 +342,7 @@ def main():
                 self.event.changed = True
                 self.event.ready_to_create = False
                 self.participant.answered = True
+                await event.update_message()
                 if button.style == ButtonStyle.blurple:
                     button.style = ButtonStyle.gray
                     for time_slot in timestamps.all_timestamps:
@@ -361,6 +367,7 @@ def main():
                 self.event.changed = True
                 self.event.ready_to_create = False
                 self.participant.answered = True
+                await event.update_message()
                 self.participant.subscribed = not self.participant.subscribed
                 if button.style == ButtonStyle.blurple:
                     button.style = ButtonStyle.gray
@@ -718,7 +725,6 @@ def main():
 
         # Make event object
         event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration) #, weekly
-        event.og_message = f'{interaction.user.name} wants to create an event called {event.name}. Check your DMs to share your availability!'
         mentions = ''
         for participant in event.participants:
             mentions += f'{participant.member.mention} '
@@ -749,7 +755,12 @@ def main():
                     await event.scheduled_event.delete(reason='Reschedule command issued.')
                     await event.remove()
                     client.events.append(new_event)
-                    await interaction.response.send_message(f'{interaction.user.mention} wants to reschedule {new_event.name}. Check your DMs to share your availability!')
+                    new_event.og_message = f'{interaction.user.mention} wants to reschedule {new_event.name}. Check your DMs to share your availability!'
+                    mentions = ''
+                    for participant in event.participants:
+                        mentions += f'{participant.member.mention} '
+                    mentions = '\nWaiting for a response from these participants:\n' + mentions
+                    new_event.message = await interaction.response.send_message(f'{new_event.og_message}{mentions}')
                     await new_event.dm_all_participants(interaction, duration, reschedule=True)
                 else:
                     await interaction.response.send_message(f'{event.name} has not been created yet. Your buttons will work until it is created or cancelled.')
@@ -771,6 +782,7 @@ def main():
                 if event.created:
                     client.scheduled_events.remove(event.scheduled_event)
                     await event.scheduled_event.delete(reason='Cancel command issued.')
+                await event.message.delete()
                 await event.remove()
                 mentions = ''
                 for participant in event.participants:
@@ -859,13 +871,6 @@ def main():
 
                 if event.changed or not event.has_everyone_answered():
                     event.changed = False
-                    mentions = ''
-                    if event.message:
-                        for participant in event.participants:
-                            if not participant.answered:
-                                mentions += f'{participant.member.mention} '
-                        mentions = '\nWaiting for a response from these participants:\n' + mentions
-                        await event.message.edit(event.og_message + mentions)
                     continue
 
                 event.check_times()
