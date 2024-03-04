@@ -288,7 +288,7 @@ def main():
                 self.event.changed = True
                 self.event.ready_to_create = False
                 self.participant.answered = True
-                await event.update_message()
+                await self.event.update_message()
                 self.participant.toggle_availability(self.label)
                 if self.participant.is_available(self.label):
                     button.style = ButtonStyle.green
@@ -321,7 +321,7 @@ def main():
                 self.event.changed = True
                 self.event.ready_to_create = False
                 self.participant.answered = True
-                await event.update_message()
+                await self.event.update_message()
                 if button.style == ButtonStyle.blurple:
                     button.style = ButtonStyle.green
                     for time_slot in timestamps.all_timestamps:
@@ -342,7 +342,7 @@ def main():
                 self.event.changed = True
                 self.event.ready_to_create = False
                 self.participant.answered = True
-                await event.update_message()
+                await self.event.update_message()
                 if button.style == ButtonStyle.blurple:
                     button.style = ButtonStyle.gray
                     for time_slot in timestamps.all_timestamps:
@@ -367,7 +367,7 @@ def main():
                 self.event.changed = True
                 self.event.ready_to_create = False
                 self.participant.answered = True
-                await event.update_message()
+                await self.event.update_message()
                 self.participant.subscribed = not self.participant.subscribed
                 if button.style == ButtonStyle.blurple:
                     button.style = ButtonStyle.gray
