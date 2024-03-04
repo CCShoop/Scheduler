@@ -725,14 +725,13 @@ def main():
 
         # Make event object
         event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration) #, weekly
-        event.og_message = f'{interaction.user.name}'
+        event.og_message = f'{interaction.user.name}' + event.og_message
         mentions = ''
         for participant in event.participants:
             mentions += f'{participant.member.mention} '
         mentions = '\nWaiting for a response from these participants:\n' + mentions
         client.events.append(event)
-        await interaction.response.send_message(event.og_message + mentions)
-        event.message = interaction.message
+        event.message = await interaction.response.send_message(event.og_message + mentions)
 
         await event.dm_all_participants(interaction, duration)
 
