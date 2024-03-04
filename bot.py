@@ -142,7 +142,7 @@ def main():
             self.name = name
             self.guild = guild
             self.entity_type = entity_type
-            self.og_message = f'{interaction.user.name} wants to create an event called {event.name}. Check your DMs to share your availability!'
+            self.og_message = f' wants to create an event called {self.name}. Check your DMs to share your availability!'
             self.message:Message = None
             self.text_channel = text_channel
             self.voice_channel = voice_channel
@@ -725,6 +725,7 @@ def main():
 
         # Make event object
         event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration) #, weekly
+        event.og_message = f'{interaction.user.name}'
         mentions = ''
         for participant in event.participants:
             mentions += f'{participant.member.mention} '
