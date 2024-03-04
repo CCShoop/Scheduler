@@ -247,14 +247,14 @@ def main():
 
         async def update_message(self):
             if self.has_everyone_answered():
-                await self.message.edit(content=f'{event.og_message}')
+                await self.message.edit(content=f'{self.og_message}')
                 return
             mentions = ''
-            for participant in event.participants:
+            for participant in self.participants:
                 if participant.subscribed and not participant.answered:
                     mentions += f'{participant.member.mention} '
             mentions = '\nWaiting for a response from these participants:\n' + mentions
-            await self.message.edit(content=f'{event.og_message}{mentions}')
+            await self.message.edit(content=f'{self.og_message}{mentions}')
 
         def nudge_timer(self):
             self.nudge_unresponded_timer -= 1
