@@ -254,7 +254,8 @@ def main():
                 if participant.subscribed and not participant.answered:
                     mentions += f'{participant.member.mention} '
             mentions = '\nWaiting for a response from these participants:\n' + mentions
-            await self.message.edit(content=f'{self.og_message}{mentions}')
+            if self.message:
+                await self.message.edit(content=f'{self.og_message}{mentions}')
 
         def nudge_timer(self):
             self.nudge_unresponded_timer -= 1
