@@ -143,7 +143,7 @@ def main():
             self.guild = guild
             self.entity_type = entity_type
             self.og_message = f' wants to create an event called {self.name}. Check your DMs to share your availability!'
-            self.message:Message = None
+            self.response = None
             self.text_channel = text_channel
             self.voice_channel = voice_channel
             self.privacy_level = PrivacyLevel.guild_only
@@ -247,7 +247,7 @@ def main():
 
         async def update_message(self):
             if self.has_everyone_answered():
-                await self.message.delete()
+                await self.response.edit_message(content=f'{self.og_message}\nEveryone has responded.')
                 return
             mentions = ''
             for participant in self.participants:
@@ -255,7 +255,7 @@ def main():
                     mentions += f'{participant.member.mention} '
             mentions = '\nWaiting for a response from these participants:\n' + mentions
             try:
-                await self.message.edit(content=mentions)
+                await self.response.edit_message(content=f'{self.og_message}{mentions}')
             except Exception as e:
                 print(f'{get_log_time()}> {self.name}> Error editing ping message: {e}')
 
@@ -734,8 +734,8 @@ def main():
             mentions += f'{participant.member.mention} '
         mentions = '\nWaiting for a response from these participants:\n' + mentions
         client.events.append(event)
-        await interaction.response.send_message(event.og_message)
-        event.message = await interaction.channel.send(mentions)
+        await interaction.response.send_message(f'{event.og_message}{mentions}')
+        event.response = interaction.response
 
         await event.dm_all_participants(interaction, duration)
 
@@ -764,8 +764,8 @@ def main():
                     for participant in event.participants:
                         mentions += f'{participant.member.mention} '
                     mentions = '\nWaiting for a response from these participants:\n' + mentions
-                    await interaction.response.send_message(new_event.og_message)
-                    new_event.message = await interaction.channel.send(mentions)
+                    await interaction.response.send_message(f'{new_event.og_message}{mentions}')
+                    new_event.response = interaction.response
                     await new_event.dm_all_participants(interaction, duration, reschedule=True)
                 else:
                     await interaction.response.send_message(f'{event.name} has not been created yet. Your buttons will work until it is created or cancelled.')
@@ -787,7 +787,6 @@ def main():
                 if event.created:
                     client.scheduled_events.remove(event.scheduled_event)
                     await event.scheduled_event.delete(reason='Cancel command issued.')
-                await event.message.delete()
                 await event.remove()
                 mentions = ''
                 for participant in event.participants:
@@ -885,8 +884,6 @@ def main():
             if event.ready_to_create:
                 try:
                     event.scheduled_event = await client.make_scheduled_event(event)
-                    if event.message:
-                        event.message.edit(event.og_message)
                     mentions = ''
                     unsubbed = ''
                     for participant in event.participants:
