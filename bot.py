@@ -247,15 +247,17 @@ def main():
 
         async def update_message(self):
             if self.has_everyone_answered():
-                await self.message.edit(content=f'{self.og_message}')
+                await self.message.delete()
                 return
             mentions = ''
             for participant in self.participants:
                 if participant.subscribed and not participant.answered:
                     mentions += f'{participant.member.mention} '
             mentions = '\nWaiting for a response from these participants:\n' + mentions
-            if self.message:
-                await self.message.edit(content=f'{self.og_message}{mentions}')
+            try:
+                await self.message.edit(content=mentions)
+            except Exception as e:
+                print(f'{get_log_time()}> {self.name}> Error editing ping message: {e}')
 
         def nudge_timer(self):
             self.nudge_unresponded_timer -= 1
@@ -732,7 +734,8 @@ def main():
             mentions += f'{participant.member.mention} '
         mentions = '\nWaiting for a response from these participants:\n' + mentions
         client.events.append(event)
-        event.message = await interaction.response.send_message(event.og_message + mentions)
+        await interaction.response.send_message(event.og_message)
+        event.message = await interaction.channel.send(mentions)
 
         await event.dm_all_participants(interaction, duration)
 
@@ -761,7 +764,8 @@ def main():
                     for participant in event.participants:
                         mentions += f'{participant.member.mention} '
                     mentions = '\nWaiting for a response from these participants:\n' + mentions
-                    new_event.message = await interaction.response.send_message(f'{new_event.og_message}{mentions}')
+                    await interaction.response.send_message(new_event.og_message)
+                    new_event.message = await interaction.channel.send(mentions)
                     await new_event.dm_all_participants(interaction, duration, reschedule=True)
                 else:
                     await interaction.response.send_message(f'{event.name} has not been created yet. Your buttons will work until it is created or cancelled.')
