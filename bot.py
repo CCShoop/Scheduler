@@ -792,7 +792,7 @@ def main():
                 for participant in event.participants:
                     if participant.member != interaction.user:
                         async with client.msg_lock:
-                            participant.member.send(f'{interaction.user.name} has cancelled {event.name}.')
+                            await participant.member.send(f'{interaction.user.name} has cancelled {event.name}.')
                         mentions += participant.member.mention
                 await interaction.response.send_message(f'{mentions}\n{interaction.user.mention} has cancelled {event.name}.')
                 return
