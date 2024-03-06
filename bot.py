@@ -902,7 +902,7 @@ def main():
                         response = f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed
                     else:
                         response = f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed
-                    await event.text_channel.send(response, view=EventButtons(event))
+                    await event.text_channel.send(content=response, view=EventButtons(event))
                 except Exception as e:
                     print(f'{get_log_time()}> Error creating event: {e}')
 
