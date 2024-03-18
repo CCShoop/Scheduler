@@ -284,7 +284,10 @@ def main():
                     button.style = ButtonStyle.green
                 else:
                     button.style = ButtonStyle.red
-                await interaction.response.edit_message(view=self)
+                try:
+                    await interaction.response.edit_message(view=self)
+                except Exception as e:
+                    print(f'{get_log_time()}> Error editing response to {self.label} button press by {self.participant.member.name}: {e}')
                 print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} toggled availability to {self.participant.is_available(self.label)} at {self.label}')
 
             button.callback = button_callback
@@ -320,7 +323,10 @@ def main():
                 else:
                     button.style = ButtonStyle.blurple
                     print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} deselected full availability')
-                await interaction.response.edit_message(view=self)
+                try:
+                    await interaction.response.edit_message(view=self)
+                except Exception as e:
+                    print(f'{get_log_time()}> Error with ALL button press by {self.participant.member.name}: {e}')
 
             button.callback = all_button_callback
             self.add_item(button)
@@ -334,7 +340,7 @@ def main():
                 if button.style == ButtonStyle.blurple:
                     button.style = ButtonStyle.gray
                     for time_slot in timestamps.all_timestamps:
-                        if self.participant.toggle_availability(time_slot):
+                        if self.participant.is_available(time_slot):
                             self.participant.toggle_availability(time_slot)
                     self.event.reason += f'{self.participant.member.name} has no availability. '
                     self.event.valid = False
@@ -344,7 +350,10 @@ def main():
                     self.event.reason.replace(f'{self.participant.member.name} has no availability. ', '')
                     self.event.valid = True
                     print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} deselected no availability')
-                await interaction.response.edit_message(view=self)
+                try:
+                    await interaction.response.edit_message(view=self)
+                except Exception as e:
+                    print(f'{get_log_time()}> Error with NONE button press by {self.participant.member.name}: {e}')
 
             button.callback = none_button_callback
             self.add_item(button)
@@ -362,7 +371,10 @@ def main():
                 else:
                     button.style = ButtonStyle.blurple
                     print(f'{get_log_time()}> {self.event.name}> {self.participant.member.name} resubscribed')
-                await interaction.response.edit_message(view=self)
+                try:
+                    await interaction.response.edit_message(view=self)
+                except Exception as e:
+                    print(f'{get_log_time()}> Error with UNSUB button press by {self.participant.member.name}: {e}')
 
             button.callback = unsub_button_callback
             self.add_item(button)
@@ -415,7 +427,10 @@ def main():
                 self.start_button.style = ButtonStyle.green
                 self.start_button.disabled = True
                 self.end_button.disabled = False
-                await interaction.response.edit_message(view=self)
+                try:
+                    await interaction.response.edit_message(view=self)
+                except Exception as e:
+                    print(f'{get_log_time()}> Error responding to START button interaction: {e}')
             self.start_button.callback = start_button_callback
             self.add_item(self.start_button)
 
@@ -435,7 +450,10 @@ def main():
                 self.end_button.disabled = True
                 self.reschedule_button.disabled = True
                 self.cancel_button.disabled = True
-                await interaction.response.edit_message(view=self)
+                try:
+                    await interaction.response.edit_message(view=self)
+                except Exception as e:
+                    print(f'{get_log_time()}> Error responding to END button interaction: {e}')
             self.end_button.callback = end_button_callback
             self.add_item(self.end_button)
 
@@ -466,8 +484,14 @@ def main():
                 for participant in self.event.participants:
                     if participant.member != interaction.user:
                         mentions += participant.member.mention
-                await self.event.text_channel.send(f'{mentions}\n{interaction.user.mention} wants to reschedule {new_event.name}. Check your DMs to share your availability!')
-                await new_event.dm_all_participants(interaction, self.event.duration, reschedule=True)
+                try:
+                    await self.event.text_channel.send(f'{mentions}\n{interaction.user.mention} wants to reschedule {new_event.name}. Check your DMs to share your availability!')
+                except Exception as e:
+                    print(f'{get_log_time()}> Error sending RESCHEDULE button text channel message: {e}')
+                try:
+                    await new_event.dm_all_participants(interaction, self.event.duration, reschedule=True)
+                except Exception as e:
+                    print(f'{get_log_time()}> Error with RESCHEDULE button DMing all participants: {e}')
             self.reschedule_button.callback = reschedule_button_callback
             self.add_item(self.reschedule_button)
 
@@ -491,8 +515,11 @@ def main():
                 self.end_button.disabled = True
                 self.reschedule_button.disabled = True
                 self.cancel_button.disabled = True
-                await interaction.response.edit_message(view=self)
-                await self.event.text_channel.send(f'{mentions}\n{interaction.user.mention} cancelled {self.event.name}.')
+                try:
+                    await interaction.response.edit_message(view=self)
+                    await self.event.text_channel.send(f'{mentions}\n{interaction.user.mention} cancelled {self.event.name}.')
+                except Exception as e:
+                    print(f'{get_log_time()}> Error sending CANCEL button interaction response or cancelled message to text channel: {e}')
             self.cancel_button.callback = cancel_button_callback
             self.add_item(self.cancel_button)
 
@@ -531,8 +558,11 @@ def main():
                                 location = client.get_channel(scheduled_event.channel_id)
                             event.voice_channel = location
                             participants = []
-                            async for user in scheduled_event.users():
-                                participants.append(Participant(user))
+                            try:
+                               async for user in scheduled_event.users():
+                                    participants.append(Participant(user))
+                            except Exception as e:
+                                print(f'{get_log_time()}> Error getting users from scheduled event: {e}')
                             event.participants = participants
                             break
                     # create event in memory to match existing scheduled event
@@ -672,14 +702,17 @@ def main():
         event.scheduled_event = await client.make_scheduled_event(event)
         response = ''
         if event.start_time.hour < 10 and event.start_time.minute < 10:
-            response = f'{interaction.user.mention} created an event called {event.name} starting at 0{event.start_time.hour}:0{event.start_time.minute}.'
+            response = f'{interaction.user.name} created an event called {event.name} starting at 0{event.start_time.hour}:0{event.start_time.minute} ET.'
         elif event.start_time.hour >= 10 and event.start_time.minute < 10:
-            response = f'{interaction.user.mention} created an event called {event.name} starting at {event.start_time.hour}:0{event.start_time.minute}.'
+            response = f'{interaction.user.name} created an event called {event.name} starting at {event.start_time.hour}:0{event.start_time.minute} ET.'
         elif event.start_time.hour < 10 and event.start_time.minute >= 10:
-            response = f'{interaction.user.mention} created an event called {event.name} starting at 0{event.start_time.hour}:{event.start_time.minute}.'
+            response = f'{interaction.user.name} created an event called {event.name} starting at 0{event.start_time.hour}:{event.start_time.minute} ET.'
         else:
-            response = f'{interaction.user.mention} created an event called {event.name} starting at {event.start_time.hour}:{event.start_time.minute}.'
-        await interaction.response.send_message(response, view=EventButtons(event))
+            response = f'{interaction.user.name} created an event called {event.name} starting at {event.start_time.hour}:{event.start_time.minute} ET.'
+        try:
+            await interaction.response.send_message(response, view=EventButtons(event))
+        except Exception as e:
+            print(f'{get_log_time()}> Error sending interaction response to create event command: {e}')
 
     @client.tree.command(name='schedule', description='Create a scheduling event.')
     @app_commands.describe(event_name='Name for the event.')
@@ -709,9 +742,14 @@ def main():
         # Make event object
         event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration) #, weekly
         client.events.append(event)
-        await interaction.response.send_message(f'{interaction.user.mention} wants to create an event called {event.name}. Check your DMs to share your availability!')
-
-        await event.dm_all_participants(interaction, duration)
+        try:
+            await interaction.response.send_message(f'{interaction.user.mention} wants to create an event called {event.name}. Check your DMs to share your availability!')
+        except Exception as e:
+            print(f'{get_log_time()}> Error sending schedule command response: {e}')
+        try:
+            await event.dm_all_participants(interaction, duration)
+        except Exception as e:
+            print(f'{get_log_time()}> Error DMing all participants: {e}')
 
     @client.tree.command(name='reschedule', description='Reschedule an existing scheduled event.')
     @app_commands.describe(event_name='Name of the event to reschedule.')
@@ -733,12 +771,15 @@ def main():
                     await event.scheduled_event.delete(reason='Reschedule command issued.')
                     await event.remove()
                     client.events.append(new_event)
-                    await interaction.response.send_message(f'{interaction.user.mention} wants to reschedule {new_event.name}. Check your DMs to share your availability!')
+                    await interaction.response.send_message(f'{interaction.user.name} wants to reschedule {new_event.name}. Check your DMs to share your availability!')
                     await new_event.dm_all_participants(interaction, duration, reschedule=True)
                 else:
                     await interaction.response.send_message(f'{event.name} has not been created yet. Your buttons will work until it is created or cancelled.')
                 return
-        await interaction.response.send_message(f'Could not find event {event_name}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}')
+        try:
+            await interaction.response.send_message(f'Could not find event {event_name}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}')
+        except Exception as e:
+            print(f'{get_log_time()}> Error responding to reschedule command: {e}')
 
     @client.tree.command(name='cancel', description='Cancel an event.')
     @app_commands.describe(event_name='Name of the event to cancel.')
@@ -764,7 +805,10 @@ def main():
                         mentions += participant.member.mention
                 await interaction.response.send_message(f'{mentions}\n{interaction.user.mention} has cancelled {event.name}.')
                 return
-        await interaction.response.send_message(f'Could not find event {event_name}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}')
+        try:
+            await interaction.response.send_message(f'Could not find event {event_name}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}')
+        except Exception as e:
+            print(f'{get_log_time()}> Error responding to cancel command: {e}')
 
     @tasks.loop(minutes=1)
     async def create_guild_event():
