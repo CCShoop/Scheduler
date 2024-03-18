@@ -7,7 +7,7 @@ import timestamps
 from asyncio import Lock
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
-from discord import app_commands, Interaction, Intents, Client, ButtonStyle, EventStatus, EntityType, TextChannel, VoiceChannel, ScheduledEvent, Guild, PrivacyLevel, utils, File
+from discord import app_commands, Interaction, Intents, Client, ButtonStyle, EventStatus, EntityType, TextChannel, VoiceChannel, Message, ScheduledEvent, Guild, PrivacyLevel, utils, File
 from discord.ui import View, Button
 from discord.ext import tasks
 
@@ -142,6 +142,8 @@ def main():
             self.name = name
             self.guild = guild
             self.entity_type = entity_type
+            self.og_message_text = f' wants to create an event called {self.name}. Check your DMs to share your availability!'
+            self.responded_message = None
             self.text_channel = text_channel
             self.voice_channel = voice_channel
             self.privacy_level = PrivacyLevel.guild_only
@@ -154,6 +156,7 @@ def main():
             self.nudge_unresponded_timer = 30
             self.ready_to_create = False
             self.created = False
+            self.started = False
             self.scheduled_event: ScheduledEvent = None
             self.changed = False
             self.start_time = start_time
@@ -242,6 +245,26 @@ def main():
                                                   f'The event will be either created or cancelled 1-2 minutes after the last person responds, which renders the buttons useless.\n'f'⬆️⬆️⬆️⬆️⬆️ __**{self.name}**__ ⬆️⬆️⬆️⬆️⬆️')
             print(f'{get_log_time()}> {self.name}> Done DMing participants')
 
+        async def update_message(self):
+            if self.has_everyone_answered():
+                try:
+                    await self.responded_message.edit(content=f'Everyone has responded.')
+                except Exception as e:
+                    print(f'{get_log_time()}> {self.name}> Error editing responded message with "everyone has responded": {e}')
+                return
+            try:
+                mentions = ''
+                for participant in self.participants:
+                    if participant.subscribed and not participant.answered:
+                        mentions += f'{participant.member.mention} '
+                mentions = '\nWaiting for a response from these participants:\n' + mentions
+            except Exception as e:
+                print(f'{get_log_time()}> {self.name}> Error generating mentions list for responded message: {e}')
+            try:
+                await self.responded_message.edit(content=f'{mentions}')
+            except Exception as e:
+                print(f'{get_log_time()}> {self.name}> Error editing responded message: {e}')
+
         def nudge_timer(self):
             self.nudge_unresponded_timer -= 1
             if self.nudge_unresponded_timer == 0:
@@ -252,15 +275,10 @@ def main():
         async def nudge_unresponded_participants(self):
             if not self.nudge_timer() or self.created or self.has_everyone_answered():
                 return
-            mentions = ''
             for participant in self.participants:
                 if not participant.answered:
                     await participant.member.send(random.choice(self.nudges))
-                    mentions += f'{participant.member.mention} '
                     print(f'{get_log_time()}> {self.name}> Nudged {participant.member.name}')
-            if mentions != '':
-                mentions = 'Waiting for a response from these participants:\n' + mentions
-                await self.text_channel.send(mentions)
 
         async def remove(self):
             client.events.remove(self)
@@ -279,6 +297,7 @@ def main():
                 self.event.changed = True
                 self.event.ready_to_create = False
                 self.participant.answered = True
+                await self.event.update_message()
                 self.participant.toggle_availability(self.label)
                 if self.participant.is_available(self.label):
                     button.style = ButtonStyle.green
@@ -314,6 +333,7 @@ def main():
                 self.event.changed = True
                 self.event.ready_to_create = False
                 self.participant.answered = True
+                await self.event.update_message()
                 if button.style == ButtonStyle.blurple:
                     button.style = ButtonStyle.green
                     for time_slot in timestamps.all_timestamps:
@@ -337,6 +357,7 @@ def main():
                 self.event.changed = True
                 self.event.ready_to_create = False
                 self.participant.answered = True
+                await self.event.update_message()
                 if button.style == ButtonStyle.blurple:
                     button.style = ButtonStyle.gray
                     for time_slot in timestamps.all_timestamps:
@@ -364,6 +385,7 @@ def main():
                 self.event.changed = True
                 self.event.ready_to_create = False
                 self.participant.answered = True
+                await self.event.update_message()
                 self.participant.subscribed = not self.participant.subscribed
                 if button.style == ButtonStyle.blurple:
                     button.style = ButtonStyle.gray
@@ -417,13 +439,14 @@ def main():
             async def start_button_callback(interaction: Interaction):
                 self.event.text_channel = interaction.channel
                 if not self.event.created or self.event.scheduled_event.status != EventStatus.scheduled:
-                    await interaction.response.defer()
+                    await interaction.response.edit_message(view=self)
                     return
                 print(f'{get_log_time()}> {self.event.name}> {interaction.user} started by button press')
                 participant_names = [participant.member.name for participant in self.event.participants]
                 if interaction.user.name not in participant_names:
                     self.event.participants.append(interaction.user)
                 await self.event.scheduled_event.start(reason='Start button pressed.')
+                self.event.started = True
                 self.start_button.style = ButtonStyle.green
                 self.start_button.disabled = True
                 self.end_button.disabled = False
@@ -439,7 +462,7 @@ def main():
             async def end_button_callback(interaction: Interaction):
                 self.event.text_channel = interaction.channel
                 if self.event.scheduled_event.status != EventStatus.active and self.event.scheduled_event.status != EventStatus.scheduled:
-                    await interaction.response.defer()
+                    await interaction.response.edit_message(view=self)
                     return
                 print(f'{get_log_time()}> {self.event.name}> {interaction.user} ended by button press')
                 client.scheduled_events.remove(self.event.scheduled_event)
@@ -461,7 +484,7 @@ def main():
             async def reschedule_button_callback(interaction: Interaction):
                 self.event.text_channel = interaction.channel
                 if not self.event.created:
-                    await interaction.response.defer()
+                    await interaction.response.edit_message(view=self)
                     return
                 print(f'{get_log_time()}> {self.event.name}> {interaction.user} rescheduled by button press')
                 participant_names = [participant.member.name for participant in self.event.participants]
@@ -507,7 +530,7 @@ def main():
                 for participant in self.event.participants:
                     if participant.member != interaction.user:
                         async with client.msg_lock:
-                            participant.member.send(f'{interaction.user.name} has cancelled {self.event.name}.')
+                            await participant.member.send(f'{interaction.user.name} has cancelled {self.event.name}.')
                         mentions += participant.member.mention
                 print(f'{get_log_time()}> {self.event.name}> {interaction.user} cancelled by button press')
                 self.cancel_button.style = ButtonStyle.gray
@@ -568,8 +591,11 @@ def main():
                     # create event in memory to match existing scheduled event
                     if not found:
                         participants = []
-                        async for user in scheduled_event.users():
-                            participants.append(Participant(user))
+                        try:
+                            async for user in scheduled_event.users():
+                                participants.append(Participant(user))
+                        except Exception as e:
+                            print(f'{get_log_time()}> Error looping through participants: {e}')
                         if scheduled_event.end_time:
                             time_difference = scheduled_event.end_time.replace(second=0, microsecond=0) - scheduled_event.start_time.replace(second=0, microsecond=0)
                             duration = int(time_difference.total_seconds() / 60)
@@ -741,15 +767,21 @@ def main():
 
         # Make event object
         event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration) #, weekly
+        event.og_message_text = f'{interaction.user.name}' + event.og_message_text
+        mentions = ''
+        for participant in event.participants:
+            mentions += f'{participant.member.mention} '
+        mentions = '\nWaiting for a response from these participants:\n' + mentions
         client.events.append(event)
         try:
-            await interaction.response.send_message(f'{interaction.user.mention} wants to create an event called {event.name}. Check your DMs to share your availability!')
+            await interaction.response.send_message(f'{event.og_message_text}')
         except Exception as e:
             print(f'{get_log_time()}> Error sending schedule command response: {e}')
         try:
             await event.dm_all_participants(interaction, duration)
+            event.responded_message = await interaction.channel.send(f'{mentions}')
         except Exception as e:
-            print(f'{get_log_time()}> Error DMing all participants: {e}')
+            print(f'{get_log_time()}> Error DMing all participants or sending responded message: {e}')
 
     @client.tree.command(name='reschedule', description='Reschedule an existing scheduled event.')
     @app_commands.describe(event_name='Name of the event to reschedule.')
@@ -771,8 +803,14 @@ def main():
                     await event.scheduled_event.delete(reason='Reschedule command issued.')
                     await event.remove()
                     client.events.append(new_event)
-                    await interaction.response.send_message(f'{interaction.user.name} wants to reschedule {new_event.name}. Check your DMs to share your availability!')
+                    new_event.og_message_text = f'{interaction.user.name} wants to reschedule {new_event.name}. Check your DMs to share your availability!'
+                    mentions = ''
+                    for participant in event.participants:
+                        mentions += f'{participant.member.mention} '
+                    mentions = '\nWaiting for a response from these participants:\n' + mentions
+                    await interaction.response.send_message(f'{new_event.og_message_text}')
                     await new_event.dm_all_participants(interaction, duration, reschedule=True)
+                    new_event.responded_message = await interaction.channel.send(f'{mentions}')
                 else:
                     await interaction.response.send_message(f'{event.name} has not been created yet. Your buttons will work until it is created or cancelled.')
                 return
@@ -801,7 +839,7 @@ def main():
                 for participant in event.participants:
                     if participant.member != interaction.user:
                         async with client.msg_lock:
-                            participant.member.send(f'{interaction.user.name} has cancelled {event.name}.')
+                            await participant.member.send(f'{interaction.user.name} has cancelled {event.name}.')
                         mentions += participant.member.mention
                 await interaction.response.send_message(f'{mentions}\n{interaction.user.mention} has cancelled {event.name}.')
                 return
@@ -850,65 +888,66 @@ def main():
 
         curTime = datetime.now().astimezone().replace(second=0, microsecond=0)
         for event in client.events.copy():
-            if not event.valid:
-                await event.text_channel.send(f'No shared availability has been found. Scheduling for {event.name} has been cancelled.\n' + event.reason)
-                for participant in event.participants:
-                    await participant.member.send(f'Scheduling for {event.name} has been cancelled.')
-                await event.remove()
-                print(f'{get_log_time()}> {event.name}> Event invalid, removed event from memory')
-            elif get_datetime_from_label('01:30') <= curTime:
-                await event.remove()
-                print(f'{get_log_time()}> {event.name}> last time slot passed, removed event from memory')
+            try:
+                if not event.valid:
+                    await event.text_channel.send(f'No shared availability has been found. Scheduling for {event.name} has been cancelled.\n' + event.reason)
+                    for participant in event.participants:
+                        await participant.member.send(f'Scheduling for {event.name} has been cancelled.')
+                    await event.remove()
+                    print(f'{get_log_time()}> {event.name}> Event invalid, removed event from memory')
+                elif get_datetime_from_label('01:30') <= curTime:
+                    await event.remove()
+                    print(f'{get_log_time()}> {event.name}> last time slot passed, removed event from memory')
+            except Exception as e:
+                print(f'{get_log_time()}> Error invalidating and deleting event: {e}')
 
         for event in client.events:
-            await event.nudge_unresponded_participants()
+            try:
+                await event.nudge_unresponded_participants()
 
-            if event.created:
-                if curTime + timedelta(minutes=5) == event.start_time and event.scheduled_event.status == EventStatus.scheduled:
-                    await event.text_channel.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
-                # elif curTime == event.start_time and event.scheduled_event.status == EventStatus.scheduled:
-                #     try:
-                #         await event.scheduled_event.start(reason='It is the event\'s start time.')
-                #         await event.text_channel.send(f'**Event starting now!** {event.name} is starting now.')
-                #     except Exception as e:
-                #         print(f'{get_log_time()}> {event.name}> Failed to start event: {e}')
-                # elif curTime == event.end_time and event.scheduled_event.status == EventStatus.active:
-                #     try:
-                #         await event.scheduled_event.end(reason='It is the event\'s end time.')
-                #         client.scheduled_events.remove(event.scheduled_event)
-                #         client.events.remove(event)
-                #     except Exception as e:
-                #         print(f'{get_log_time()}> {event.name}> Failed to end event: {e}')
-                continue
+                if event.created:
+                    if curTime + timedelta(minutes=5) == event.start_time and event.scheduled_event.status == EventStatus.scheduled and not event.started:
+                        await event.text_channel.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
+                    continue
 
-            if event.changed or not event.has_everyone_answered():
-                event.changed = False
-                continue
+                if event.changed or not event.has_everyone_answered():
+                    event.changed = False
+                    continue
 
-            event.check_times()
+                event.check_times()
+            except Exception as e:
+                print(f'{get_log_time()}> Error nudging or sending 5 minute warning: {e}')
 
             if event.ready_to_create:
-                event.scheduled_event = await client.make_scheduled_event(event)
-
-                mentions = ''
-                unsubbed = ''
-                for participant in event.participants:
-                    if participant.subscribed:
-                        mentions += f'{participant.member.mention} '
+                try:
+                    event.scheduled_event = await client.make_scheduled_event(event)
+                except Exception as e:
+                    print(f'{get_log_time()}> Error creating scheduled event: {e}')
+                try:
+                    mentions = ''
+                    unsubbed = ''
+                    for participant in event.participants:
+                        if participant.subscribed:
+                            mentions += f'{participant.member.mention} '
+                        else:
+                            unsubbed += f'{participant.member.name} '
+                    if unsubbed != '':
+                        unsubbed = '\nUnsubscribed: ' + unsubbed
+                except Exception as e:
+                    print(f'{get_log_time()}> Error generating mentions/unsubbed strings: {e}')
+                try:
+                    response = ''
+                    if event.start_time.hour < 10 and event.start_time.minute < 10:
+                        response = f'{mentions}\nHeads up! You are all available for {event.name} starting today at 0{event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed
+                    elif event.start_time.hour >= 10 and event.start_time.minute < 10:
+                        response = f'{mentions}\nHeads up! You are all available for {event.name} starting today at {event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed
+                    elif event.start_time.hour < 10 and event.start_time.minute >= 10:
+                        response = f'{mentions}\nHeads up! You are all available for {event.name} starting today at 0{event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed
                     else:
-                        unsubbed += f'{participant.member.name} '
-                if unsubbed != '':
-                    unsubbed = '\nUnsubscribed: ' + unsubbed
-                response = ''
-                if event.start_time.hour < 10 and event.start_time.minute < 10:
-                    response = f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed
-                elif event.start_time.hour >= 10 and event.start_time.minute < 10:
-                    response = f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed
-                elif event.start_time.hour < 10 and event.start_time.minute >= 10:
-                    response = f'{mentions}\nHeads up! You are all available for {event.name} starting at 0{event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed
-                else:
-                    response = f'{mentions}\nHeads up! You are all available for {event.name} starting at {event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed
-                await event.text_channel.send(response, view=EventButtons(event))
+                        response = f'{mentions}\nHeads up! You are all available for {event.name} starting today at {event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed
+                    await event.text_channel.send(content=response, view=EventButtons(event))
+                except Exception as e:
+                    print(f'{get_log_time()}> Error sending event created notification with buttons: {e}')
 
     client.run(discord_token)
 
