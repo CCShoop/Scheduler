@@ -784,8 +784,8 @@ def main():
         except Exception as e:
             print(f'{get_log_time()}> Error sending schedule command response: {e}')
         try:
-            await event.dm_all_participants(interaction, duration)
             event.responded_message = await interaction.channel.send(f'{mentions}')
+            await event.dm_all_participants(interaction, duration)
         except Exception as e:
             print(f'{get_log_time()}> Error DMing all participants or sending responded message: {e}')
 
@@ -815,8 +815,8 @@ def main():
                         mentions += f'{participant.member.mention} '
                     mentions = '\nWaiting for a response from these participants:\n' + mentions
                     await interaction.response.send_message(f'{new_event.og_message_text}')
-                    await new_event.dm_all_participants(interaction, duration, reschedule=True)
                     new_event.responded_message = await interaction.channel.send(f'{mentions}')
+                    await new_event.dm_all_participants(interaction, duration, reschedule=True)
                 else:
                     await interaction.response.send_message(f'{event.name} has not been created yet. Your buttons will work until it is created or cancelled.')
                 return
