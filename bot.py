@@ -944,13 +944,13 @@ def main():
                 try:
                     response = ''
                     if event.start_time.hour < 10 and event.start_time.minute < 10:
-                        response = f'{mentions}\nHeads up! You are all available for {event.name} starting today at 0{event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed
+                        response = f'{mentions}\nHeads up! You are all available for {event.name} starting today at 0{event.start_time.hour}:0{event.start_time.minute} ET.\n' + unsubbed
                     elif event.start_time.hour >= 10 and event.start_time.minute < 10:
-                        response = f'{mentions}\nHeads up! You are all available for {event.name} starting today at {event.start_time.hour}:0{event.start_time.minute}.\n' + unsubbed
+                        response = f'{mentions}\nHeads up! You are all available for {event.name} starting today at {event.start_time.hour}:0{event.start_time.minute} ET.\n' + unsubbed
                     elif event.start_time.hour < 10 and event.start_time.minute >= 10:
-                        response = f'{mentions}\nHeads up! You are all available for {event.name} starting today at 0{event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed
+                        response = f'{mentions}\nHeads up! You are all available for {event.name} starting today at 0{event.start_time.hour}:{event.start_time.minute} ET.\n' + unsubbed
                     else:
-                        response = f'{mentions}\nHeads up! You are all available for {event.name} starting today at {event.start_time.hour}:{event.start_time.minute}.\n' + unsubbed
+                        response = f'{mentions}\nHeads up! You are all available for {event.name} starting today at {event.start_time.hour}:{event.start_time.minute} ET.\n' + unsubbed
                     await event.text_channel.send(content=response, view=EventButtons(event))
                 except Exception as e:
                     print(f'{get_log_time()}> Error sending event created notification with buttons: {e}')
