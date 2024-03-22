@@ -468,6 +468,7 @@ def main():
                 client.scheduled_events.remove(self.event.scheduled_event)
                 await self.event.scheduled_event.delete(reason='End button pressed.')
                 self.event.created = False
+                client.scheduled_events.remove(self.event)
                 await self.event.remove()
                 self.end_button.style = ButtonStyle.gray
                 self.end_button.disabled = True
@@ -501,6 +502,7 @@ def main():
                 self.reschedule_button.disabled = True
                 self.cancel_button.disabled = True
                 await interaction.response.edit_message(view=self)
+                client.scheduled_events.remove(self.event)
                 await self.event.remove()
                 client.events.append(new_event)
                 mentions = ''
@@ -525,6 +527,7 @@ def main():
                     client.scheduled_events.remove(self.event.scheduled_event)
                     await self.event.scheduled_event.delete(reason='Cancel button pressed.')
                     self.event.created = False
+                client.scheduled_events.remove(event)
                 await self.event.remove()
                 mentions = ''
                 for participant in self.event.participants:
@@ -562,7 +565,7 @@ def main():
             touched_events = {}
             for event in self.events:
                 touched_events[event] = False
-            for scheduled_event in self.scheduled_events:
+            for scheduled_event in self.scheduled_events.copy():
                 if scheduled_event.status == EventStatus.scheduled or scheduled_event.status == EventStatus.active:
                     found = False
                     for event in self.events:
@@ -595,7 +598,10 @@ def main():
                             async for user in scheduled_event.users():
                                 participants.append(Participant(user))
                         except Exception as e:
-                            print(f'{get_log_time()}> Error looping through participants: {e}')
+                            print(f'{get_log_time()}> {scheduled_event.name}> Error looping through participants: {e}')
+                            print(f'{get_log_time()}> {scheduled_event.name}> Removing scheduled event from list')
+                            self.scheduled_events.remove(scheduled_event)
+                            continue
                         if scheduled_event.end_time:
                             time_difference = scheduled_event.end_time.replace(second=0, microsecond=0) - scheduled_event.start_time.replace(second=0, microsecond=0)
                             duration = int(time_difference.total_seconds() / 60)
