@@ -421,10 +421,10 @@ def main():
     class EventButtons(View):
         def __init__(self, event: Event):
             super().__init__(timeout=None)
-            self.start_label = "Start"
-            self.end_label = "End"
-            self.reschedule_label = "Reschedule"
-            self.cancel_label = "Cancel"
+            self.start_label = "Start Event"
+            self.end_label = "End Event"
+            self.reschedule_label = "Reschedule Event"
+            self.cancel_label = "Cancel Event"
             self.event = event
             self.start_button = Button(label=self.start_label, style=ButtonStyle.blurple)
             self.end_button = Button(label=self.end_label, style=ButtonStyle.blurple)
@@ -468,7 +468,6 @@ def main():
                 client.scheduled_events.remove(self.event.scheduled_event)
                 await self.event.scheduled_event.delete(reason='End button pressed.')
                 self.event.created = False
-                client.scheduled_events.remove(self.event)
                 await self.event.remove()
                 self.end_button.style = ButtonStyle.gray
                 self.end_button.disabled = True
@@ -502,7 +501,6 @@ def main():
                 self.reschedule_button.disabled = True
                 self.cancel_button.disabled = True
                 await interaction.response.edit_message(view=self)
-                client.scheduled_events.remove(self.event)
                 await self.event.remove()
                 client.events.append(new_event)
                 mentions = ''
@@ -527,7 +525,6 @@ def main():
                     client.scheduled_events.remove(self.event.scheduled_event)
                     await self.event.scheduled_event.delete(reason='Cancel button pressed.')
                     self.event.created = False
-                client.scheduled_events.remove(event)
                 await self.event.remove()
                 mentions = ''
                 for participant in self.event.participants:
