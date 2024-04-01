@@ -938,7 +938,7 @@ def main():
                             print(f'{get_log_time()}> Error sending 5 minute nudge: {e}')
                     elif not event.text_channel:
                         for participant in event.participants:
-                            participant.member.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
+                            await participant.member.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
                     continue
 
                 if event.changed or not event.has_everyone_answered():
