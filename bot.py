@@ -931,14 +931,15 @@ def main():
                 await event.nudge_unresponded_participants()
 
                 if event.created:
-                    if event.text_channel and curTime + timedelta(minutes=5) == event.start_time and event.scheduled_event.status == EventStatus.scheduled and not event.started:
-                        try:
-                            await event.text_channel.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
-                        except Exception as e:
-                            print(f'{get_log_time()}> Error sending 5 minute nudge: {e}')
-                    elif not event.text_channel:
-                        for participant in event.participants:
-                            await participant.member.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
+                    if curTime + timedelta(minutes=5) == event.start_time and event.scheduled_event.status == EventStatus.scheduled and not event.started:
+                        if event.text_channel:
+                            try:
+                                await event.text_channel.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
+                            except Exception as e:
+                                print(f'{get_log_time()}> Error sending 5 minute nudge: {e}')
+                        elif not event.text_channel:
+                            for participant in event.participants:
+                                await participant.member.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
                     continue
 
                 if event.changed or not event.has_everyone_answered():
