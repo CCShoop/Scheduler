@@ -851,6 +851,28 @@ def main():
         except Exception as e:
             print(f'{get_log_time()}> Error responding to cancel command: {e}')
 
+    @client.tree.command(name='bind', description='Bind a text channel to an existing event.')
+    @app_commands.describe(event_name='Name of the vent to set this text channel for.')
+    async def bind_command(interaction: Interaction, event_name: str):
+        for guild in client.guilds:
+            for scheduled_event in guild.scheduled_events:
+                if scheduled_event.start_time < datetime.now().astimezone() + timedelta(hours=13):
+                    client.scheduled_events.append(scheduled_event)
+        await client.parse_scheduled_events()
+        event_name = event_name.lower()
+        for event in client.events:
+            if event_name == event.name.lower():
+                try:
+                    event.text_channel = interaction.channel
+                    await interaction.response.send_message(f'Bound this text channel to {event.name}.')
+                except Exception as e:
+                    print(f'{get_log_time()}> Error binding text channel or responding to bind command: {e}')
+                return
+        try:
+            await interaction.response.send_message(f'Could not find event {event_name}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}')
+        except Exception as e:
+            print(f'{get_log_time()}> Error responding to bind command: {e}')
+
     @tasks.loop(minutes=1)
     async def create_guild_event():
         local_scheduled_event_names = [scheduled_event.name for scheduled_event in client.scheduled_events]
@@ -914,6 +936,9 @@ def main():
                             await event.text_channel.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
                         except Exception as e:
                             print(f'{get_log_time()}> Error sending 5 minute nudge: {e}')
+                    elif not event.text_channel:
+                        for participant in event.participants:
+                            participant.member.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
                     continue
 
                 if event.changed or not event.has_everyone_answered():
