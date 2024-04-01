@@ -608,7 +608,7 @@ def main():
                             location = scheduled_event.location
                         else:
                             location = client.get_channel(scheduled_event.channel_id)
-                        event = Event(scheduled_event.name, scheduled_event.entity_type, location, participants, scheduled_event.guild, scheduled_event.guild.text_channels[0], None, duration)
+                        event = Event(scheduled_event.name, scheduled_event.entity_type, location, participants, scheduled_event.guild, None, None, duration)
                         event.created = True
                         event.start_time = scheduled_event.start_time.replace(second=0, microsecond=0)
                         event.end_time = event.start_time.replace(second=0, microsecond=0) + timedelta(minutes=duration)
@@ -909,8 +909,11 @@ def main():
                 await event.nudge_unresponded_participants()
 
                 if event.created:
-                    if curTime + timedelta(minutes=5) == event.start_time and event.scheduled_event.status == EventStatus.scheduled and not event.started:
-                        await event.text_channel.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
+                    if event.text_channel and curTime + timedelta(minutes=5) == event.start_time and event.scheduled_event.status == EventStatus.scheduled and not event.started:
+                        try:
+                            await event.text_channel.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
+                        except Exception as e:
+                            print(f'{get_log_time()}> Error sending 5 minute nudge: {e}')
                     continue
 
                 if event.changed or not event.has_everyone_answered():
