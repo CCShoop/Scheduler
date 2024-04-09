@@ -1,8 +1,8 @@
-from discord import User
+from discord import Member
 
-class Participant(User):
-    def __init__(self, member):
-        super().__init__()
+class Participant(Member):
+    def __init__(self, member: Member):
+        super().__init__(data=member.__dict__ , guild=member.guild, state=member._state)
         self.availability = Participant.Availability()
         self.answered = False
         self.subscribed = True

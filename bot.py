@@ -3,8 +3,8 @@
 import os
 import random
 import requests
-from buttons import EventButtons
-from basic_classes import Participant, Event
+from event import Event
+from participant import Participant
 from typing import Literal
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
@@ -21,7 +21,6 @@ INCLUDE_EXCLUDE: Literal = Literal[INCLUDE, EXCLUDE]
 def get_participants_from_interaction(interaction: Interaction, include_exclude: INCLUDE_EXCLUDE, role: str):
     # Put participants into a list
     participants = []
-    print(f'{get_log_time()} {event_name}> Received event request from {interaction.user.name}')
     if role != None:
         role = utils.find(lambda r: r.name.lower() == role.lower(), interaction.guild.roles)
     for member in interaction.channel.members:
@@ -69,7 +68,6 @@ def main():
                 except Exception as e:
                     event.image_url = ''
                     print(f'{get_log_time()} {event.name}> Failed to process image: {e}')
-            client.scheduled_events.append(event.scheduled_event)
             event.ready_to_create = False
             event.created = True
             print(f'{get_log_time()} {event.name}> Created event starting at {event.start_time.hour}:{event.start_time.minute} ET')
@@ -133,6 +131,8 @@ def main():
         if start_time_obj <= datetime.now().astimezone():
             await interaction.response.send_message(f'Start time must be in the future!')
 
+        print(f'{get_log_time()} {event_name}> Received event creation request from {interaction.user.name}')
+
         participants = get_participants_from_interaction(interaction, include_exclude, role)
 
         # Make event
@@ -162,6 +162,7 @@ def main():
     @app_commands.describe(role='Only include/exclude users with this role as participants.')
     @app_commands.describe(duration="Event duration in minutes (30 minutes default).")
     async def schedule_command(interaction: Interaction, event_name: str, voice_channel: VoiceChannel, image_url: str = None, include_exclude: INCLUDE_EXCLUDE = INCLUDE, role: str = None, duration: int = 30):
+        print(f'{get_log_time()} {event_name}> Received event schedule request from {interaction.user.name}')
         participants = get_participants_from_interaction(interaction, include_exclude, role)
 
         # Make event object
@@ -187,18 +188,12 @@ def main():
     @app_commands.describe(image_url='URL to an image for the event.')
     @app_commands.describe(duration='Event duration in minutes (default 30 minutes).')
     async def reschedule_command(interaction: Interaction, event_name: str, image_url: str = None, duration: int = 30):
-        for guild in client.guilds:
-            for scheduled_event in guild.scheduled_events:
-                if scheduled_event.start_time < datetime.now().astimezone() + timedelta(hours=13):
-                    client.scheduled_events.append(scheduled_event)
-        await client.parse_scheduled_events()
         event_name = event_name.lower()
         for event in client.events:
             if event_name == event.name.lower():
                 print(f'{get_log_time()} {event.name}> {interaction.user.name} requested reschedule')
                 if event.created:
                     new_event = Event(event.name, event.entity_type, event.voice_channel, event.participants, event.guild, interaction.channel, image_url, duration) #, weekly
-                    client.scheduled_events.remove(event.scheduled_event)
                     await event.scheduled_event.delete(reason='Reschedule command issued.')
                     await event.remove()
                     client.events.append(new_event)
@@ -244,11 +239,6 @@ def main():
     @client.tree.command(name='bind', description='Bind a text channel to an existing event.')
     @app_commands.describe(event_name='Name of the vent to set this text channel for.')
     async def bind_command(interaction: Interaction, event_name: str):
-        for guild in client.guilds:
-            for scheduled_event in guild.scheduled_events:
-                if scheduled_event.start_time < datetime.now().astimezone() + timedelta(hours=13):
-                    client.scheduled_events.append(scheduled_event)
-        await client.parse_scheduled_events()
         event_name = event_name.lower()
         for event in client.events:
             if event_name == event.name.lower():
@@ -265,42 +255,6 @@ def main():
 
     @tasks.loop(minutes=1)
     async def update():
-        local_scheduled_event_names = [scheduled_event.name for scheduled_event in client.scheduled_events]
-        for guild in client.guilds:
-            guild_scheduled_event_names = [scheduled_event.name for scheduled_event in guild.scheduled_events]
-            # Clean removed events
-            if guild.id in client.guild_scheduled_events:
-                try:
-                    for local_scheduled_event in client.guild_scheduled_events[guild.id].copy():
-                        if local_scheduled_event.name not in guild_scheduled_event_names:
-                            client.guild_scheduled_events[guild.id].remove(local_scheduled_event)
-                            client.scheduled_events.remove(local_scheduled_event)
-                            print(f'{get_log_time()} {local_scheduled_event.name}> Guild scheduled_event is gone, removed from local scheduled_events')
-                except Exception as e: 
-                    print(f'{get_log_time()} Error removing guild scheduled event: {e}')
-            # Add new events
-            for guild_scheduled_event in guild.scheduled_events:
-                if guild_scheduled_event.name not in local_scheduled_event_names:
-                    try:
-                        guild_events = client.guild_scheduled_events[guild.id]
-                        guild_events.append(guild_scheduled_event)
-                    except:
-                        guild_events = [guild_scheduled_event]
-                    client.guild_scheduled_events[guild.id] = guild_events
-                    client.scheduled_events.append(guild_scheduled_event)
-                    print(f'{get_log_time()} {guild_scheduled_event.name}> New guild scheduled_event, added to local scheduled_events')
-                else:
-                    for event in client.events:
-                        if event.name == guild_scheduled_event.name:
-                            async for interested in guild_scheduled_event.users():
-                                participant_names = [participant.name for participant in event.participants]
-                                if interested.name not in participant_names:
-                                    event.participants.append(Participant(interested))
-                                    print(f'{get_log_time()} {guild_scheduled_event.name}> Added {interested.name} as a participant')
-                            break
-                    participant_names = []
-        await client.parse_scheduled_events()
-
         for event in client.events.copy():
             if event.unavailable:
                 try:
@@ -327,8 +281,6 @@ def main():
         curTime = datetime.now().astimezone().replace(second=0, microsecond=0)
         for event in client.events:
             try:
-                await event.nudge_unresponded_participants()
-
                 if event.created:
                     if curTime + timedelta(minutes=5) == event.start_time and event.scheduled_event.status == EventStatus.scheduled and not event.started:
                         if event.text_channel:
