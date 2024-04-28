@@ -13,7 +13,7 @@ from discord.ext import tasks
 
 from event import Event
 from participant import Participant
-from logger import log_info, log_warn, log_error
+from logger import log_info, log_warn, log_error, log_debug
 
 load_dotenv()
 
@@ -78,26 +78,79 @@ def main():
 
     @client.event
     async def on_message(message):
-        if message.author.bot or message.guild or not message.attachments or not message.content:
+        if message.author.bot or message.guild:
             return
 
-        msg_content = message.content.lower()
-        for event in client.events:
-            if event.name.lower() in msg_content:
-                if event.created:
-                    try:
-                        image_bytes = await message.attachments[0].read()
-                        await event.scheduled_event.edit(image=image_bytes)
-                        await message.channel.send(f'Added your image to {event.name}.')
-                        log_info(f'{event.name}> {message.author.name} added an image')
-                    except Exception as e:
-                        await message.channel.send(f'Failed to add your image to {event.name}.\nError: {e}')
-                        log_warn(f'{event.name}> Error adding image from {message.author.name}: {e}')
-                else:
-                    event.image_url = message.attachments[0].url
-                    await message.channel.send(f'Attached image url to event object. Will try setting it when I make the event.')
+        # Event image
+        if message.attachments and message.content:
+            msg_content = message.content.lower()
+            for event in client.events:
+                if event.name.lower() in msg_content:
+                    if event.created:
+                        try:
+                            image_bytes = await message.attachments[0].read()
+                            await event.scheduled_event.edit(image=image_bytes)
+                            await message.channel.send(f'Added your image to {event.name}.')
+                            log_info(f'{event.name}> {message.author.name} added an image')
+                        except Exception as e:
+                            await message.channel.send(f'Failed to add your image to {event.name}.\nError: {e}')
+                            log_warn(f'{event.name}> Error adding image from {message.author.name}: {e}')
+                    else:
+                        event.image_url = message.attachments[0].url
+                        await message.channel.send(f'Attached image url to event object. Will try setting it when I make the event.')
+                    return
+            await message.channel.send(f'Could not find event {msg_content}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}')
+            return
+
+        # Availability
+        if message.content:
+            found_event = None
+            # Get event from reply
+            if message.reference:
+                bot_message = await message.channel.fetch_message(message.reference.message_id)
+                breakout = False
+                for event in client.events:
+                    for participant in event.participants:
+                        if participant.availability_message.id == bot_message.id:
+                            found_event = event
+                            breakout = True
+                            break
+                    if breakout:
+                        break
+            # Get event from message content
+            if not found_event:
+                for event in client.events:
+                    if event.name in message.content:
+                        message.content.replace(event.name, '')
+                        found_event = event
+                        break
+
+            if not found_event:
+                await message.channel.send(f'Could not find event.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}')
                 return
-        await message.channel.send(f'Could not find event {msg_content}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}')
+
+            times = message.content.split(',')
+            log_debug(f'times: {times}')
+            for time in times:
+                time = time.replace(' ', '')
+                time = time.replace(':', '')
+                time = time.replace(';', '')
+                start_time, part, end_time = time.partition('-')
+                log_debug(f'time: {time}')
+                log_debug(f'start_time: {start_time}')
+                log_debug(f'end_time: {end_time}')
+                if int(start_time) < 10 and len(start_time) == 1:
+                    start_time = '0' + start_time
+                if int(start_time) < 24:
+                    start_time = start_time + '00'
+                if int(end_time) < 10 and len(end_time) == 1:
+                    end_time = '0' + end_time
+                if int(end_time) < 24:
+                    end_time = end_time + '00'
+                log_debug(f'POST 0 ADDITION:')
+                log_debug(f'start_time: {start_time}')
+                log_debug(f'end_time: {end_time}')
+            return
 
     @client.tree.command(name='create', description='Create an event.')
     @app_commands.describe(event_name='Name for the event.')

@@ -6,6 +6,7 @@ class Participant():
     def __init__(self, member: Member):
         self.member = member
         self.availability = Participant.Availability()
+        self.availability_message = None
         self.answered = False
         self.subscribed = True
         self.msg_lock = Lock()

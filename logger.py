@@ -28,3 +28,7 @@ def log_warn(string: str):
 def log_error(string: str):
     string = 'ERROR> ' + string
     log(string)
+
+def log_debug(string: str):
+    string = 'DEBUG> ' + string
+    log(string)

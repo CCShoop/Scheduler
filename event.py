@@ -4,7 +4,7 @@ from discord import Interaction, EntityType, Guild, VoiceChannel, TextChannel, P
 from discord.ui import View, Button
 
 from participant import Participant
-from logger import log_info, log_warn, log_error
+from logger import log_info, log_warn, log_error, log_debug
 
 def get_time():
     ct = str(datetime.now())
@@ -55,10 +55,10 @@ class Event:
                 log_info(f'{self.name}> Sending prompt to {participant.member.name}')
                 view = AvailabilityButtons(participant=participant, event=self)
                 async with participant.msg_lock:
-                    await participant.member.send(f'⬇️⬇️⬇️⬇️⬇️ __**{self.name}**__ ⬇️⬇️⬇️⬇️⬇️'
+                    participant.availability_message = await participant.member.send(f'⬇️⬇️⬇️⬇️⬇️ __**{self.name}**__ ⬇️⬇️⬇️⬇️⬇️'
                                                   f'\n\n{interaction.user.name} wants to create an event called {self.name}.'
                                                   f'\nIt will be scheduled to last {duration} minutes.'
-                                                  f'\n\nPlease send all of the times you will be available to attend {self.name}!'
+                                                  f'\n\nPlease reply to this message with all of the times you will be available to attend {self.name}!'
                                                   f'\nExamples: "{self.name} 8-11" | "{self.name} 15:30-17:00" | "{self.name} 17-2030, 22-2"'
                                                   f'\n\n**All** will set your availability to full.'
                                                   f'\n**None** will stop the event from being created.'
@@ -70,7 +70,7 @@ class Event:
                 if participant.member.name == interaction.user.name:
                     view = AvailabilityButtons(participant=participant, event=self)
                     async with participant.msg_lock:
-                        await participant.member.send(f'⬇️⬇️⬇️⬇️⬇️ __**{self.name}**__ ⬇️⬇️⬇️⬇️⬇️'
+                        participant.availability_message = await participant.member.send(f'⬇️⬇️⬇️⬇️⬇️ __**{self.name}**__ ⬇️⬇️⬇️⬇️⬇️'
                                                       f'\n\nPlease send your new availability for {self.name}.'
                                                       f'\nIt will be scheduled to last {duration} minutes.'
                                                       f'\n\nExamples: "{self.name} 8-11" | "{self.name} 15:30-17:00" | "{self.name} 17-2030, 22-2"'
