@@ -1,9 +1,16 @@
 from asyncio import Lock
 from datetime import datetime, timedelta
-from discord import Interaction, EntityType, Guild, VoiceChannel, TextChannel
-from discord.ui import View
+from discord import Interaction, EntityType, Guild, VoiceChannel, TextChannel, PrivacyLevel, ButtonStyle
+from discord.ui import View, Button
 
 from participant import Participant
+from logger import log_info, log_warn, log_error
+
+def get_time():
+    ct = str(datetime.now())
+    hour = int(ct[11:13])
+    minute = int(ct[14:16])
+    return hour, minute
 
 class Event:
     def __init__(self, name: str, entity_type: EntityType, voice_channel: VoiceChannel, participants: list, guild: Guild, text_channel: TextChannel, image_url: str, duration: int = 30, start_time: datetime = None):
@@ -43,26 +50,42 @@ class Event:
         return True
 
     async def dm_all_participants(self, interaction: Interaction, duration: int = 30, reschedule: bool = False):
-        curHour, curMinute = get_time()
-        curTimeObj = datetime(2000, 1, 1, curHour, curMinute).replace(second=0, microsecond=0)
-        for participant in self.participants:
-            print(f'{get_log_time()} {self.name}> Sending prompt to {participant.member.name}')
-            view = PromptButtons(participant=participant, event=self)
-            async with participant.msg_lock:
-                if reschedule:
-                    await participant.member.send(f'⬇️⬇️⬇️⬇️⬇️ __**{self.name}**__ ⬇️⬇️⬇️⬇️⬇️\n{interaction.user.name} wants to **reschedule** {self.name}.\nThe event will last {duration} minutes.', view=view)
-                else:
-                    await participant.member.send(f'⬇️⬇️⬇️⬇️⬇️ __**{self.name}**__ ⬇️⬇️⬇️⬇️⬇️\n{interaction.user.name} wants to create an event called {self.name}.\nThe event will last {duration} minutes.', view=view)
-                await participant.member.send(f'Select **all** of the 30 minute blocks you could be available to attend {self.name}!\n"None" will stop the event from being created, so click "Unsubscribe" if you want the event to occur with or without you.\n'
-                                                f'The event will be either created or cancelled 1-2 minutes after the last person responds.\n'f'⬆️⬆️⬆️⬆️⬆️ __**{self.name}**__ ⬆️⬆️⬆️⬆️⬆️')
-        print(f'{get_log_time()} {self.name}> Done DMing all participants')
+        if not reschedule:
+            for participant in self.participants:
+                log_info(f'{self.name}> Sending prompt to {participant.member.name}')
+                view = AvailabilityButtons(participant=participant, event=self)
+                async with participant.msg_lock:
+                    await participant.member.send(f'⬇️⬇️⬇️⬇️⬇️ __**{self.name}**__ ⬇️⬇️⬇️⬇️⬇️'
+                                                  f'\n\n{interaction.user.name} wants to create an event called {self.name}.'
+                                                  f'\nIt will be scheduled to last {duration} minutes.'
+                                                  f'\n\nPlease send all of the times you will be available to attend {self.name}!'
+                                                  f'\nExamples: "{self.name} 8-11" | "{self.name} 15:30-17:00" | "{self.name} 17-2030, 22-2"'
+                                                  f'\n\n**All** will set your availability to full.'
+                                                  f'\n**None** will stop the event from being created.'
+                                                  f'\n**Unsubscribe** will allow the event to occur with or without you.'
+                                                  f'\n\nThe event will be either created or cancelled 1-2 minutes after the last person responds.️', view=view)
+            log_info(f'{self.name}> Done DMing all participants')
+        else:
+            for participant in self.participants:
+                if participant.member.name == interaction.user.name:
+                    view = AvailabilityButtons(participant=participant, event=self)
+                    async with participant.msg_lock:
+                        await participant.member.send(f'⬇️⬇️⬇️⬇️⬇️ __**{self.name}**__ ⬇️⬇️⬇️⬇️⬇️'
+                                                      f'\n\nPlease send your new availability for {self.name}.'
+                                                      f'\nIt will be scheduled to last {duration} minutes.'
+                                                      f'\n\nExamples: "{self.name} 8-11" | "{self.name} 15:30-17:00" | "{self.name} 17-2030, 22-2"'
+                                                      f'\n\n**All** will set your availability to full.'
+                                                      f'\n**None** will stop the event from being created.'
+                                                      f'\n**Unsubscribe** will allow the event to occur with or without you.', view=view)
+                        log_info(f'{self.name}> Done DMing {participant.name} for reschedule')
+                    break
 
     async def update_message(self):
         if self.has_everyone_answered():
             try:
                 await self.responded_message.edit(content=f'Everyone has responded.')
             except Exception as e:
-                print(f'{get_log_time()} {self.name}> Error editing responded message with "everyone has responded": {e}')
+                log_error(f'{self.name}> Error editing responded message with "everyone has responded": {e}')
             return
         try:
             mentions = ''
@@ -71,11 +94,11 @@ class Event:
                     mentions += f'{participant.member.mention} '
             mentions = '\nWaiting for a response from these participants:\n' + mentions
         except Exception as e:
-            print(f'{get_log_time()} {self.name}> Error generating mentions list for responded message: {e}')
+            log_error(f'{self.name}> Error generating mentions list for responded message: {e}')
         try:
             await self.responded_message.edit(content=f'{mentions}')
         except Exception as e:
-            print(f'{get_log_time()} {self.name}> Error editing responded message: {e}')
+            log_error(f'{self.name}> Error editing responded message: {e}')
 
     def nudge_timer(self):
         self.nudge_unresponded_timer -= 1
@@ -90,12 +113,9 @@ class Event:
         for participant in self.participants:
             if not participant.answered:
                 await participant.member.send(random.choice(self.nudges))
-                print(f'{get_log_time()} {self.name}> Nudged {participant.member.name}')
+                log_info(f'{self.name}> Nudged {participant.member.name}')
 
-    async def remove(self):
-        client.events.remove(self)
-
-class PromptButtons(View):
+class AvailabilityButtons(View):
     def __init__(self, participant: Participant, event: Event):
         super().__init__(timeout=None)
         self.all_label = "All"
@@ -116,15 +136,16 @@ class PromptButtons(View):
             if button.style == ButtonStyle.blurple:
                 button.style = ButtonStyle.green
                 # TODO: make fully available
-                print(f'{get_log_time()} {self.event.name}> {self.participant.member.name} selected full availability')
+                log_info(f'{self.event.name}> {self.participant.member.name} selected full availability')
             else:
                 button.style = ButtonStyle.blurple
                 # TODO: remove availability
-                print(f'{get_log_time()} {self.event.name}> {self.participant.member.name} deselected full availability')
+                log_info(f'{self.event.name}> {self.participant.member.name} deselected full availability')
             try:
                 await interaction.response.edit_message(view=self)
+                await self.event.update_message()
             except Exception as e:
-                print(f'{get_log_time()} Error with ALL button press by {self.participant.member.name}: {e}')
+                log_error(f'Error with ALL button press by {self.participant.member.name}: {e}')
 
         button.callback = all_button_callback
         self.add_item(button)
@@ -142,16 +163,17 @@ class PromptButtons(View):
                         self.participant.toggle_availability(time_slot)
                 self.event.reason += f'{self.participant.member.name} has no availability. '
                 self.event.unavailable = True
-                print(f'{get_log_time()} {self.event.name}> {self.participant.member.name} selected no availability')
+                log_info(f'{self.event.name}> {self.participant.member.name} selected no availability')
             else:
                 button.style = ButtonStyle.blurple
                 self.event.reason.replace(f'{self.participant.member.name} has no availability. ', '')
                 self.event.unavailable = False
-                print(f'{get_log_time()} {self.event.name}> {self.participant.member.name} deselected no availability')
+                log_info(f'{self.event.name}> {self.participant.member.name} deselected no availability')
             try:
                 await interaction.response.edit_message(view=self)
+                await self.event.update_message()
             except Exception as e:
-                print(f'{get_log_time()} Error with NONE button press by {self.participant.member.name}: {e}')
+                log_error(f'Error with NONE button press by {self.participant.member.name}: {e}')
 
         button.callback = none_button_callback
         self.add_item(button)
@@ -165,14 +187,15 @@ class PromptButtons(View):
             self.participant.subscribed = not self.participant.subscribed
             if button.style == ButtonStyle.blurple:
                 button.style = ButtonStyle.gray
-                print(f'{get_log_time()} {self.event.name}> {self.participant.member.name} unsubscribed')
+                log_info(f'{self.event.name}> {self.participant.member.name} unsubscribed')
             else:
                 button.style = ButtonStyle.blurple
-                print(f'{get_log_time()} {self.event.name}> {self.participant.member.name} resubscribed')
+                log_info(f'{self.event.name}> {self.participant.member.name} resubscribed')
             try:
                 await interaction.response.edit_message(view=self)
+                await self.event.update_message()
             except Exception as e:
-                print(f'{get_log_time()} Error with UNSUB button press by {self.participant.member.name}: {e}')
+                log_error(f'Error with UNSUB button press by {self.participant.member.name}: {e}')
 
         button.callback = unsub_button_callback
         self.add_item(button)
@@ -200,7 +223,7 @@ class EventButtons(View):
             if not self.event.created or self.event.scheduled_event.status != EventStatus.scheduled:
                 await interaction.response.edit_message(view=self)
                 return
-            print(f'{get_log_time()} {self.event.name}> {interaction.user} started by button press')
+            log_info(f'{self.event.name}> {interaction.user} started by button press')
             participant_names = [participant.member.name for participant in self.event.participants]
             if interaction.user.name not in participant_names:
                 self.event.participants.append(interaction.user)
@@ -212,7 +235,7 @@ class EventButtons(View):
             try:
                 await interaction.response.edit_message(view=self)
             except Exception as e:
-                print(f'{get_log_time()} Error responding to START button interaction: {e}')
+                log_error(f'Error responding to START button interaction: {e}')
         self.start_button.callback = start_button_callback
         self.add_item(self.start_button)
 
@@ -223,11 +246,12 @@ class EventButtons(View):
             if self.event.scheduled_event.status != EventStatus.active and self.event.scheduled_event.status != EventStatus.scheduled:
                 await interaction.response.edit_message(view=self)
                 return
-            print(f'{get_log_time()} {self.event.name}> {interaction.user} ended by button press')
+            log_info(f'{self.event.name}> {interaction.user} ended by button press')
             client.scheduled_events.remove(self.event.scheduled_event)
             await self.event.scheduled_event.delete(reason='End button pressed.')
             self.event.created = False
-            await self.event.remove()
+            client.events.remove(event)
+            del event
             self.end_button.style = ButtonStyle.gray
             self.end_button.disabled = True
             self.reschedule_button.disabled = True
@@ -235,7 +259,7 @@ class EventButtons(View):
             try:
                 await interaction.response.edit_message(view=self)
             except Exception as e:
-                print(f'{get_log_time()} Error responding to END button interaction: {e}')
+                log_error(f'Error responding to END button interaction: {e}')
         self.end_button.callback = end_button_callback
         self.add_item(self.end_button)
 
@@ -245,7 +269,7 @@ class EventButtons(View):
             if not self.event.created:
                 await interaction.response.edit_message(view=self)
                 return
-            print(f'{get_log_time()} {self.event.name}> {interaction.user} rescheduled by button press')
+            log_info(f'{self.event.name}> {interaction.user} rescheduled by button press')
             participant_names = [participant.member.name for participant in self.event.participants]
             if interaction.user.name not in participant_names:
                 self.event.participants.append(interaction.user)
@@ -260,7 +284,8 @@ class EventButtons(View):
             self.reschedule_button.disabled = True
             self.cancel_button.disabled = True
             await interaction.response.edit_message(view=self)
-            await self.event.remove()
+            client.events.remove(event)
+            del event
             client.events.append(new_event)
             mentions = ''
             for participant in self.event.participants:
@@ -269,11 +294,11 @@ class EventButtons(View):
             try:
                 await self.event.text_channel.send(f'{mentions}\n{interaction.user.mention} wants to reschedule {new_event.name}. Check your DMs to share your availability!')
             except Exception as e:
-                print(f'{get_log_time()} Error sending RESCHEDULE button text channel message: {e}')
+                log_error(f'Error sending RESCHEDULE button text channel message: {e}')
             try:
                 await new_event.dm_all_participants(interaction, self.event.duration, reschedule=True)
             except Exception as e:
-                print(f'{get_log_time()} Error with RESCHEDULE button DMing all participants: {e}')
+                log_error(f'Error with RESCHEDULE button DMing all participants: {e}')
         self.reschedule_button.callback = reschedule_button_callback
         self.add_item(self.reschedule_button)
 
@@ -285,13 +310,15 @@ class EventButtons(View):
                 await self.event.scheduled_event.delete(reason='Cancel button pressed.')
                 self.event.created = False
             await self.event.remove()
+            client.events.remove(event)
+            del event
             mentions = ''
             for participant in self.event.participants:
                 if participant.member != interaction.user:
                     async with client.msg_lock:
                         await participant.member.send(f'{interaction.user.name} has cancelled {self.event.name}.')
                     mentions += participant.member.mention
-            print(f'{get_log_time()} {self.event.name}> {interaction.user} cancelled by button press')
+            log_info(f'{self.event.name}> {interaction.user} cancelled by button press')
             self.cancel_button.style = ButtonStyle.gray
             self.start_button.disabled = True
             self.end_button.disabled = True
@@ -301,6 +328,6 @@ class EventButtons(View):
                 await interaction.response.edit_message(view=self)
                 await self.event.text_channel.send(f'{mentions}\n{interaction.user.mention} cancelled {self.event.name}.')
             except Exception as e:
-                print(f'{get_log_time()} Error sending CANCEL button interaction response or cancelled message to text channel: {e}')
+                log_error(f'Error sending CANCEL button interaction response or cancelled message to text channel: {e}')
         self.cancel_button.callback = cancel_button_callback
         self.add_item(self.cancel_button)

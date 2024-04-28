@@ -1,8 +1,10 @@
 from discord import Member
+from asyncio import Lock
 
-class Participant(Member):
+
+class Participant():
     def __init__(self, member: Member):
-        super().__init__(data=member.__dict__ , guild=member.guild, state=member._state)
+        self.member = member
         self.availability = Participant.Availability()
         self.answered = False
         self.subscribed = True
