@@ -903,7 +903,7 @@ def main():
                     for event in client.events:
                         if event.name == guild_scheduled_event.name:
                             async for interested in guild_scheduled_event.users():
-                                participant_names = [participant.member.name for participant in event.participants]
+                                participant_names = [participant.name for participant in event.participants]
                                 if interested.name not in participant_names:
                                     event.participants.append(Participant(interested))
                                     print(f'{get_log_time()}> {guild_scheduled_event.name}> Added {interested.name} as a participant')
