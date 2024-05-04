@@ -1,7 +1,8 @@
+import traceback
 from asyncio import Lock
 from datetime import datetime, timedelta
 from discord import Interaction, EntityType, Guild, VoiceChannel, TextChannel, PrivacyLevel, ButtonStyle
-from discord.ui import View, Button
+from discord.ui import View, Button, Modal, TextInput
 
 from participant import Participant
 from logger import log_info, log_warn, log_error, log_debug
@@ -115,6 +116,17 @@ class Event:
                 await participant.member.send(random.choice(self.nudges))
                 log_info(f'{self.name}> Nudged {participant.member.name}')
 
+class AvailabilityModal(Modal, title='Availability'):
+    def __init__(self):
+        self.availability = TextInput(label='Times', placeholder='ex. "8-11" | "15:30-17:00 MST" | "17-2030, 22-2 EDT" | "-18, 20- CT"')
+
+    async def on_submit(self, interaction: Interaction):
+        await interaction.response.send_message(f'Times received!', ephemeral=True)
+
+    async def on_error(self, interaction: Interaction, error: Exception):
+        await interaction.response.send_message(f'Oops! Something went wrong: {e}', ephemeral=True)
+        traceback.print_exception(type(error), error, error.__traceback__)
+
 class AvailabilityButtons(View):
     def __init__(self, participant: Participant, event: Event):
         super().__init__(timeout=None)
@@ -126,6 +138,14 @@ class AvailabilityButtons(View):
         self.add_all_button()
         self.add_none_button()
         self.add_unsub_button()
+
+    def add_times_button(self):
+        button = Button(label=self.times_button, style=ButtonStyle.blurple)
+        async def times_button_callback(interaction: Interaction):
+            self.event.changed = True
+            self.event.ready_to_create = False
+            self.participant.answered = True
+            await interaction.response.send_modal(AvailabilityModal())
 
     def add_all_button(self):
         button = Button(label=self.all_label, style=ButtonStyle.blurple)

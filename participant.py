@@ -1,6 +1,11 @@
 from discord import Member
 from asyncio import Lock
+from datetime import datetime, deltatime
 
+class Times():
+    def __init__(self):
+        self.start_time: datetime
+        self.duration: deltatime
 
 class Participant():
     def __init__(self, member: Member):
