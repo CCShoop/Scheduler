@@ -865,10 +865,10 @@ def main():
                 try:
                     event.text_channel = interaction.channel
                     await interaction.response.send_message(f'Bound this text channel to {event.name}.', ephemeral=True)
-                    print(f'{get_log_time()}> Successfully bound text channel')
+                    print(f'{get_log_time()}> {event.name}> Successfully bound text channel')
                 except Exception as e:
                     await interaction.response.send_message(f'Failed to bind event to text channel: {e}', ephemeral=True)
-                    print(f'{get_log_time()}> Error binding text channel or responding to bind command: {e}')
+                    print(f'{get_log_time()}> {event.name}> Error binding text channel or responding to bind command: {e}')
                 return
         try:
             await interaction.response.send_message(f'Could not find event {event_name}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}', ephemeral=True)
