@@ -922,7 +922,7 @@ def main():
                         await participant.member.send(f'Scheduling for {event.name} has been cancelled.')
                     await event.remove()
                     print(f'{get_log_time()}> {event.name}> Event invalid, removed event from memory')
-                elif get_datetime_from_label('01:30') <= curTime:
+                elif not event.created and get_datetime_from_label('01:30') <= curTime:
                     await event.remove()
                     print(f'{get_log_time()}> {event.name}> last time slot passed, removed event from memory')
             except Exception as e:
