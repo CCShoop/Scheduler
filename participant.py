@@ -1,17 +1,16 @@
 from discord import Member
 from asyncio import Lock
-from datetime import datetime, deltatime
+from datetime import datetime, timedelta
 
 class Times():
     def __init__(self):
         self.start_time: datetime
-        self.duration: deltatime
+        self.duration: timedelta
 
 class Participant():
     def __init__(self, member: Member):
         self.member = member
         self.availability = Participant.Availability()
-        self.availability_message = None
         self.answered = False
         self.subscribed = True
         self.msg_lock = Lock()
