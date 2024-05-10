@@ -818,7 +818,7 @@ def main():
                     await interaction.response.send_message(f'{event.name} has not been created yet. Your buttons will work until it is created or cancelled.')
                 return
         try:
-            await interaction.response.send_message(f'Could not find event {event_name}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}')
+            await interaction.response.send_message(f'Could not find event {event_name}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}', ephemeral=True)
         except Exception as e:
             print(f'{get_log_time()}> Error responding to reschedule command: {e}')
 
@@ -847,7 +847,7 @@ def main():
                 await interaction.response.send_message(f'{mentions}\n{interaction.user.mention} has cancelled {event.name}.')
                 return
         try:
-            await interaction.response.send_message(f'Could not find event {event_name}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}')
+            await interaction.response.send_message(f'Could not find event {event_name}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}', ephemeral=True)
         except Exception as e:
             print(f'{get_log_time()}> Error responding to cancel command: {e}')
 
@@ -864,12 +864,14 @@ def main():
             if event_name == event.name.lower():
                 try:
                     event.text_channel = interaction.channel
-                    await interaction.response.send_message(f'Bound this text channel to {event.name}.')
+                    await interaction.response.send_message(f'Bound this text channel to {event.name}.', ephemeral=True)
+                    print(f'{get_log_time()}> Successfully bound text channel')
                 except Exception as e:
+                    await interaction.response.send_message(f'Failed to bind event to text channel: {e}', ephemeral=True)
                     print(f'{get_log_time()}> Error binding text channel or responding to bind command: {e}')
                 return
         try:
-            await interaction.response.send_message(f'Could not find event {event_name}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}')
+            await interaction.response.send_message(f'Could not find event {event_name}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}', ephemeral=True)
         except Exception as e:
             print(f'{get_log_time()}> Error responding to bind command: {e}')
 
