@@ -26,7 +26,6 @@ class Event:
         self.name = name
         self.guild = guild
         self.entity_type = entity_type
-        self.og_message_text = f'Event name: {self.name}'
         self.responded_message = None
         self.text_channel = text_channel
         self.voice_channel = voice_channel
@@ -39,18 +38,30 @@ class Event:
         self.started = False
         self.scheduled_event: ScheduledEvent = None
         self.changed = False
-        self.start_time = start_time
+        self.start_time: datetime = start_time
+        self.duration: timedelta = timedelta(minutes=duration)
         self.unavailable = False
 
     def compare_availabilities(self):
-        pass
+        common_time_blocks = []
+        for timeblock in self.participants[0].availability:
+            available = True
+            for participant in self.participants[1:]:
+                if not timeblock.overlaps_with(participant.availability):
+                    available = False
+                    break
+            if available and timeblock.duration >= self.duration:
+                self.ready_to_create = True
+                self.start_time = timeblock.start_time
+                return True
+        return False
 
     def shares_participants(self, event):
         for self_participant in self.participants:
             for other_participant in event.participants:
                 if self_participant.member == other_participant.member:
-                    return True
-        return False
+                    return other_participant
+        return None
 
     def has_everyone_answered(self):
         for participant in self.participants:
@@ -98,21 +109,6 @@ class Event:
         except Exception as e:
             log_error(f'{self.name}> Error editing responded message: {e}')
 
-    def nudge_timer(self):
-        self.nudge_unresponded_timer -= 1
-        if self.nudge_unresponded_timer == 0:
-            self.nudge_unresponded_timer = 30
-            return True
-        return False
-
-    async def nudge_unresponded_participants(self):
-        if not self.nudge_timer() or self.created or self.has_everyone_answered():
-            return
-        for participant in self.participants:
-            if not participant.answered:
-                await participant.member.send(random.choice(self.nudges))
-                log_info(f'{self.name}> Nudged {participant.member.name}')
-
 class AvailabilityModal(Modal):
     def __init__(self, event, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -129,20 +125,23 @@ class AvailabilityModal(Modal):
         self.add_item(self.slotzone)
 
     async def on_submit(self, interaction: Interaction):
-        log_info(f'Received availability from {interaction.user.name}')
+        log_info(f'{self.event.name}> Received availability from {interaction.user.name}')
         # Participant availability
         participant = get_participant_from_event(self.event, interaction.user.name)
         avail_string = f'{self.slot1}, {self.slot2}, {self.slot3}, {self.slot4} {self.slotzone}'
-        participant.set_specific_availability(avail_string)
+        try:
+            participant.set_specific_availability(avail_string)
+        except Exception as e:
+            log_error(f'{self.event.name}> Error setting specific availability: {e}')
         participant.answered = True
         await interaction.response.send_message(f'Availability received!', ephemeral=True)
         # Event management
         self.event.changed = True
-        self.event.update_message()
+        await self.event.update_message()
 
     async def on_error(self, interaction: Interaction, error: Exception):
         await interaction.response.send_message(f'Oops! Something went wrong: {error}', ephemeral=True)
-        raise(Exception(f'Error getting availability from {interaction.user.name}: {error}'))
+        log_error(f'{self.event.name}> Error getting availability from {interaction.user.name}: {error}')
 
 class AvailabilityButtons(View):
     def __init__(self, event: Event):
@@ -160,7 +159,10 @@ class AvailabilityButtons(View):
     def add_respond_button(self):
         button = Button(label=self.respond_label, style=ButtonStyle.blurple)
         async def respond_button_callback(interaction: Interaction):
-            await interaction.response.send_modal(AvailabilityModal(event=self.event, title='Availability'))
+            try:
+                await interaction.response.send_modal(AvailabilityModal(event=self.event, title='Availability'))
+            except Exception as e:
+                log_error(f'Error sending availability modal: {e}')
         button.callback=respond_button_callback
         self.add_item(button)
 
@@ -216,7 +218,8 @@ class AvailabilityButtons(View):
         async def unsub_button_callback(interaction: Interaction):
             self.event.changed = True
             self.event.ready_to_create = False
-            # TODO: self.participant.subscribed = not self.participant.subscribed
+            participant = get_participant_from_event(self.event, interaction.user.name)
+            participant.subscribed = not participant.subscribed
             if button.style == ButtonStyle.blurple:
                 button.style = ButtonStyle.gray
                 log_info(f'{self.event.name}> {interaction.user.name} unsubscribed')
@@ -403,7 +406,7 @@ def main():
             self.events = []
 
         async def make_scheduled_event(self, event):
-            event.scheduled_event = await event.guild.create_scheduled_event(name=event.name, description='Bot-generated event', start_time=event.start_time, end_time=event.end_time, entity_type=event.entity_type, channel=event.voice_channel, privacy_level=event.privacy_level)
+            event.scheduled_event = await event.guild.create_scheduled_event(name=event.name, description='Bot-generated event', start_time=event.start_time, entity_type=event.entity_type, channel=event.voice_channel, privacy_level=event.privacy_level)
             if event.image_url:
                 try:
                     response = requests.get(event.image_url)
@@ -438,7 +441,6 @@ def main():
     async def on_message(message):
         if message.author.bot or message.guild:
             return
-
         # Event image
         if message.attachments and message.content:
             msg_content = message.content.lower()
@@ -451,63 +453,13 @@ def main():
                             await message.channel.send(f'Added your image to {event.name}.')
                             log_info(f'{event.name}> {message.author.name} added an image')
                         except Exception as e:
-                            await message.channel.send(f'Failed to add your image to {event.name}.\nError: {e}')
+                            await message.channel.send(f'Failed to add your image to {event.name}.\nError: {e}', ephemeral=True)
                             log_warn(f'{event.name}> Error adding image from {message.author.name}: {e}')
                     else:
                         event.image_url = message.attachments[0].url
-                        await message.channel.send(f'Attached image url to event object. Will try setting it when I make the event.')
+                        await message.channel.send(f'Attached image url to event object. Will try setting it when the event is made.')
                     return
-            await message.channel.send(f'Could not find event {msg_content}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}')
-            return
-
-        # Availability
-        if message.content:
-            found_event = None
-            # Get event from reply
-            if message.reference:
-                bot_message = await message.channel.fetch_message(message.reference.message_id)
-                breakout = False
-                for event in client.events:
-                    for participant in event.participants:
-                        if participant.availability_message.id == bot_message.id:
-                            found_event = event
-                            breakout = True
-                            break
-                    if breakout:
-                        break
-            # Get event from message content
-            if not found_event:
-                for event in client.events:
-                    if event.name in message.content:
-                        message.content.replace(event.name, '')
-                        found_event = event
-                        break
-
-            if not found_event:
-                await message.channel.send(f'Could not find event.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}')
-                return
-
-            times = message.content.split(',')
-            log_debug(f'times: {times}')
-            for time in times:
-                time = time.replace(' ', '')
-                time = time.replace(':', '')
-                time = time.replace(';', '')
-                start_time, part, end_time = time.partition('-')
-                log_debug(f'time: {time}')
-                log_debug(f'start_time: {start_time}')
-                log_debug(f'end_time: {end_time}')
-                if int(start_time) < 10 and len(start_time) == 1:
-                    start_time = '0' + start_time
-                if int(start_time) < 24:
-                    start_time = start_time + '00'
-                if int(end_time) < 10 and len(end_time) == 1:
-                    end_time = '0' + end_time
-                if int(end_time) < 24:
-                    end_time = end_time + '00'
-                log_debug(f'POST 0 ADDITION:')
-                log_debug(f'start_time: {start_time}')
-                log_debug(f'end_time: {end_time}')
+            await message.channel.send(f'Could not find event {msg_content}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}', ephemeral=True)
             return
 
     @client.tree.command(name='create', description='Create an event.')
@@ -659,6 +611,7 @@ def main():
 
                 try:
                     await interaction.response.send_message(f'Bound this text channel to {event.name}.', ephemeral=True)
+                    await interaction.channel.send(f'{event.name} is scheduled to start on {event.start_time.strftime('%m/%d/%Y')} at {event.start_time.strftime('%H:%M:%S')} ET.\n', view=EventButtons(event))
                 except Exception as e:
                     log_error(f'Error responding to bind command: {e}')
                 return
@@ -695,7 +648,7 @@ def main():
                     log_error(f'Error invalidating and deleting event: {e}')
 
         curTime = datetime.now().astimezone().replace(second=0, microsecond=0)
-        for event in client.events:
+        for event in client.events.copy():
             try:
                 if event.created:
                     if curTime + timedelta(minutes=5) == event.start_time and event.scheduled_event.status == EventStatus.scheduled and not event.started:
@@ -709,14 +662,27 @@ def main():
                                 async with participant.msg_lock:
                                     await participant.member.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
                     continue
+            except Exception as e:
+                log_error(f'{event.name}> Error sending 5 minute warning: {e}')
 
                 if event.changed or not event.has_everyone_answered():
                     event.changed = False
                     continue
 
-                # TODO: event.check_times()
+            try:
+                if not event.compare_availabilities():
+                    log_info(f'{event.name}> No common availability found')
+                    if event.text_channel:
+                        event.text_channel.send(f'No common availability was found. Scheduling for {event.name} has been cancelled.')
+                    else:
+                        for participant in event.participants:
+                            async with participant.msg_lock:
+                                participant.member.send(f'No common availability was found. Scheduling for {event.name} has been cancelled.')
+                    client.events.remove()
+                    del event
+                    continue
             except Exception as e:
-                log_error(f'{event.name}> Error nudging or sending 5 minute warning: {e}')
+                log_error(f'{event.name}> Error comparing availabilities or messaging participants: {e}')
 
             if event.ready_to_create:
                 try:
@@ -736,7 +702,7 @@ def main():
                 except Exception as e:
                     log_error(f'{event.name}> Error generating mentions/unsubbed strings: {e}')
                 try:
-                    response = f'{mentions}\nHeads up! You are all available for {event.name} starting today at {double_digit_string(event.start_time.hour)}:{double_digit_string(event.start_time.minute)} ET.\n' + unsubbed
+                    response = f'{mentions}\nHeads up! You are all available for {event.name} starting on {event.start_time.strftime('%m/%d/%Y')} at {event.start_time.strftime('%H:%M:%S')} ET.\n' + unsubbed
                     await event.text_channel.send(content=response, view=EventButtons(event))
                 except Exception as e:
                     log_error(f'{event.name}> Error sending event created notification with buttons: {e}')

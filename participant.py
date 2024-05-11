@@ -2,35 +2,35 @@ from discord import Member
 from asyncio import Lock
 from datetime import datetime, timedelta
 
-from logger import log_debug, log_info, log_error, log_warn
-
 class TimeBlock():
-    def __init__(self, start_time: datetime, duration: timedelta):
+    def __init__(self, start_time: datetime, end_time: datetime):
         self.start_time: datetime = start_time
-        self.duration: timedelta = duration
+        self.end_time: datetime = end_time
+        self.duration: timedelta = end_time - start_time
+
+    def overlaps_with(self, availability):
+        for timeblock in availability:
+            if (timeblock.start_time < timeblock.end_time and timeblock.start_time < timeblock.end_time):
+                return True
+        return False
 
 class Participant():
     def __init__(self, member: Member):
         self.member = member
-        self.availability = Participant.Availability()
         self.answered = False
         self.subscribed = True
         self.msg_lock = Lock()
-
-    class Availability:
-        def __init__(self):
-            self.timeblocks = []
+        self.availability = []
 
     def set_full_availability(self):
         start_time = datetime().astimezone().now().replace(second=0, microsecond=0)
         end_time = datetime().astimezone().now().replace(hour=0, minute=0, second=0, microsecond=0)
         end_time += timedelta(days=1)
-        duration = end_time - start_time
-        avail_block = TimeBlock(start_time, duration)
-        self.availability.timeblocks.append(avail_block)
+        avail_block = TimeBlock(start_time, end_time)
+        self.availability.append(avail_block)
 
     def set_no_availability(self):
-        self.availability.timeblocks.clear()
+        self.availability.clear()
 
     def set_specific_availability(self, avail_string: str):
         avail_string = avail_string.lower()
@@ -101,12 +101,6 @@ class Participant():
                 end_hr = int(end_time_string[:2])
                 end_min = int(end_time_string[2:])
                 end_time = datetime.now().astimezone().replace(hour=end_hr, minute=end_min, second=0, microsecond=0)
-                duration = end_time - start_time
 
-            avail_block = TimeBlock(start_time, duration)
-            self.availability.timeblocks.append(avail_block)
-
-        for block in self.availability.timeblocks:
-            log_debug(f'{self.member.name} availability block:')
-            log_debug(f'\tStart time: {block.start_time.ctime()}')
-            log_debug(f'\tDuration: {str(block.duration)}')
+            avail_block = TimeBlock(start_time, end_time)
+            self.availability.append(avail_block)
