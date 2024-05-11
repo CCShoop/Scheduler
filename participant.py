@@ -74,12 +74,12 @@ class Participant():
 
             # Affixing and Appending 0s
             if start_time != '':
-                if int(start_time) < 10 and len(start_time) == 1:
+                if (int(start_time) < 10 and len(start_time) == 1) or len(start_time) == 3:
                     start_time = '0' + start_time
                 if int(start_time) < 24:
                     start_time = start_time + '00'
             if end_time != '':
-                if int(end_time) < 10 and len(end_time) == 1:
+                if (int(end_time) < 10 and len(end_time) == 1) or len(end_time) == 3:
                     end_time = '0' + end_time
                 if int(end_time) < 24:
                     end_time = end_time + '00'

@@ -174,16 +174,16 @@ def main():
             avail_string = f'{self.slot1}, {self.slot2}, {self.slot3}, {self.slot4} {self.slotzone}'
             try:
                 participant.set_specific_availability(avail_string)
+                participant.answered = True
+                await interaction.response.send_message(f'Availability received!', ephemeral=True)
+                self.event.changed = True
+                await self.event.update_message()
+                log_info(f'{self.event.name}> Received availability from {interaction.user.name}:')
+                for timeblock in participant.availability:
+                    log_info(f'{self.event.name}> \t{timeblock.start_time.strftime('%H%M')} - {timeblock.end_time.strftime('%H%M')}')
             except Exception as e:
                 log_error(f'{self.event.name}> Error setting specific availability: {e}')
-            participant.answered = True
-            await interaction.response.send_message(f'Availability received!', ephemeral=True)
-            # Event management
-            self.event.changed = True
-            await self.event.update_message()
-            log_info(f'{self.event.name}> Received availability from {interaction.user.name}:')
-            for timeblock in participant.availability:
-                log_info(f'{self.event.name}> \t{timeblock.start_time.strftime('%H%M')} - {timeblock.end_time.strftime('%H%M')}')
+                raise(e)
 
         async def on_error(self, interaction: Interaction, error: Exception):
             await interaction.response.send_message(f'Oops! Something went wrong: {error}', ephemeral=True)
