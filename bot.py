@@ -72,12 +72,12 @@ def main():
             self.scheduled_event: ScheduledEvent = None
             self.changed = False
             self.start_time: datetime = start_time
-            self.duration: timedelta = timedelta(minutes=duration)
+            self.duration = timedelta(minutes=float(duration))
             self.unavailable = False
 
         async def compare_availabilities(self):
             self.avail_buttons.disable_buttons()
-            await self.interaction_message.response.edit_message(view=self.avail_buttons)
+            await self.interaction_message.edit(view=self.avail_buttons)
             # Clear out past blocks
             for participant in self.participants:
                 for idx, timeblock in enumerate(participant.availability.copy()):
@@ -115,7 +115,7 @@ def main():
         async def request_availability(self, interaction: Interaction, duration: int = 30, reschedule: bool = False):
             self.avail_buttons = AvailabilityButtons(event=self)
             if not reschedule:
-                self.interaction_message = await interaction.response.send_message(f'**Event name:** {self.name}'
+                await interaction.response.send_message(f'**Event name:** {self.name}'
                         f'\n**Duration:** {duration} minutes'
                         f'\n\nSelect **Respond** to enter your availability!'
                         f'\n**Full** will mark you as available at any time.'
@@ -123,12 +123,13 @@ def main():
                         f'\n**Unsubscribe** will allow the event to occur without you; however, you can still respond and participate.'
                         f'\n\nThe event will be either created or cancelled 1-2 minutes after the last person responds.️', view=self.avail_buttons)
             else:
-                self.interaction_message = await interaction.response.send_message(f'**Event name:** {self.name}'
+                await interaction.response.send_message(f'**Event name:** {self.name}'
                         f'\n**Duration:** {duration} minutes'
                         f'\n\nPlease select **Respond** to enter your new availability.'
                         f'\n**Full** will mark you as available at any time.'
                         f'\n**None** will cancel scheduling.'
                         f'\n**Unsubscribe** will allow the event to occur without you; however, you can still respond and participate.', view=self.avail_buttons)
+            self.interaction_message = await interaction.original_response()
 
         async def update_message(self):
             if self.has_everyone_answered():
@@ -166,7 +167,6 @@ def main():
             self.add_item(self.slotzone)
 
         async def on_submit(self, interaction: Interaction):
-            log_info(f'{self.event.name}> Received availability from {interaction.user.name}')
             # Participant availability
             participant = get_participant_from_event(self.event, interaction.user.name)
             avail_string = f'{self.slot1}, {self.slot2}, {self.slot3}, {self.slot4} {self.slotzone}'
@@ -179,6 +179,9 @@ def main():
             # Event management
             self.event.changed = True
             await self.event.update_message()
+            log_info(f'{self.event.name}> Received availability from {interaction.user.name}:')
+            for timeblock in participant.availability:
+                log_info(f'{self.event.name}> \t{timeblock.start_time.strftime('%H%M')} - {timeblock.end_time.strftime('%H%M')}')
 
         async def on_error(self, interaction: Interaction, error: Exception):
             await interaction.response.send_message(f'Oops! Something went wrong: {error}', ephemeral=True)
@@ -706,7 +709,7 @@ def main():
                         for participant in event.participants:
                             async with participant.msg_lock:
                                 await participant.member.send(f'No common availability was found. Scheduling for {event.name} has been cancelled.')
-                    client.events.remove()
+                    client.events.remove(event)
                     del event
                     continue
             except Exception as e:
@@ -740,3 +743,7 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+# TODO:
+# Rescheduling
+# Cancel
