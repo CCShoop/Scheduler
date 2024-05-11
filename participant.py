@@ -23,14 +23,19 @@ class Participant():
         self.availability = []
 
     def set_full_availability(self):
-        start_time = datetime().astimezone().now().replace(second=0, microsecond=0)
-        end_time = datetime().astimezone().now().replace(hour=0, minute=0, second=0, microsecond=0)
-        end_time += timedelta(days=1)
-        avail_block = TimeBlock(start_time, end_time)
-        self.availability.append(avail_block)
+        try:
+            start_time = datetime.now().astimezone().replace(second=0, microsecond=0)
+            end_time = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+            end_time += timedelta(days=1)
+            avail_block = TimeBlock(start_time, end_time)
+            self.availability.append(avail_block)
+            self.answered = True
+        except Exception as e:
+            raise(e)
 
     def set_no_availability(self):
         self.availability.clear()
+        self.answered = True
 
     def set_specific_availability(self, avail_string: str):
         avail_string = avail_string.lower()
@@ -104,3 +109,4 @@ class Participant():
 
             avail_block = TimeBlock(start_time, end_time)
             self.availability.append(avail_block)
+        self.answered = True
