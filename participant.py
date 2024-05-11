@@ -19,6 +19,7 @@ class Participant():
         self.member = member
         self.answered = False
         self.subscribed = True
+        self.unavailable = False
         self.msg_lock = Lock()
         self.availability = []
 
@@ -87,9 +88,9 @@ class Participant():
                     end_time = end_time + '00'
 
             # Validity check
-            if len(start_time) < 4 or int(end_time) > 2359:
+            if start_time != '' and (len(start_time) < 4 or int(start_time) > 2359):
                 raise(Exception(f'Invalid start time provided by user: {start_time}'))
-            if len(end_time) < 4 or int(end_time) > 2359:
+            if end_time != '' and (len(end_time) < 4 or int(end_time) > 2359):
                 raise(Exception(f'Invalid end time provided by user: {start_time}'))
 
             # Convert to datetime objects
