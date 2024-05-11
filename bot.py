@@ -157,10 +157,10 @@ def main():
         def __init__(self, event, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self.event = event
-            self.slot1 = TextInput(label='Timeslot 1', placeholder='8-11, 1pm-3pm (i.e. Avail. 0800-1100, 1300-1500)')
-            self.slot2 = TextInput(label='Timeslot 2', placeholder='15:30-17 (i.e. Avail. 1530-1700)', required=False)
-            self.slot3 = TextInput(label='Timeslot 3', placeholder='-2030 (i.e. Avail. until 2030)', required=False)
-            self.slot4 = TextInput(label='Timeslot 4', placeholder='22- (i.e. Avail. after 2200)', required=False)
+            self.slot1 = TextInput(label='Timeslot 1', placeholder='8-11, 1pm-3pm (i.e. Available 0800-1100, 1300-1500)')
+            self.slot2 = TextInput(label='Timeslot 2', placeholder='15:30-17 (i.e. Available 1530-1700)', required=False)
+            self.slot3 = TextInput(label='Timeslot 3', placeholder='-2030 (i.e. Available now-2030)', required=False)
+            self.slot4 = TextInput(label='Timeslot 4', placeholder='22- (i.e. Available 2200-0000)', required=False)
             self.slotzone = TextInput(label='Timezone', placeholder='ET|EST|EDT|CT|CST|CDT|MT|MST|MDT|PT|PST|PDT', required=False, default='ET')
             self.add_item(self.slot1)
             self.add_item(self.slot2)

@@ -70,6 +70,8 @@ class Participant():
                 continue
             timeblock = timeblock.replace(':', '')
             timeblock = timeblock.replace(';', '')
+            if '--' in timeblock:
+                raise(Exception(f'Invalid time provided by user: cannot double hyphen (--)'))
             start_time, part, end_time = timeblock.partition('-')
 
             # Affixing and Appending 0s
@@ -86,9 +88,9 @@ class Participant():
 
             # Validity check
             if len(start_time) < 4 or int(end_time) > 2359:
-                raise(Exception('Invalid start time provided by user'))
+                raise(Exception(f'Invalid start time provided by user: {start_time}'))
             if len(end_time) < 4 or int(end_time) > 2359:
-                raise(Exception('Invalid end time provided by user'))
+                raise(Exception(f'Invalid end time provided by user: {start_time}'))
 
             # Convert to datetime objects
             start_time_string = start_time
