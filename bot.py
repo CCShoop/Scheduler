@@ -839,5 +839,4 @@ if __name__ == '__main__':
 # TODO:
 # Create command
 # Rescheduling functionality
-# Cancel functionality
 # Reuse availability
