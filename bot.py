@@ -117,7 +117,7 @@ def main():
             if not reschedule:
                 await interaction.response.send_message(f'**Event name:** {self.name}'
                         f'\n**Duration:** {duration} minutes'
-                        f'\n\nSelect **Respond** to enter your availability!'
+                        f'\n\nSelect **Respond** to enter your availability.'
                         f'\n**Full** will mark you as available at any time.'
                         f'\n**None** will cancel scheduling.'
                         f'\n**Unsubscribe** will allow the event to occur without you; however, you can still respond and participate.'
@@ -125,10 +125,12 @@ def main():
             else:
                 await interaction.response.send_message(f'**Event name:** {self.name}'
                         f'\n**Duration:** {duration} minutes'
-                        f'\n\nPlease select **Respond** to enter your new availability.'
+                        f'\n\nSelect **Respond** to enter your new availability.'
                         f'\n**Full** will mark you as available at any time.'
                         f'\n**None** will cancel scheduling.'
                         f'\n**Unsubscribe** will allow the event to occur without you; however, you can still respond and participate.', view=self.avail_buttons)
+                participant = get_participant_from_event(self, interaction.user.name)
+                participant.answered = False
             self.interaction_message = await interaction.original_response()
 
         async def update_message(self):
@@ -379,9 +381,8 @@ def main():
                 self.cancel_button.disabled = True
                 await interaction.response.edit_message(view=self)
                 client.events.remove(self.event)
-                del self.event
-                client.events.append(new_event)
                 self.event = new_event
+                client.events.append(self.event)
                 mentions = ''
                 for participant in self.event.participants:
                     if participant.member != interaction.user:
@@ -392,6 +393,7 @@ def main():
                     log_error(f'Error sending RESCHEDULE button text channel message: {e}')
                 try:
                     await self.event.request_availability(interaction, self.event.duration, reschedule=True)
+                    await self.event.update_message()
                 except Exception as e:
                     log_error(f'Error with RESCHEDULE button requesting availability: {e}')
             self.reschedule_button.callback = reschedule_button_callback
