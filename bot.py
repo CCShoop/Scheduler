@@ -8,7 +8,7 @@ from typing import Literal
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from discord import app_commands, Interaction, Intents, Client, ButtonStyle, EventStatus, EntityType, TextChannel, VoiceChannel, Message, ScheduledEvent, Guild, PrivacyLevel, User, utils, File
-from discord.ui import View, Button
+from discord.ui import View, Button, Modal, TextInput
 from discord.ext import tasks
 
 from participant import Participant
@@ -20,32 +20,6 @@ INCLUDE = 'INCLUDE'
 EXCLUDE = 'EXCLUDE'
 INCLUDE_EXCLUDE: Literal = Literal[INCLUDE, EXCLUDE]
 
-
-def double_digit_string(digit_string: str):
-    if int(digit_string) < 10 and len(digit_string) == 1:
-        digit_string = '0' + digit_string
-    return digit_string
-
-def get_participants_from_interaction(interaction: Interaction, include_exclude: INCLUDE_EXCLUDE, role: str):
-    # Put participants into a list
-    participants = []
-    if role != None:
-        role = utils.find(lambda r: r.name.lower() == role.lower(), interaction.guild.roles)
-    for member in interaction.channel.members:
-        if member.bot:
-            continue
-        if include_exclude == INCLUDE:
-            if member.name != interaction.user.name and role != None and role not in member.roles:
-                continue
-            participant = Participant(member)
-            participants.append(participant)
-    return participants
-
-def get_time():
-    ct = str(datetime.now())
-    hour = int(ct[11:13])
-    minute = int(ct[14:16])
-    return hour, minute
 
 class Event:
     def __init__(self, name: str, entity_type: EntityType, voice_channel: VoiceChannel, participants: list, guild: Guild, text_channel: TextChannel, image_url: str, duration: int = 30, start_time: datetime = None):
@@ -140,63 +114,76 @@ class Event:
                 log_info(f'{self.name}> Nudged {participant.member.name}')
 
 class AvailabilityModal(Modal):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, event, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_item(TextInput(label='Timeslot 1', placeholder='8-11, 1pm-3pm: Avail. 0800-1100, 1300-1500'))
-        self.add_item(TextInput(label='Timeslot 2', placeholder='15:30-17: Avail. 1530-1700', required=False))
-        self.add_item(TextInput(label='Timeslot 3', placeholder='-2030: Avail. until 2030', required=False))
-        self.add_item(TextInput(label='Timeslot 4', placeholder='22-: Avail. after 2200', required=False))
-        self.add_item(TextInput(label='Timezone', placeholder='ET|EST|EDT|CT|CST|CDT|MT|MST|MDT|PT|PST|PDT', required=False, default='ET'))
+        self.event = event
+        self.slot1 = TextInput(label='Timeslot 1', placeholder='8-11, 1pm-3pm (i.e. Avail. 0800-1100, 1300-1500)')
+        self.slot2 = TextInput(label='Timeslot 2', placeholder='15:30-17 (i.e. Avail. 1530-1700)', required=False)
+        self.slot3 = TextInput(label='Timeslot 3', placeholder='-2030 (i.e. Avail. until 2030)', required=False)
+        self.slot4 = TextInput(label='Timeslot 4', placeholder='22- (i.e. Avail. after 2200)', required=False)
+        self.slotzone = TextInput(label='Timezone', placeholder='ET|EST|EDT|CT|CST|CDT|MT|MST|MDT|PT|PST|PDT', required=False, default='ET')
+        self.add_item(self.slot1)
+        self.add_item(self.slot2)
+        self.add_item(self.slot3)
+        self.add_item(self.slot4)
+        self.add_item(self.slotzone)
 
     async def on_submit(self, interaction: Interaction):
         log_info(f'Received availability from {interaction.user.name}')
+        # Participant availability
+        participant = get_participant_from_event(self.event, interaction.user.name)
+        avail_string = f'{self.slot1}, {self.slot2}, {self.slot3}, {self.slot4} {self.slotzone}'
+        participant.set_specific_availability(avail_string)
+        participant.answered = True
         await interaction.response.send_message(f'Availability received!', ephemeral=True)
+        # Event management
+        self.event.changed = True
+        self.event.update_message()
 
     async def on_error(self, interaction: Interaction, error: Exception):
-        log_error(f'Error getting availability from {interaction.user.name}: {error}')
         await interaction.response.send_message(f'Oops! Something went wrong: {error}', ephemeral=True)
-        traceback.print_exception(type(error), error, error.__traceback__)
+        raise(Exception(f'Error getting availability from {interaction.user.name}: {error}'))
 
 class AvailabilityButtons(View):
     def __init__(self, event: Event):
         super().__init__(timeout=None)
         self.respond_label = "Respond"
-        self.all_label = "All"
+        self.full_label = "Full"
         self.none_label = "None"
         self.unsub_label = "Unsubscribe"
         self.event = event
-        self.availability_modal = AvailabilityModal(title='Availability')
         self.add_respond_button()
-        self.add_all_button()
+        self.add_full_button()
         self.add_none_button()
         self.add_unsub_button()
 
     def add_respond_button(self):
         button = Button(label=self.respond_label, style=ButtonStyle.blurple)
         async def respond_button_callback(interaction: Interaction):
-            await interaction.response.send_modal(self.availability_modal)
+            await interaction.response.send_modal(AvailabilityModal(event=self.event, title='Availability'))
         button.callback=respond_button_callback
         self.add_item(button)
 
-    def add_all_button(self):
-        button = Button(label=self.all_label, style=ButtonStyle.blurple)
-        async def all_button_callback(interaction: Interaction):
+    def add_full_button(self):
+        button = Button(label=self.full_label, style=ButtonStyle.blurple)
+        async def full_button_callback(interaction: Interaction):
             self.event.changed = True
             self.event.ready_to_create = False
+            participant = get_participant_from_event(self.event, interaction.user.name)
             if button.style == ButtonStyle.blurple:
                 button.style = ButtonStyle.green
-                # TODO: set all availability to true
-                log_info(f'{self.event.name}> {interaction.author.name} selected full availability')
+                participant.set_full_availability()
+                log_info(f'{self.event.name}> {interaction.user.name} selected full availability')
             else:
                 button.style = ButtonStyle.blurple
-                # TODO: set all availability to false
-                log_info(f'{self.event.name}> {interaction.author.name} deselected full availability')
+                participant.set_no_availability()
+                log_info(f'{self.event.name}> {interaction.user.name} deselected full availability')
             try:
                 await interaction.response.edit_message(view=self)
                 await self.event.update_message()
             except Exception as e:
-                log_error(f'{self.event.name}> Error with ALL button press by {interaction.author.name}: {e}')
-        button.callback = all_button_callback
+                log_error(f'{self.event.name}> Error with ALL button press by {interaction.user.name}: {e}')
+        button.callback = full_button_callback
         self.add_item(button)
 
     def add_none_button(self):
@@ -204,22 +191,23 @@ class AvailabilityButtons(View):
         async def none_button_callback(interaction: Interaction):
             self.event.changed = True
             self.event.ready_to_create = False
+            participant = get_participant_from_event(self.event, interaction.user.name)
             if button.style == ButtonStyle.blurple:
                 button.style = ButtonStyle.gray
-                # TODO: set all availability to false, cancel event
-                self.event.reason += f'{interaction.author.name} has no availability. '
+                participant.set_no_availability()
+                self.event.reason += f'{interaction.user.name} has no availability. '
                 self.event.unavailable = True
-                log_info(f'{self.event.name}> {interaction.author.name} selected no availability')
+                log_info(f'{self.event.name}> {interaction.user.name} selected no availability')
             else:
                 button.style = ButtonStyle.blurple
-                self.event.reason.replace(f'{interaction.author.name} has no availability. ', '')
+                self.event.reason.replace(f'{interaction.user.name} has no availability. ', '')
                 self.event.unavailable = False
-                log_info(f'{self.event.name}> {interaction.author.name} deselected no availability')
+                log_info(f'{self.event.name}> {interaction.user.name} deselected no availability')
             try:
                 await interaction.response.edit_message(view=self)
                 await self.event.update_message()
             except Exception as e:
-                log_error(f'{self.event.name}> Error with NONE button press by {interaction.author.name}: {e}')
+                log_error(f'{self.event.name}> Error with NONE button press by {interaction.user.name}: {e}')
         button.callback = none_button_callback
         self.add_item(button)
 
@@ -231,15 +219,15 @@ class AvailabilityButtons(View):
             # TODO: self.participant.subscribed = not self.participant.subscribed
             if button.style == ButtonStyle.blurple:
                 button.style = ButtonStyle.gray
-                log_info(f'{self.event.name}> {interaction.author.name} unsubscribed')
+                log_info(f'{self.event.name}> {interaction.user.name} unsubscribed')
             else:
                 button.style = ButtonStyle.blurple
-                log_info(f'{self.event.name}> {interaction.author.name} resubscribed')
+                log_info(f'{self.event.name}> {interaction.user.name} resubscribed')
             try:
                 await interaction.response.edit_message(view=self)
                 await self.event.update_message()
             except Exception as e:
-                log_error(f'{self.event.name}> Error with UNSUB button press by {interaction.author.name}: {e}')
+                log_error(f'{self.event.name}> Error with UNSUB button press by {interaction.user.name}: {e}')
         button.callback = unsub_button_callback
         self.add_item(button)
 
@@ -374,6 +362,37 @@ class EventButtons(View):
                 log_error(f'Error sending CANCEL button interaction response or cancelled message to text channel: {e}')
         self.cancel_button.callback = cancel_button_callback
         self.add_item(self.cancel_button)
+
+def double_digit_string(digit_string: str):
+    if int(digit_string) < 10 and len(digit_string) == 1:
+        digit_string = '0' + digit_string
+    return digit_string
+
+def get_participants_from_interaction(interaction: Interaction, include_exclude: INCLUDE_EXCLUDE, role: str):
+    # Put participants into a list
+    participants = []
+    if role != None:
+        role = utils.find(lambda r: r.name.lower() == role.lower(), interaction.guild.roles)
+    for member in interaction.channel.members:
+        if member.bot:
+            continue
+        if include_exclude == INCLUDE:
+            if member.name != interaction.user.name and role != None and role not in member.roles:
+                continue
+            participant = Participant(member)
+            participants.append(participant)
+    return participants
+
+def get_participant_from_event(event: Event, username: str):
+    for participant in event.participants:
+        if participant.member.name == username:
+            return participant
+
+def get_time():
+    ct = str(datetime.now())
+    hour = int(ct[11:13])
+    minute = int(ct[14:16])
+    return hour, minute
 
 
 def main():
