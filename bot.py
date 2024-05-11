@@ -216,8 +216,8 @@ def main():
                 availability = ''
                 log_info(f'{self.event.name}> Received availability from {interaction.user.name}:')
                 for timeblock in participant.availability:
-                    availability += f'{timeblock.start_time.strftime('%H%M')} - {timeblock.end_time.strftime('%H%M')}\n'
-                    log_info(f'{self.event.name}> \t{timeblock.start_time.strftime('%H%M')} - {timeblock.end_time.strftime('%H%M')}')
+                    availability += f'{timeblock.start_time.strftime("%H%M")} - {timeblock.end_time.strftime("%H%M")}\n'
+                    log_info(f'{self.event.name}> \t{timeblock.start_time.strftime("%H%M")} - {timeblock.end_time.strftime("%H%M")}')
                 await interaction.response.send_message(f'Availability received!\n{availability}', ephemeral=True)
                 self.event.changed = True
                 await self.event.update_message()
@@ -376,7 +376,7 @@ def main():
                     self.event.participants.append(interaction.user)
                 try:
                     await self.event.scheduled_event.start(reason=f'Start button pressed by {interaction.user.name}.')
-                    self.event.event_buttons_msg_content_pt2 = f'\n**Started at:** {datetime.now().astimezone().strftime('%H:%M')} ET'
+                    self.event.event_buttons_msg_content_pt2 = f'\n**Started at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
                     await self.event.event_buttons_message.edit(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt4}', view=self.event.event_buttons)
                 except Exception as e:
                     log_error(f'Error starting event or manipulating event control message: {e}')
@@ -403,7 +403,7 @@ def main():
                 log_info(f'{self.event.name}> {interaction.user} ended by button press')
                 try:
                     await self.event.scheduled_event.delete(reason=f'End button pressed by {interaction.user.name}.')
-                    self.event.event_buttons_msg_content_pt3 = f'\n**Ended at:** {datetime.now().astimezone().strftime('%H:%M')} ET'
+                    self.event.event_buttons_msg_content_pt3 = f'\n**Ended at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
                     await self.event.event_buttons_message.edit(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt3} {self.event.event_buttons_msg_content_pt4}', view=self.event.event_buttons)
                 except Exception as e:
                     log_error(f'Error ending event or manipulating event control message: {e}')
@@ -464,7 +464,7 @@ def main():
             async def cancel_button_callback(interaction: Interaction):
                 self.event.text_channel = interaction.channel
                 try:
-                    self.event.event_buttons_msg_content_pt2 = f'\n**Cancelled by:** {interaction.user.name} at {datetime.now().astimezone().strftime('%H:%M')} ET'
+                    self.event.event_buttons_msg_content_pt2 = f'\n**Cancelled by:** {interaction.user.name} at {datetime.now().astimezone().strftime("%H:%M")} ET'
                     await self.event.event_buttons_message.edit(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt4}', view=self.event.event_buttons)
                     await self.event.text_channel.send(f'{self.event.get_mentions_string(subscribed_only=True)}\n{interaction.user.name} cancelled {self.event.name}.')
                     if self.event.created:
@@ -696,7 +696,7 @@ def main():
                 # Respond to interaction
                 try:
                     await interaction.response.send_message(f'Bound this text channel to {event.name}.', ephemeral=True)
-                    await interaction.channel.send(f'{event.name} is scheduled to start on {event.start_time.strftime('%m/%d')} at {event.start_time.strftime('%H:%M')} ET.\n', view=EventButtons(event))
+                    await interaction.channel.send(f'{event.name} is scheduled to start on {event.start_time.strftime("%m/%d")} at {event.start_time.strftime("%H:%M")} ET.\n', view=EventButtons(event))
                 except Exception as e:
                     log_error(f'Error responding to bind command: {e}')
                     raise(e)
@@ -818,7 +818,7 @@ def main():
                     event.mins_until_start = int(time_until_start.total_seconds() / 60)
                     event.event_buttons_msg_content_pt1 = f'{event.get_mentions_string(subscribed_only=True)}'
                     event.event_buttons_msg_content_pt1 += f'\n**Event name:** {event.name}'
-                    event.event_buttons_msg_content_pt1 += f'\n**Scheduled:** {event.start_time.strftime('%m/%d')} at {event.start_time.strftime('%H:%M')} ET'
+                    event.event_buttons_msg_content_pt1 += f'\n**Scheduled:** {event.start_time.strftime("%m/%d")} at {event.start_time.strftime("%H:%M")} ET'
                     event.event_buttons_msg_content_pt2 = f'\n**Starts in:**'
                     event.event_buttons_msg_content_pt3 = f'minutes'
                     event.event_buttons_msg_content_pt4 += f'\n{unsubbed}'
