@@ -114,19 +114,29 @@ def main():
                         return
 
         # Get a string of participant mentions
-        def get_mentions_string(self, subscribed_only: bool = False):
+        def get_mentions_string(self, subscribed_only: bool = False, unsubscribed_only: bool = False):
             mentions = ''
             for participant in self.participants:
-                if not subscribed_only or participant.subscribed:
-                    mentions += f'{participant.member.mention} '
+                mention_string = f'{participant.member.mention} '
+                if unsubscribed_only and not participant.subscribed:
+                    mentions += mention_string
+                elif subscribed_only and participant.subscribed:
+                    mentions += mention_string
+                else:
+                    mentions += mention_string
             return mentions
 
         # Get a string of participant names
-        def get_names_string(self, unsubscribed_only: bool = False):
+        def get_names_string(self, subscribed_only: bool = False, unsubscribed_only: bool = False):
             names = []
             for participant in self.participants:
-                if not unsubscribed_only or not participant.subscribed:
-                    names.append(f'{participant.member.name}')
+                name_string = f'{participant.member.name}'
+                if unsubscribed_only and not participant.subscribed:
+                    names.append(name_string)
+                elif subscribed_only and participant.subscribed:
+                    names.append(name_string)
+                else:
+                    names.append(name_string)
             return ", ".join(names)
 
         # Get a participant from the event with a username
@@ -328,6 +338,7 @@ def main():
                 participant.subscribed = not participant.subscribed
                 if button.style == ButtonStyle.blurple:
                     button.style = ButtonStyle.gray
+                    participant.answered = True
                     log_info(f'{self.event.name}> {interaction.user.name} unsubscribed')
                 else:
                     button.style = ButtonStyle.blurple

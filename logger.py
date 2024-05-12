@@ -9,17 +9,17 @@ def log(string: str = ''):
     print(f'{get_log_datetime()} {string}')
 
 def log_info(string: str = ''):
-    string = 'INFO> ' + string
+    string = '[INFO] ' + string
     log(string)
 
 def log_warn(string: str = ''):
-    string = 'WARN> ' + string
+    string = '[WARN] ' + string
     log(string)
 
 def log_error(string: str = ''):
-    string = 'ERROR> ' + string
+    string = '[ERROR] ' + string
     log(string)
 
 def log_debug(string: str = ''):
-    string = 'DEBUG> ' + string
+    string = '[DEBUG] ' + string
     log(string)
