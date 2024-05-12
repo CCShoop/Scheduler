@@ -9,20 +9,21 @@ class TimeBlock():
         self.end_time: datetime = end_time
         self.duration: timedelta = end_time - start_time
 
-    def overlaps_with(self, availability):
-        for timeblock in availability:
-            if (timeblock.start_time < timeblock.end_time and timeblock.start_time < timeblock.end_time):
-                return True
-        return False
-
 class Participant():
     def __init__(self, member: Member):
         self.member = member
         self.answered = False
         self.subscribed = True
         self.unavailable = False
+        self.full_availability_flag = False
         self.msg_lock = Lock()
         self.availability = []
+
+    def is_available_at(self, time: datetime, duration: timedelta):
+        for timeblock in self.availability:
+            if (time >= timeblock.start_time) and ((time + duration) <= timeblock.end_time):
+                return True
+        return False
 
     def set_full_availability(self):
         try:
@@ -43,42 +44,71 @@ class Participant():
         avail_string = avail_string.lower()
 
         # Date parsing
-        month, part, day = date_string.partition('/')
-        log_debug(f'month: {month}, day: {day}')
-        if int(month) < 1 or int(month) > 12:
+        try:
+            month, day, year = date_string.split('/')
+        except:
+            try:
+                month, day = date_string.split('/')
+                year = datetime.now().astimezone().year
+            except:
+                raise(Exception(f'Invalid date format provided by user: {date_string}'))
+        try:
+            month = int(month)
+        except:
+            raise(Exception(f'Invalid month: {month}'))
+        try:
+            day = int(day)
+        except:
+            raise(Exception(f'Invalid day: {day}'))
+        try:
+            year = int(year)
+        except:
+            raise(Exception(f'Invalid year: {year}'))
+
+        # Date validity check
+        if year < datetime.now().astimezone().year:
+            raise(Exception(f'Cannot schedule for the past: {year}'))
+        if month < 1 or month > 12:
             raise(Exception(f'Invalid month provided by user: {month}'))
-        if int(day) < 0:
+        if day < 0:
             raise(Exception(f'Invalid day provided by user: {day}'))
-        if int(month) == 1 and int(day) > 31:
+        if month == 1 and day > 31:
             raise(Exception(f'Invalid day provided by user: {day}'))
         if isleap(datetime.now().astimezone().year):
-            if int(month) == 2 and int(day) > 29:
+            if month == 2 and day > 29:
                 raise(Exception(f'Invalid day provided by user: {day}'))
         else:
-            if int(month) == 2 and int(day) > 28:
+            if month == 2 and day > 28:
                 raise(Exception(f'Invalid day provided by user: {day}'))
-        if int(month) == 3 and int(day) > 31:
+        if month == 3 and day > 31:
             raise(Exception(f'Invalid day provided by user: {day}'))
-        if int(month) == 4 and int(day) > 30:
+        if month == 4 and day > 30:
             raise(Exception(f'Invalid day provided by user: {day}'))
-        if int(month) == 5 and int(day) > 31:
+        if month == 5 and day > 31:
             raise(Exception(f'Invalid day provided by user: {day}'))
-        if int(month) == 6 and int(day) > 31:
+        if month == 6 and day > 31:
             raise(Exception(f'Invalid day provided by user: {day}'))
-        if int(month) == 7 and int(day) > 30:
+        if month == 7 and day > 30:
             raise(Exception(f'Invalid day provided by user: {day}'))
-        if int(month) == 8 and int(day) > 31:
+        if month == 8 and day > 31:
             raise(Exception(f'Invalid day provided by user: {day}'))
-        if int(month) == 9 and int(day) > 30:
+        if month == 9 and day > 30:
             raise(Exception(f'Invalid day provided by user: {day}'))
-        if int(month) == 10 and int(day) > 31:
+        if month == 10 and day > 31:
             raise(Exception(f'Invalid day provided by user: {day}'))
-        if int(month) == 11 and int(day) > 30:
+        if month == 11 and day > 30:
             raise(Exception(f'Invalid day provided by user: {day}'))
-        if int(month) == 12 and int(day) > 31:
+        if month == 12 and day > 31:
             raise(Exception(f'Invalid day provided by user: {day}'))
 
-        # Timezone
+        # Check if the entered date is today
+        date_is_today = False
+        curMonth = datetime.now().astimezone().month
+        curDay = datetime.now().astimezone().day
+        if curMonth == month and curDay == day:
+            date_is_today = True
+
+        # Timezone parsing
         timezone_offset = 0
         avail_string = avail_string.replace('s', '')
         avail_string = avail_string.replace('d', '')
@@ -96,7 +126,7 @@ class Participant():
             timezone_offset = 3
             avail_string = avail_string.replace('p', '')
 
-        # Make time list
+        # Make timeblock string list
         timeblock_strings = avail_string.split(',')
 
         # Parse each timeblock
@@ -133,19 +163,26 @@ class Participant():
             # Convert to datetime objects
             start_time_string = start_time
             end_time_string = end_time
+            # Start time is now if today, midnight if not today
             if start_time_string == '':
-                start_time = datetime.now().astimezone().replace(second=0, microsecond=0)
+                if date_is_today:
+                    start_time = datetime.now().astimezone().replace(second=0, microsecond=0)
+                else:
+                    start_time = datetime.now().astimezone().replace(month=month, day=day, hour=0, minute=0, second=0, microsecond=0)
+            # Start time is defined
             else:
                 start_hr = int(start_time_string[:2])
                 start_min = int(start_time_string[2:])
-                start_time = datetime.now().astimezone().replace(hour=start_hr, minute=start_min, second=0, microsecond=0)
+                start_time = datetime.now().astimezone().replace(month=month, day=day, hour=start_hr, minute=start_min, second=0, microsecond=0)
+            # End time is midnight
             if end_time_string == '':
-                end_time = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+                end_time = datetime.now().astimezone().replace(month=month, day=day, hour=0, minute=0, second=0, microsecond=0)
                 end_time += timedelta(days=1)
+            # End time is defined
             else:
                 end_hr = int(end_time_string[:2])
                 end_min = int(end_time_string[2:])
-                end_time = datetime.now().astimezone().replace(hour=end_hr, minute=end_min, second=0, microsecond=0)
+                end_time = datetime.now().astimezone().replace(month=month, day=day, hour=end_hr, minute=end_min, second=0, microsecond=0)
 
             avail_block = TimeBlock(start_time, end_time)
             self.availability.append(avail_block)
