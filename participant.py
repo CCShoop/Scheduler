@@ -1,6 +1,7 @@
 from discord import Member
 from asyncio import Lock
 from datetime import datetime, timedelta
+from calendar import isleap
 
 class TimeBlock():
     def __init__(self, start_time: datetime, end_time: datetime):
@@ -38,8 +39,44 @@ class Participant():
         self.availability.clear()
         self.answered = True
 
-    def set_specific_availability(self, avail_string: str):
+    def set_specific_availability(self, avail_string: str, date_string: str):
         avail_string = avail_string.lower()
+
+        # Date parsing
+        month, part, day = date_string.partition('/')
+        log_debug(f'month: {month}, day: {day}')
+        if int(month) < 1 or int(month) > 12:
+            raise(Exception(f'Invalid month provided by user: {month}'))
+        if int(day) < 0:
+            raise(Exception(f'Invalid day provided by user: {day}'))
+        if int(month) == 1 and int(day) > 31:
+            raise(Exception(f'Invalid day provided by user: {day}'))
+        if isleap(datetime.now().astimezone().year):
+            if int(month) == 2 and int(day) > 29:
+                raise(Exception(f'Invalid day provided by user: {day}'))
+        else:
+            if int(month) == 2 and int(day) > 28:
+                raise(Exception(f'Invalid day provided by user: {day}'))
+        if int(month) == 3 and int(day) > 31:
+            raise(Exception(f'Invalid day provided by user: {day}'))
+        if int(month) == 4 and int(day) > 30:
+            raise(Exception(f'Invalid day provided by user: {day}'))
+        if int(month) == 5 and int(day) > 31:
+            raise(Exception(f'Invalid day provided by user: {day}'))
+        if int(month) == 6 and int(day) > 31:
+            raise(Exception(f'Invalid day provided by user: {day}'))
+        if int(month) == 7 and int(day) > 30:
+            raise(Exception(f'Invalid day provided by user: {day}'))
+        if int(month) == 8 and int(day) > 31:
+            raise(Exception(f'Invalid day provided by user: {day}'))
+        if int(month) == 9 and int(day) > 30:
+            raise(Exception(f'Invalid day provided by user: {day}'))
+        if int(month) == 10 and int(day) > 31:
+            raise(Exception(f'Invalid day provided by user: {day}'))
+        if int(month) == 11 and int(day) > 30:
+            raise(Exception(f'Invalid day provided by user: {day}'))
+        if int(month) == 12 and int(day) > 31:
+            raise(Exception(f'Invalid day provided by user: {day}'))
 
         # Timezone
         timezone_offset = 0

@@ -195,23 +195,24 @@ def main():
         def __init__(self, event, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self.event = event
+            date = datetime.now().astimezone().strftime('%m/%d')
             self.slot1 = TextInput(label='Timeslot 1', placeholder='8-11, 1pm-3pm (i.e. Available 0800-1100, 1300-1500)')
             self.slot2 = TextInput(label='Timeslot 2', placeholder='15:30-17 (i.e. Available 1530-1700)', required=False)
-            self.slot3 = TextInput(label='Timeslot 3', placeholder='-2030 (i.e. Available now-2030)', required=False)
-            self.slot4 = TextInput(label='Timeslot 4', placeholder='22- (i.e. Available 2200-0000)', required=False)
+            self.slot3 = TextInput(label='Timeslot 3', placeholder='-2030, 22- (i.e. Available now-2030, 2200-0000)', required=False)
+            self.date = TextInput(label='Date', placeholder=date, required=False, default=date)
             self.slotzone = TextInput(label='Timezone', placeholder='ET|EST|EDT|CT|CST|CDT|MT|MST|MDT|PT|PST|PDT', required=False, default='ET')
             self.add_item(self.slot1)
             self.add_item(self.slot2)
             self.add_item(self.slot3)
-            self.add_item(self.slot4)
+            self.add_item(self.date)
             self.add_item(self.slotzone)
 
         async def on_submit(self, interaction: Interaction):
             # Participant availability
             participant = self.event.get_participant_from_event(interaction.user.name)
-            avail_string = f'{self.slot1}, {self.slot2}, {self.slot3}, {self.slot4} {self.slotzone}'
+            avail_string = f'{self.slot1.value()}, {self.slot2.value()}, {self.slot3.value()} {self.slotzone}'
             try:
-                participant.set_specific_availability(avail_string)
+                participant.set_specific_availability(avail_string, self.date.value())
                 participant.answered = True
                 availability = ''
                 log_info(f'{self.event.name}> Received availability from {interaction.user.name}:')
@@ -838,5 +839,6 @@ if __name__ == '__main__':
 
 # TODO:
 # Create command
-# Rescheduling functionality
 # Reuse availability
+# Rescheduling functionality
+# Modal for schedule command/reschedule?
