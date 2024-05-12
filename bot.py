@@ -846,7 +846,6 @@ if __name__ == '__main__':
     main()
 
 # TODO CORRECT
-# Compare availabilities
 # Rescheduling functionality
 # Create command (create event at time)
 
@@ -855,5 +854,6 @@ if __name__ == '__main__':
 # ? Modal for schedule command/reschedule
 
 # TODO TEST
+# Compare availabilities
 # Unsub logic (unsub vs. answered, esp. in buttons)
 # Reuse availability functionality
