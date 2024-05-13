@@ -233,14 +233,10 @@ def main():
                     raise(e)
                 return
             try:
-                mentions = '\nWaiting for a response from these participants:\n' + self.get_names_string(subscribed_only=True, mention=True)
+                mentions = self.get_names_string(subscribed_only=True, answered_only=True, mention=True)
+                await self.responded_message.edit(content=f'Waiting for a response from these participants:\n{mentions}')
             except Exception as e:
-                log_error(f'{self.name}> Error generating mentions list for responded message: {e}')
-                raise(e)
-            try:
-                await self.responded_message.edit(content=f'{mentions}')
-            except Exception as e:
-                log_error(f'{self.name}> Error editing responded message: {e}')
+                log_error(f'{self.name}> Error getting mentions string or editing responded message: {e}')
                 raise(e)
 
     class AvailabilityModal(Modal):
@@ -269,9 +265,9 @@ def main():
                 availability = ''
                 log_info(f'{self.event.name}> Received availability from {interaction.user.name}:')
                 for timeblock in participant.availability:
-                    availability += f'{timeblock.start_time.strftime("%m/%d/%Y")}: {timeblock.start_time.strftime("%H%M")} - {timeblock.end_time.strftime("%H%M")}\n'
-                    log_info(f'{self.event.name}> \t{timeblock.start_time.strftime("%m/%d/%Y")}: {timeblock.start_time.strftime("%H%M")} - {timeblock.end_time.strftime("%H%M")}')
-                await interaction.response.send_message(f'**Availability received!**\n{availability}', ephemeral=True)
+                    availability += f'{timeblock.start_time.strftime("%m/%d/%Y: %H%M")} - {timeblock.end_time.strftime("%H%M")}\n'
+                    log_info(f'{self.event.name}> \t{timeblock.start_time.strftime("%m/%d/%Y: %H%M")} - {timeblock.end_time.strftime("%H%M")}')
+                await interaction.response.send_message(f'**__Availability received!__**\n{availability}', ephemeral=True)
                 self.event.changed = True
                 await self.event.update_message()
             except Exception as e:
