@@ -1,0 +1,14 @@
+TODO CORRECT
+- Rescheduling functionality
+- Create command (create event at time)
+
+TODO IMPLEMENT
+- Move make_scheduled_event into Event class
+- Attach command (connect to an existing guild scheduled event)
+- Scheduling persistence
+- ? Modal for schedule command/reschedule
+
+TODO TEST
+- Compare availabilities
+- Unsub logic (unsub vs. answered, esp. in buttons)
+- Reuse availability functionality

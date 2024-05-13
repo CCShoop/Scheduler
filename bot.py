@@ -87,7 +87,7 @@ def main():
             self.alt_countdown_check = False
             self.unavailable = False
 
-        async def intersect_time_blocks(timeblocks1: list, timeblocks2: list):
+        async def intersect_time_blocks(self, timeblocks1: list, timeblocks2: list):
             intersected_time_blocks = []
             for block1 in timeblocks1:
                 for block2 in timeblocks2:
@@ -848,17 +848,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-# TODO CORRECT
-# Rescheduling functionality
-# Create command (create event at time)
-
-# TODO IMPLEMENT
-# Attach command (connect to an existing guild scheduled event)
-# Scheduling persistence
-# ? Modal for schedule command/reschedule
-
-# TODO TEST
-# Compare availabilities
-# Unsub logic (unsub vs. answered, esp. in buttons)
-# Reuse availability functionality
