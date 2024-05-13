@@ -1,3 +1,4 @@
+import re
 from discord import Member
 from asyncio import Lock
 from datetime import datetime, timedelta
@@ -112,19 +113,22 @@ class Participant():
         timezone_offset = 0
         avail_string = avail_string.replace('s', '')
         avail_string = avail_string.replace('d', '')
-        avail_string = avail_string.replace('t', '')
-        if 'e' in avail_string:
+        if 'et' in avail_string:
             timezone_offset = 0
-            avail_string = avail_string.replace('e', '')
-        elif 'c' in avail_string:
+            avail_string = avail_string.replace('et', '')
+        elif 'ct' in avail_string:
             timezone_offset = 1
-            avail_string = avail_string.replace('c', '')
-        elif 'm' in avail_string:
+            avail_string = avail_string.replace('ct', '')
+        elif 'mt' in avail_string:
             timezone_offset = 2
-            avail_string = avail_string.replace('m', '')
-        elif 'p' in avail_string:
+            avail_string = avail_string.replace('mt', '')
+        elif 'pt' in avail_string:
             timezone_offset = 3
-            avail_string = avail_string.replace('p', '')
+            avail_string = avail_string.replace('pt', '')
+
+        # 12-hour time parsing pt. 1
+        avail_string = avail_string.replace('.', '')
+        avail_string = avail_string.replace('am', '')
 
         # Make timeblock string list
         timeblock_strings = avail_string.split(',')
@@ -141,6 +145,18 @@ class Participant():
             if '--' in timeblock:
                 raise(Exception(f'Invalid time provided by user: cannot double hyphen (--)'))
             start_time, part, end_time = timeblock.partition('-')
+
+            # 12-hour time parsing pt. 2
+            if 'pm' in start_time:
+                start_time = re.sub(r"\D", "", start_time)
+                start_time = str(int(start_time) + 12)
+            else:
+                start_time = re.sub(r"\D", "", start_time)
+            if 'pm' in end_time:
+                end_time = re.sub(r"\D", "", end_time)
+                end_time = str(int(end_time) + 12)
+            else:
+                end_time = re.sub(r"\D", "", end_time)
 
             # Affixing and Appending 0s
             if start_time != '':
@@ -183,6 +199,8 @@ class Participant():
                 end_hr = int(end_time_string[:2])
                 end_min = int(end_time_string[2:])
                 end_time = datetime.now().astimezone().replace(month=month, day=day, hour=end_hr, minute=end_min, second=0, microsecond=0)
+                if end_time < start_time:
+                    end_time += timedelta(days=1)
 
             avail_block = TimeBlock(start_time, end_time)
             self.availability.append(avail_block)
