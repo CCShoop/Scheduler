@@ -191,7 +191,7 @@ def main():
             for other_event in client.events:
                 if other_event != self:
                     for other_participant in other_event.participants:
-                        if other_participant.member.name == participant.name:
+                        if other_participant.member.name == participant.member.name:
                             return participant.availability
             return None
 
