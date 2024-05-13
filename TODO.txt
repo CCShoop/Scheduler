@@ -1,6 +1,8 @@
 TODO CORRECT
+- Check for events that each participant may be in that have been created
+-     Remove scheduled event time from participant's availability
 - Rescheduling functionality
-- Create command (create event at time)
+- Create command (create event at specified time)
 
 TODO IMPLEMENT
 - Move make_scheduled_event into Event class

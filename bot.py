@@ -48,7 +48,7 @@ def main():
                     logger.exception(e)
             event.ready_to_create = False
             event.created = True
-            logger.info(f'{event.name}: Created event starting at {event.start_time.hour}:{event.start_time.minute} ET')
+            logger.info(f'{event.name}: Created event starting {event.start_time.strftime("%m/%d/%Y: %H:%M")} ET')
             return event.scheduled_event
 
         async def setup_hook(self):
@@ -787,6 +787,9 @@ def main():
                 event.changed = False
                 continue
 
+            # Disable availability message buttons
+            event.avail_buttons.disable_all_buttons()
+
             # Compare availabilities
             try:
                 await event.compare_availabilities()
@@ -812,36 +815,34 @@ def main():
                 continue
 
             # Create the event if it is ready to create
-            else:
-                # Create guild scheduled event
-                try:
-                    event.scheduled_event = await client.make_scheduled_event(event)
-                except Exception as e:
-                    logger.error(f'{event.name}: Error creating scheduled event: {e}')
-                    logger.exception(e)
+            try:
+                event.scheduled_event = await client.make_scheduled_event(event)
+            except Exception as e:
+                logger.error(f'{event.name}: Error creating scheduled event: {e}')
+                logger.exception(e)
 
-                # List subscribed people and list unsubscribed people
-                unsubbed = event.get_names_string(unsubscribed_only=True)
-                if unsubbed:
-                    unsubbed = f'\nUnsubscribed: {unsubbed}'
+            # List subscribed people and list unsubscribed people
+            unsubbed = event.get_names_string(unsubscribed_only=True)
+            if unsubbed:
+                unsubbed = f'\nUnsubscribed: {unsubbed}'
 
-                # Calculate time until start
-                try:
-                    time_until_start: timedelta = event.start_time - datetime.now().astimezone()
-                    event.mins_until_start = int(time_until_start.total_seconds() / 60)
-                    event.event_buttons_msg_content_pt1 = f'{event.get_names_string(subscribed_only=True, mention=True)}'
-                    event.event_buttons_msg_content_pt1 += f'\n**Event name:** {event.name}'
-                    event.event_buttons_msg_content_pt1 += f'\n**Scheduled:** {event.start_time.strftime("%m/%d")} at {event.start_time.strftime("%H:%M")} ET'
-                    event.event_buttons_msg_content_pt2 = f'\n**Starts in:**'
-                    event.event_buttons_msg_content_pt3 = f'minutes'
-                    event.event_buttons_msg_content_pt4 += f'\n{unsubbed}'
-                    response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {event.mins_until_start} {event.event_buttons_msg_content_pt3} {event.event_buttons_msg_content_pt4}'
-                    await event.responded_message.delete()
-                    event.event_buttons = EventButtons(event)
-                    event.event_buttons_message = await event.text_channel.send(content=response, view=event.event_buttons)
-                except Exception as e:
-                    logger.error(f'{event.name}: Error sending event created notification with buttons: {e}')
-                    logger.exception(e)
+            # Calculate time until start
+            try:
+                time_until_start: timedelta = event.start_time - datetime.now().astimezone()
+                event.mins_until_start = int(time_until_start.total_seconds() / 60)
+                event.event_buttons_msg_content_pt1 = f'{event.get_names_string(subscribed_only=True, mention=True)}'
+                event.event_buttons_msg_content_pt1 += f'\n**Event name:** {event.name}'
+                event.event_buttons_msg_content_pt1 += f'\n**Scheduled:** {event.start_time.strftime("%m/%d")} at {event.start_time.strftime("%H:%M")} ET'
+                event.event_buttons_msg_content_pt2 = f'\n**Starts in:**'
+                event.event_buttons_msg_content_pt3 = f'minutes'
+                event.event_buttons_msg_content_pt4 += f'\n{unsubbed}'
+                response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {event.mins_until_start} {event.event_buttons_msg_content_pt3} {event.event_buttons_msg_content_pt4}'
+                await event.responded_message.delete()
+                event.event_buttons = EventButtons(event)
+                event.event_buttons_message = await event.text_channel.send(content=response, view=event.event_buttons)
+            except Exception as e:
+                logger.error(f'{event.name}: Error sending event created notification with buttons: {e}')
+                logger.exception(e)
 
     client.run(discord_token)
 
