@@ -130,7 +130,7 @@ def main():
                     return
 
         # Get a string of participant mentions/names
-        def get_names_string(self, subscribed_only: bool = False, unsubscribed_only: bool = False, answered_only: bool = False, mention: bool = False):
+        def get_names_string(self, subscribed_only: bool = False, unsubscribed_only: bool = False, unanswered_only: bool = False, mention: bool = False):
             names = []
             mentions = ''
 
@@ -145,26 +145,26 @@ def main():
                     name_string = f"{participant.member.name}"
 
                 # No conditions are true
-                if (not subscribed_only) and (not unsubscribed_only) and (not answered_only):
+                if (not subscribed_only) and (not unsubscribed_only) and (not unanswered_only):
                     mentions += name_string
                     names.append(name_string)
 
                 # One condition is true
-                if (subscribed_only and participant.subscribed) and (not unsubscribed_only) and (not answered_only):
+                if (subscribed_only and participant.subscribed) and (not unsubscribed_only) and (not unanswered_only):
                     mentions += name_string
                     names.append(name_string)
-                if (not subscribed_only) and (unsubscribed_only and not participant.subscribed) and (not answered_only):
+                if (not subscribed_only) and (unsubscribed_only and not participant.subscribed) and (not unanswered_only):
                     mentions += name_string
                     names.append(name_string)
-                if (not subscribed_only) and (not unsubscribed_only) and (answered_only and participant.answered):
+                if (not subscribed_only) and (not unsubscribed_only) and (unanswered_only and not participant.answered):
                     mentions += name_string
                     names.append(name_string)
 
                 # Two conditions are true
-                if (subscribed_only and participant.subscribed) and (answered_only and participant.answered):
+                if (subscribed_only and participant.subscribed) and (unanswered_only and not participant.answered):
                     mentions += name_string
                     names.append(name_string)
-                if (unsubscribed_only and not participant.subscribed) and (answered_only and participant.answered):
+                if (unsubscribed_only and not participant.subscribed) and (unanswered_only and not participant.answered):
                     mentions += name_string
                     names.append(name_string)
 
@@ -233,7 +233,7 @@ def main():
                     raise(e)
                 return
             try:
-                mentions = self.get_names_string(subscribed_only=True, answered_only=True, mention=True)
+                mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
                 await self.responded_message.edit(content=f'Waiting for a response from these participants:\n{mentions}')
             except Exception as e:
                 log_error(f'{self.name}> Error getting mentions string or editing responded message: {e}')
