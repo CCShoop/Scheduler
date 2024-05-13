@@ -38,17 +38,17 @@ def main():
                     response = requests.get(event.image_url)
                     if response.status_code == 200:
                         await event.scheduled_event.edit(image=response.content)
-                        logger.info(f'{event.name}> Processed image')
+                        logger.info(f'{event.name}: Processed image')
                     else:
                         event.image_url = ''
-                        logger.warn(f'{event.name}> Failed to get image')
+                        logger.warn(f'{event.name}: Failed to get image')
                 except Exception as e:
                     event.image_url = ''
-                    logger.error(f'{event.name}> Failed to process image: {e}')
+                    logger.error(f'{event.name}: Failed to process image: {e}')
                     logger.exception(e)
             event.ready_to_create = False
             event.created = True
-            logger.info(f'{event.name}> Created event starting at {event.start_time.hour}:{event.start_time.minute} ET')
+            logger.info(f'{event.name}: Created event starting at {event.start_time.hour}:{event.start_time.minute} ET')
             return event.scheduled_event
 
         async def setup_hook(self):
@@ -232,14 +232,14 @@ def main():
                 try:
                     await self.responded_message.edit(content=f'Everyone has responded.')
                 except Exception as e:
-                    logger.error(f'{self.name}> Error editing responded message with "everyone has responded": {e}')
+                    logger.error(f'{self.name}: Error editing responded message with "everyone has responded": {e}')
                     logger.exception(e)
                 return
             try:
                 mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
                 await self.responded_message.edit(content=f'Waiting for a response from these participants:\n{mentions}')
             except Exception as e:
-                logger.error(f'{self.name}> Error getting mentions string or editing responded message: {e}')
+                logger.error(f'{self.name}: Error getting mentions string or editing responded message: {e}')
                 logger.exception(e)
 
     class AvailabilityModal(Modal):
@@ -266,10 +266,10 @@ def main():
                 participant.set_specific_availability(avail_string, self.date.value)
                 participant.answered = True
                 availability = ''
-                logger.info(f'{self.event.name}> Received availability from {interaction.user.name}:')
+                logger.info(f'{self.event.name}: Received availability from {interaction.user.name}:')
                 for timeblock in participant.availability:
                     availability += f'{timeblock.start_time.strftime("%m/%d/%Y: %H%M")} - {timeblock.end_time.strftime("%H%M")}\n'
-                    logger.info(f'{self.event.name}> \t{timeblock.start_time.strftime("%m/%d/%Y: %H%M")} - {timeblock.end_time.strftime("%H%M")}')
+                    logger.info(f'{self.event.name}: \t{timeblock.start_time.strftime("%m/%d/%Y: %H%M")} - {timeblock.end_time.strftime("%H%M")}')
                 await interaction.response.send_message(f'**__Availability received!__**\n{availability}', ephemeral=True)
                 self.event.changed = True
                 await self.event.update_message()
@@ -278,12 +278,12 @@ def main():
                     await interaction.response.send_message(f'Error setting your availability: {e}')
                 except:
                     pass
-                logger.error(f'{self.event.name}> Error setting specific availability: {e}')
+                logger.error(f'{self.event.name}: Error setting specific availability: {e}')
                 logger.exception(e)
 
         async def on_error(self, interaction: Interaction, error: Exception):
             await interaction.response.send_message(f'Oops! Something went wrong: {error}', ephemeral=True)
-            logger.error(f'{self.event.name}> Error getting availability from {interaction.user.name} (AvailabilityModal): {error}')
+            logger.error(f'{self.event.name}: Error getting availability from {interaction.user.name} (AvailabilityModal): {error}')
             logger.exception(error)
 
     class AvailabilityButtons(View):
@@ -320,12 +320,12 @@ def main():
                 self.event.ready_to_create = False
                 participant = self.event.get_participant(interaction.user.name)
                 if not participant.full_availability_flag:
-                    logger.info(f'{self.event.name}> {interaction.user.name} selected full availability')
+                    logger.info(f'{self.event.name}: {interaction.user.name} selected full availability')
                     participant.set_full_availability()
                     participant.answered = True
                     await interaction.response.send_message(f'You have been marked as fully available.', ephemeral=True)
                 else:
-                    logger.info(f'{self.event.name}> {interaction.user.name} deselected full availability')
+                    logger.info(f'{self.event.name}: {interaction.user.name} deselected full availability')
                     participant.set_no_availability()
                     if participant.subscribed:
                         participant.answered = False
@@ -347,14 +347,14 @@ def main():
                     participant.answered = True
                     self.event.unavailable = True
                     await interaction.response.send_message(f'You have been marked as unavailable for {self.event.name}.', ephemeral=True)
-                    logger.info(f'{self.event.name}> {interaction.user.name} selected no availability')
+                    logger.info(f'{self.event.name}: {interaction.user.name} selected no availability')
                 else:
                     participant.unavailable = False
                     if participant.subscribed:
                         participant.answered = False
                     self.event.unavailable = False
                     await interaction.response.send_message(f'You are no longer marked as unavailable for {self.event.name}.', ephemeral=True)
-                    logger.info(f'{self.event.name}> {interaction.user.name} deselected no availability')
+                    logger.info(f'{self.event.name}: {interaction.user.name} deselected no availability')
                 await self.event.update_message()
             button.callback = none_button_callback
             self.add_item(button)
@@ -363,14 +363,14 @@ def main():
         def add_reuse_button(self):
             button = Button(label=self.reuse_label, style=ButtonStyle.blurple)
             async def reuse_button_callback(interaction: Interaction):
-                logger.info(f'{self.event.name}> Reuse button pressed by {interaction.user.name}')
+                logger.info(f'{self.event.name}: Reuse button pressed by {interaction.user.name}')
                 participant = self.event.get_participant(interaction.user.name)
                 found_availability = self.event.get_other_availability(participant)
                 if not found_availability:
-                    logger.info(f'{self.event.name}> \tNo existing availability found for {interaction.user.name}')
+                    logger.info(f'{self.event.name}: \tNo existing availability found for {interaction.user.name}')
                     await interaction.response.send_message(f'No existing availability found.', ephemeral=True)
                     return
-                logger.info(f'{self.event.name}> Found existing availability for {interaction.user.name}')
+                logger.info(f'{self.event.name}: Found existing availability for {interaction.user.name}')
                 participant.availability = found_availability
                 participant.answered = True
                 response = 'Found existing availability!'
@@ -389,12 +389,12 @@ def main():
                 self.event.ready_to_create = False
                 participant = self.event.get_participant(interaction.user.name)
                 if participant.subscribed:
-                    logger.info(f'{self.event.name}> {interaction.user.name} unsubscribed')
+                    logger.info(f'{self.event.name}: {interaction.user.name} unsubscribed')
                     participant.subscribed = False
                     participant.answered = True
                     await interaction.response.send_message(f'You have been unsubscribed from {self.event.name}.', ephemeral=True)
                 else:
-                    logger.info(f'{self.event.name}> {interaction.user.name} resubscribed')
+                    logger.info(f'{self.event.name}: {interaction.user.name} resubscribed')
                     participant.subscribed = True
                     participant.answered = False
                     await interaction.response.send_message(f'You have been resubscribed to {self.event.name}.', ephemeral=True)
@@ -433,7 +433,7 @@ def main():
                 if not self.event.created or self.event.scheduled_event.status != EventStatus.scheduled:
                     await interaction.response.edit_message(view=self)
                     return
-                logger.info(f'{self.event.name}> {interaction.user} started by button press')
+                logger.info(f'{self.event.name}: {interaction.user} started by button press')
                 participant_names = [participant.member.name for participant in self.event.participants]
                 if interaction.user.name not in participant_names:
                     self.event.participants.append(interaction.user)
@@ -465,7 +465,7 @@ def main():
                 if self.event.scheduled_event.status != EventStatus.active and self.event.scheduled_event.status != EventStatus.scheduled:
                     await interaction.response.edit_message(view=self)
                     return
-                logger.info(f'{self.event.name}> {interaction.user} ended by button press')
+                logger.info(f'{self.event.name}: {interaction.user} ended by button press')
                 try:
                     await self.event.scheduled_event.delete(reason=f'End button pressed by {interaction.user.name}.')
                     self.event.event_buttons_msg_content_pt3 = f'\n**Ended at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
@@ -493,7 +493,7 @@ def main():
                 if not self.event.created:
                     await interaction.response.edit_message(view=self)
                     return
-                logger.info(f'{self.event.name}> {interaction.user} rescheduled by button press')
+                logger.info(f'{self.event.name}: {interaction.user} rescheduled by button press')
                 participant_names = [participant.member.name for participant in self.event.participants]
                 if interaction.user.name not in participant_names:
                     self.event.participants.append(interaction.user)
@@ -537,7 +537,7 @@ def main():
                 except Exception as e:
                     logger.error(f'Error in cancel button callback: {e}')
                     logger.exception(e)
-                logger.info(f'{self.event.name}> {interaction.user} cancelled by button press')
+                logger.info(f'{self.event.name}: {interaction.user} cancelled by button press')
                 client.events.remove(self.event)
                 self.event = None
                 self.cancel_button.style = ButtonStyle.gray
@@ -595,10 +595,10 @@ def main():
                             image_bytes = await message.attachments[0].read()
                             await event.scheduled_event.edit(image=image_bytes)
                             await message.channel.send(f'Added your image to {event.name}.')
-                            logger.info(f'{event.name}> {message.author.name} added an image')
+                            logger.info(f'{event.name}: {message.author.name} added an image')
                         except Exception as e:
                             await message.channel.send(f'Failed to add your image to {event.name}.\nError: {e}', ephemeral=True)
-                            logger.warn(f'{event.name}> Error adding image from {message.author.name}: {e}')
+                            logger.warn(f'{event.name}: Error adding image from {message.author.name}: {e}')
                     else:
                         event.image_url = message.attachments[0].url
                         await message.channel.send(f'Attached image url to event object. Will try setting it when the event is made.')
@@ -615,7 +615,7 @@ def main():
     @app_commands.describe(role='Only include/exclude users with this role as participants.')
     @app_commands.describe(duration='Event duration in minutes (30 minutes default).')
     async def create_command(interaction: Interaction, event_name: str, voice_channel: VoiceChannel, start_time: str, image_url: str = None, include_exclude: INCLUDE_EXCLUDE = INCLUDE, role: str = None, duration: int = 30):
-        logger.info(f'{event_name}> Received event creation request from {interaction.user.name}')
+        logger.info(f'{event_name}: Received event creation request from {interaction.user.name}')
 
         # Parse start time
         start_time = start_time.strip()
@@ -660,7 +660,7 @@ def main():
     @app_commands.describe(role='Only include/exclude users with this role as participants.')
     @app_commands.describe(duration="Event duration in minutes (30 minutes default).")
     async def schedule_command(interaction: Interaction, event_name: str, voice_channel: VoiceChannel, image_url: str = None, include_exclude: INCLUDE_EXCLUDE = INCLUDE, role: str = None, duration: int = 30):
-        logger.info(f'{event_name}> Received event schedule request from {interaction.user.name}')
+        logger.info(f'{event_name}: Received event schedule request from {interaction.user.name}')
 
         # Generate participants list
         try:
@@ -748,7 +748,7 @@ def main():
                         for participant in event.participants:
                             async with participant.msg_lock:
                                 participant.member.send(notification_message)
-                    logger.info(f'{event.name}> Participants lacked common availability, removed event from memory')
+                    logger.info(f'{event.name}: Participants lacked common availability, removed event from memory')
                     client.events.remove(event)
                     del event
                 except Exception as e:
@@ -777,7 +777,7 @@ def main():
                                 async with participant.msg_lock:
                                     await participant.member.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
                 except Exception as e:
-                    logger.error(f'{event.name}> Error sending 5 minute warning: {e}')
+                    logger.error(f'{event.name}: Error sending 5 minute warning: {e}')
                     logger.exception(e)
                 continue
 
@@ -796,7 +796,7 @@ def main():
             # Cancel the event if no common availability was found
             if not event.ready_to_create:
                 try:
-                    logger.info(f'{event.name}> No common availability found')
+                    logger.info(f'{event.name}: No common availability found')
                     if event.text_channel:
                         await event.text_channel.send(f'No common availability was found. Scheduling for {event.name} has been cancelled.')
                     else:
@@ -806,7 +806,7 @@ def main():
                     client.events.remove(event)
                     del event
                 except Exception as e:
-                    logger.error(f'{event.name}> Error messaging participants: {e}')
+                    logger.error(f'{event.name}: Error messaging participants: {e}')
                     logger.exception(e)
                 continue
 
@@ -816,7 +816,7 @@ def main():
                 try:
                     event.scheduled_event = await client.make_scheduled_event(event)
                 except Exception as e:
-                    logger.error(f'{event.name}> Error creating scheduled event: {e}')
+                    logger.error(f'{event.name}: Error creating scheduled event: {e}')
                     logger.exception(e)
 
                 # List subscribed people and list unsubscribed people
@@ -839,7 +839,7 @@ def main():
                     event.event_buttons = EventButtons(event)
                     event.event_buttons_message = await event.text_channel.send(content=response, view=event.event_buttons)
                 except Exception as e:
-                    logger.error(f'{event.name}> Error sending event created notification with buttons: {e}')
+                    logger.error(f'{event.name}: Error sending event created notification with buttons: {e}')
                     logger.exception(e)
 
     client.run(discord_token)
