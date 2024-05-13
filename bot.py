@@ -730,6 +730,7 @@ def main():
             # Remove events if a participant is unavailable
             if event.unavailable:
                 try:
+                    event.avail_buttons.disable_all_buttons()
                     unavailable_names = ''
                     unavailable_counter = 0
                     for participant in event.participants:
