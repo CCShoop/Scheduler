@@ -1,3 +1,4 @@
 .env
 PushChangesAndRestartBot.bat
 __pycache__
+TODO.txt

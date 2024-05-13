@@ -31,26 +31,6 @@ def main():
             self.tree = app_commands.CommandTree(self)
             self.events = []
 
-        async def make_scheduled_event(self, event):
-            event.scheduled_event = await event.guild.create_scheduled_event(name=event.name, description='Bot-generated event', start_time=event.start_time, entity_type=event.entity_type, channel=event.voice_channel, privacy_level=event.privacy_level)
-            if event.image_url:
-                try:
-                    response = requests.get(event.image_url)
-                    if response.status_code == 200:
-                        await event.scheduled_event.edit(image=response.content)
-                        logger.info(f'{event.name}: Processed image')
-                    else:
-                        event.image_url = ''
-                        logger.warn(f'{event.name}: Failed to get image')
-                except Exception as e:
-                    event.image_url = ''
-                    logger.error(f'{event.name}: Failed to process image: {e}')
-                    logger.exception(e)
-            event.ready_to_create = False
-            event.created = True
-            logger.info(f'{event.name}: Created event starting {event.start_time.strftime("%m/%d/%Y: %H:%M")} ET')
-            return event.scheduled_event
-
         async def setup_hook(self):
             await self.tree.sync()
 
@@ -76,6 +56,7 @@ def main():
             self.event_buttons_msg_content_pt2: str = ''
             self.event_buttons_msg_content_pt3: str = ''
             self.event_buttons_msg_content_pt4: str = ''
+            self.five_minute_warning_flag = False
             self.ready_to_create = False
             self.created = False
             self.started = False
@@ -131,6 +112,25 @@ def main():
                     self.start_time = timeblock.start_time
                     self.ready_to_create = True
                     return
+
+        async def make_scheduled_event(self):
+            self.scheduled_event = await self.guild.create_scheduled_event(name=self.name, description='Bot-generated event', start_time=self.start_time, entity_type=self.entity_type, channel=self.voice_channel, privacy_level=self.privacy_level)
+            self.ready_to_create = False
+            self.created = True
+            if self.image_url:
+                try:
+                    response = requests.get(self.image_url)
+                    if response.status_code == 200:
+                        await self.scheduled_event.edit(image=response.content)
+                        logger.info(f'{self.name}: Processed image')
+                    else:
+                        self.image_url = ''
+                        logger.warn(f'{self.name}: Failed to get image')
+                except Exception as e:
+                    self.image_url = ''
+                    logger.error(f'{self.name}: Failed to process image: {e}')
+                    logger.exception(e)
+            logger.info(f'{self.name}: Created event starting {self.start_time.strftime("%m/%d/%Y: %H:%M")} ET')
 
         # Get a string of participant mentions/names
         def get_names_string(self, subscribed_only: bool = False, unsubscribed_only: bool = False, unanswered_only: bool = False, mention: bool = False):
@@ -636,7 +636,7 @@ def main():
         event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration, start_time_obj)
         event.start_time = start_time_obj
         client.events.append(event)
-        event.scheduled_event = await client.make_scheduled_event(event)
+        await event.make_scheduled_event()
         response = ''
         if event.start_time.hour < 10 and event.start_time.minute < 10:
             response = f'{interaction.user.name} created an event called {event.name} starting at 0{event.start_time.hour}:0{event.start_time.minute} ET.'
@@ -757,26 +757,29 @@ def main():
                     logger.exception(e)
                 continue
 
-            # Countdown to start
-            # Send 5 minute warning
+            # Countdown to start + 5 minute warning
             if event.created and not event.started:
                 try:
+                    # Countdown
                     event.alt_countdown_check = not event.alt_countdown_check
                     if event.alt_countdown_check:
                         event.mins_until_start -= 1
                         await event.event_buttons_message.edit(content=f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {event.mins_until_start} {event.event_buttons_msg_content_pt3}', view=event.event_buttons)
 
+                    # Send 5 minute warning
                     if datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=5) == event.start_time and event.scheduled_event.status == EventStatus.scheduled and not event.started:
-                        if event.text_channel:
-                            try:
-                                await event.text_channel.send(f'{event.get_names_string(subscribed_only=True, mention=True)}\n**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
-                            except Exception as e:
-                                logger.error(f'Error sending 5 minute nudge: {e}')
-                                logger.exception(e)
-                        elif not event.text_channel:
-                            for participant in event.participants:
-                                async with participant.msg_lock:
-                                    await participant.member.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
+                        if not event.five_minute_warning_flag:
+                            event.five_minute_warning_flag = True
+                            if event.text_channel:
+                                try:
+                                    await event.text_channel.send(f'{event.get_names_string(subscribed_only=True, mention=True)}\n**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
+                                except Exception as e:
+                                    logger.error(f'Error sending 5 minute nudge: {e}')
+                                    logger.exception(e)
+                            else:
+                                for participant in event.participants:
+                                    async with participant.msg_lock:
+                                        await participant.member.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
                 except Exception as e:
                     logger.error(f'{event.name}: Error sending 5 minute warning: {e}')
                     logger.exception(e)
@@ -790,59 +793,60 @@ def main():
             # Disable availability message buttons
             event.avail_buttons.disable_all_buttons()
 
-            # Compare availabilities
-            try:
-                await event.compare_availabilities()
-            except Exception as e:
-                logger.error(f'Error comparing availabilities: {e}')
-                logger.exception(e)
-
-            # Cancel the event if no common availability was found
-            if not event.ready_to_create:
+            if not event.created:
+                # Compare availabilities
                 try:
-                    logger.info(f'{event.name}: No common availability found')
-                    if event.text_channel:
-                        await event.text_channel.send(f'No common availability was found. Scheduling for {event.name} has been cancelled.')
-                    else:
-                        for participant in event.participants:
-                            async with participant.msg_lock:
-                                await participant.member.send(f'No common availability was found. Scheduling for {event.name} has been cancelled.')
-                    client.events.remove(event)
-                    del event
+                    await event.compare_availabilities()
                 except Exception as e:
-                    logger.error(f'{event.name}: Error messaging participants: {e}')
+                    logger.error(f'Error comparing availabilities: {e}')
                     logger.exception(e)
-                continue
 
-            # Create the event if it is ready to create
-            try:
-                event.scheduled_event = await client.make_scheduled_event(event)
-            except Exception as e:
-                logger.error(f'{event.name}: Error creating scheduled event: {e}')
-                logger.exception(e)
+                # Cancel the event if no common availability was found
+                if not event.ready_to_create:
+                    try:
+                        logger.info(f'{event.name}: No common availability found')
+                        if event.text_channel:
+                            await event.text_channel.send(f'No common availability was found. Scheduling for {event.name} has been cancelled.')
+                        else:
+                            for participant in event.participants:
+                                async with participant.msg_lock:
+                                    await participant.member.send(f'No common availability was found. Scheduling for {event.name} has been cancelled.')
+                        client.events.remove(event)
+                        del event
+                    except Exception as e:
+                        logger.error(f'{event.name}: Error messaging participants: {e}')
+                        logger.exception(e)
+                    continue
+                # Create the event if it is ready to create
+                else:
+                    try:
+                        await event.make_scheduled_event()
+                    except Exception as e:
+                        logger.error(f'{event.name}: Error creating scheduled event: {e}')
+                        logger.exception(e)
 
-            # List subscribed people and list unsubscribed people
-            unsubbed = event.get_names_string(unsubscribed_only=True)
-            if unsubbed:
-                unsubbed = f'\nUnsubscribed: {unsubbed}'
+                    # List subscribed people and list unsubscribed people
+                    unsubbed = event.get_names_string(unsubscribed_only=True)
+                    if unsubbed:
+                        unsubbed = f'\nUnsubscribed: {unsubbed}'
 
-            # Calculate time until start
-            try:
-                time_until_start: timedelta = event.start_time - datetime.now().astimezone()
-                event.mins_until_start = int(time_until_start.total_seconds() / 60)
-                event.event_buttons_msg_content_pt1 = f'{event.get_names_string(subscribed_only=True, mention=True)}'
-                event.event_buttons_msg_content_pt1 += f'\n**Event name:** {event.name}'
-                event.event_buttons_msg_content_pt1 += f'\n**Scheduled:** {event.start_time.strftime("%m/%d")} at {event.start_time.strftime("%H:%M")} ET'
-                event.event_buttons_msg_content_pt2 = f'\n**Starts in:**'
-                event.event_buttons_msg_content_pt3 = f'minutes'
-                event.event_buttons_msg_content_pt4 += f'\n{unsubbed}'
-                response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {event.mins_until_start} {event.event_buttons_msg_content_pt3} {event.event_buttons_msg_content_pt4}'
-                await event.responded_message.delete()
-                event.event_buttons = EventButtons(event)
-                event.event_buttons_message = await event.text_channel.send(content=response, view=event.event_buttons)
-            except Exception as e:
-                logger.error(f'{event.name}: Error sending event created notification with buttons: {e}')
-                logger.exception(e)
+                    # Calculate time until start
+                    try:
+                        time_until_start: timedelta = event.start_time - datetime.now().astimezone()
+                        event.mins_until_start = int(time_until_start.total_seconds() / 60)
+                        event.event_buttons_msg_content_pt1 = f'{event.get_names_string(subscribed_only=True, mention=True)}'
+                        event.event_buttons_msg_content_pt1 += f'\n**Event name:** {event.name}'
+                        event.event_buttons_msg_content_pt1 += f'\n**Scheduled:** {event.start_time.strftime("%m/%d")} at {event.start_time.strftime("%H:%M")} ET'
+                        event.event_buttons_msg_content_pt2 = f'\n**Starts in:**'
+                        event.event_buttons_msg_content_pt3 = f'minutes'
+                        event.event_buttons_msg_content_pt4 += f'\n{unsubbed}'
+                        response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {event.mins_until_start} {event.event_buttons_msg_content_pt3} {event.event_buttons_msg_content_pt4}'
+                        await event.responded_message.delete()
+                        event.event_buttons = EventButtons(event)
+                        event.event_buttons_message = await event.text_channel.send(content=response, view=event.event_buttons)
+                    except Exception as e:
+                        logger.error(f'{event.name}: Error sending event created notification with buttons: {e}')
+                        logger.exception(e)
 
     client.run(discord_token)
 
