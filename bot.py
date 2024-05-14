@@ -515,7 +515,7 @@ def main():
                 self.event = new_event
                 client.events.append(self.event)
                 try:
-                    await self.event.request_availability(interaction, self.event.duration.min, reschedule=True)
+                    await self.event.request_availability(interaction, int(round(self.event.duration.seconds/60)), reschedule=True)
                     await self.event.update_message()
                 except Exception as e:
                     logger.error(f'Error with RESCHEDULE button requesting availability: {e}')
@@ -617,35 +617,30 @@ def main():
 
         # Parse start time
         start_time = start_time.strip()
-        start_time.replace(':', '')
+        start_time = start_time.replace(':', '')
         if len(start_time) == 3:
             start_time = '0' + start_time
         elif len(start_time) != 4:
             await interaction.response.send_message(f'Invalid start time format. Examples: "1630" or "00:30"')
         hour = int(start_time[:2])
         minute = int(start_time[2:])
-        start_time_obj = get_datetime_from_label(f"{hour}:{minute}")
-        if start_time_obj <= datetime.now().astimezone():
-            await interaction.response.send_message(f'Start time must be in the future!')
+        start_time_obj = datetime.now().astimezone().replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if start_time_obj <= datetime.now().astimezone.replace(second=0, microsecond=0):
+            start_time_obj += timedelta(days=1)
 
         participants = get_participants_from_interaction(interaction, include_exclude, role)
 
         # Make event
         event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration, start_time_obj)
-        event.start_time = start_time_obj
         client.events.append(event)
         await event.make_scheduled_event()
-        response = ''
-        if event.start_time.hour < 10 and event.start_time.minute < 10:
-            response = f'{interaction.user.name} created an event called {event.name} starting at 0{event.start_time.hour}:0{event.start_time.minute} ET.'
-        elif event.start_time.hour >= 10 and event.start_time.minute < 10:
-            response = f'{interaction.user.name} created an event called {event.name} starting at {event.start_time.hour}:0{event.start_time.minute} ET.'
-        elif event.start_time.hour < 10 and event.start_time.minute >= 10:
-            response = f'{interaction.user.name} created an event called {event.name} starting at 0{event.start_time.hour}:{event.start_time.minute} ET.'
-        else:
-            response = f'{interaction.user.name} created an event called {event.name} starting at {event.start_time.hour}:{event.start_time.minute} ET.'
+        response =  f'{event.get_names_string(mention=True)}'
+        response += f'\n**Event name:** {event.name}'
+        response += f'\n**Duration:** {int(round(event.duration.seconds/60))}'
+        response += f'\n**Starts at:** {event.start_time.strftime("%m/%d at %H:%M")} ET'
         try:
-            await interaction.response.send_message(response, view=EventButtons(event))
+            event.event_buttons = EventButtons(event)
+            event.event_buttons_message = await interaction.response.send_message(response, view=event.event_buttons)
         except Exception as e:
             logger.error(f'Error sending interaction response to create event command): {e}')
             logger.exception(e)
@@ -758,11 +753,22 @@ def main():
             # Countdown to start + 5 minute warning
             if event.created and not event.started:
                 try:
-                    # Countdown
+                    # Countdown (adjust every other update since it is on 30 second intervals)
                     event.alt_countdown_check = not event.alt_countdown_check
                     if event.alt_countdown_check:
                         event.mins_until_start -= 1
-                        await event.event_buttons_message.edit(content=f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {event.mins_until_start} {event.event_buttons_msg_content_pt3}', view=event.event_buttons)
+                        if event.mins_until_start < 0:
+                            event.event_buttons_msg_content_pt2 = f'\n**Overdue by:**'
+                            mins_until_start_string = f'{event.mins_until_start}'
+                            mins_until_start_string = mins_until_start_string.replace('-', '')
+                            response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {mins_until_start_string} {event.event_buttons_msg_content_pt3} {event.event_buttons_msg_content_pt4}'
+                        elif event.mins_until_start == 0:
+                            event.event_buttons_msg_content_pt2 = f'\n**Starting now**'
+                            response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {event.event_buttons_msg_content_pt4}'
+                        else:
+                            event.event_buttons_msg_content_pt2 = f'\n**Starts in:**'
+                            response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {event.mins_until_start} {event.event_buttons_msg_content_pt3} {event.event_buttons_msg_content_pt4}'
+                        await event.event_buttons_message.edit(content=response, view=event.event_buttons)
 
                     # Send 5 minute warning
                     if datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=5) == event.start_time and event.scheduled_event.status == EventStatus.scheduled and not event.started:
@@ -831,7 +837,7 @@ def main():
                     # Calculate time until start
                     try:
                         time_until_start: timedelta = event.start_time - datetime.now().astimezone()
-                        event.mins_until_start = int(time_until_start.total_seconds() / 60)
+                        event.mins_until_start = int(round(time_until_start.seconds/60))
                         event.event_buttons_msg_content_pt1 = f'{event.get_names_string(subscribed_only=True, mention=True)}'
                         event.event_buttons_msg_content_pt1 += f'\n**Event name:** {event.name}'
                         event.event_buttons_msg_content_pt1 += f'\n**Scheduled:** {event.start_time.strftime("%m/%d")} at {event.start_time.strftime("%H:%M")} ET'

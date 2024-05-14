@@ -1,5 +1,4 @@
 TODO CORRECT
-- Create command (create event at specified time)
 
 TODO IMPLEMENT
 - Check for events that each participant may be in that have been created
@@ -10,4 +9,6 @@ TODO IMPLEMENT
 - ? Modal for schedule command/reschedule
 
 TODO TEST
+- Create command (create event at specified time)
 - Rescheduling functionality
+- Roles, include_exclude
