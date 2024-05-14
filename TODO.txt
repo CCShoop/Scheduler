@@ -1,16 +1,13 @@
 TODO CORRECT
-- Check for events that each participant may be in that have been created
--     Remove scheduled event time from participant's availability
-- Rescheduling functionality
 - Create command (create event at specified time)
 
 TODO IMPLEMENT
-- Move make_scheduled_event into Event class
+- Check for events that each participant may be in that have been created
+-     Remove scheduled event time from participant's availability
 - Attach command (connect to an existing guild scheduled event)
 - Scheduling persistence
+- Reuse availability: give options on which event to take availability from?
 - ? Modal for schedule command/reschedule
 
 TODO TEST
-- Compare availabilities
-- Unsub logic (unsub vs. answered, esp. in buttons)
-- Reuse availability functionality
+- Rescheduling functionality

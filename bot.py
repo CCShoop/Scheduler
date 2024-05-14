@@ -214,14 +214,16 @@ def main():
                         f'\n\nSelect **Respond** to enter your availability.'
                         f'\n**Full** will mark you as available at any time.'
                         f'\n**None** will cancel scheduling.'
+                        f'\n**Use Existing** will attempt to grab your availability from another event.'
                         f'\n**Unsubscribe** will allow the event to occur without you; however, you can still respond and participate.'
                         f'\n\nThe event will be either created or cancelled within a minute after the last person responds.️', view=self.avail_buttons)
             else:
-                await interaction.response.send_message(f'**Event name:** {self.name}'
+                await interaction.followup.send(f'**Event name:** {self.name}'
                         f'\n**Duration:** {duration} minutes'
                         f'\n\nSelect **Respond** to enter your new availability.'
                         f'\n**Full** will mark you as available at any time.'
                         f'\n**None** will cancel scheduling.'
+                        f'\n**Use Existing** will attempt to grab your availability from another event.'
                         f'\n**Unsubscribe** will allow the event to occur without you; however, you can still respond and participate.', view=self.avail_buttons, ephemeral=True)
                 participant = self.get_participant(interaction.user.name)
                 participant.answered = False
@@ -490,9 +492,7 @@ def main():
         def add_reschedule_button(self):
             async def reschedule_button_callback(interaction: Interaction):
                 self.event.text_channel = interaction.channel
-                if not self.event.created:
-                    await interaction.response.edit_message(view=self)
-                    return
+                interaction.response.defer()
                 logger.info(f'{self.event.name}: {interaction.user} rescheduled by button press')
                 participant_names = [participant.member.name for participant in self.event.participants]
                 if interaction.user.name not in participant_names:
@@ -501,23 +501,21 @@ def main():
                 try:
                     await self.event.scheduled_event.delete(reason=f'Reschedule button pressed by {interaction.user.name}.')
                     self.event.event_buttons_msg_content_pt2 = f'\n**RESCHEDULED**'
-                    await self.event.event_buttons_message.edit(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt4}', view=self.event.event_buttons)
-                    await self.event.text_channel.send(f'{self.event.get_names_string(subscribed_only=True, mention=True)}\n{interaction.user.mention} is rescheduling {self.event.name}.')
+                    self.start_button.style = ButtonStyle.blurple
+                    self.start_button.disabled = True
+                    self.end_button.style = ButtonStyle.blurple
+                    self.end_button.disabled = True
+                    self.reschedule_button.disabled = True
+                    self.cancel_button.disabled = True
+                    await self.event.event_buttons_message.edit(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt4}', view=self)
                 except Exception as e:
                     logger.error(f'Error cancelling guild event to reschedule: {e}')
                     logger.exception(e)
-                self.start_button.disabled = True
-                self.start_button.style = ButtonStyle.blurple
-                self.end_button.disabled = True
-                self.end_button.style = ButtonStyle.blurple
-                self.reschedule_button.disabled = True
-                self.cancel_button.disabled = True
-                await interaction.response.edit_message(view=self)
                 client.events.remove(self.event)
                 self.event = new_event
                 client.events.append(self.event)
                 try:
-                    await self.event.request_availability(interaction, self.event.duration, reschedule=True)
+                    await self.event.request_availability(interaction, self.event.duration.min, reschedule=True)
                     await self.event.update_message()
                 except Exception as e:
                     logger.error(f'Error with RESCHEDULE button requesting availability: {e}')
