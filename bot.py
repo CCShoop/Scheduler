@@ -15,10 +15,26 @@ from discord.ext import tasks
 
 from participant import Participant, TimeBlock
 
+# .env
 load_dotenv()
-logging.basicConfig(filename='scheduler.log', level=logging.DEBUG, format='[%(asctime)s] [%(levelname)s] [%(message)s]')
-logger = logging.getLogger("Event Scheduler")
 
+# Logger setup
+logger = logging.getLogger("Event Scheduler")
+logger.setLevel(logging.DEBUG)
+formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] [%(message)s]')
+
+file_handler = logging.FileHandler('scheduler.log')
+file_handler.setLevel(logging.warn)
+file_handler.setFormatter(formatter)
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.debug)
+console_handler.setFormatter(formatter)
+
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+
+# Literals
 INCLUDE = 'INCLUDE'
 EXCLUDE = 'EXCLUDE'
 INCLUDE_EXCLUDE: Literal = Literal[INCLUDE, EXCLUDE]
