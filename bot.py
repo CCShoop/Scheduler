@@ -16,7 +16,7 @@ from discord.ext import tasks
 from participant import Participant, TimeBlock
 
 load_dotenv()
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(filename='scheduler.log', level=logging.DEBUG, format='[%(asctime)s] [%(levelname)s] [%(message)s]')
 logger = logging.getLogger("Event Scheduler")
 
 INCLUDE = 'INCLUDE'
