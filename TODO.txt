@@ -10,7 +10,7 @@ TODO IMPLEMENT
 - ? Modal for schedule command/reschedule
 
 TODO TEST
-- day names added to availability response
+- Timezone adjustment
 - just entering day number or just month and day for date input
 - convert time until start to display in hours and minutes
 - accept “all” and “full” in Availability Modal

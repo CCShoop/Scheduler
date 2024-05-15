@@ -67,7 +67,7 @@ def main():
     client = SchedulerClient(intents=Intents.all())
 
     class Event:
-        def __init__(self, name: str, entity_type: EntityType, voice_channel: VoiceChannel, participants: list, guild: Guild, text_channel: TextChannel, image_url: str, duration: int = 30, start_time: datetime = None):
+        def __init__(self, name: str, entity_type: EntityType, voice_channel: VoiceChannel, participants: list, guild: Guild, text_channel: TextChannel, image_url: str, duration = timedelta(minutes=30), start_time: datetime = None):
             self.name = name
             self.guild = guild
             self.entity_type = entity_type
@@ -92,7 +92,7 @@ def main():
             self.scheduled_event: ScheduledEvent = None
             self.changed = False
             self.start_time: datetime = start_time
-            self.duration = timedelta(minutes=float(duration))
+            self.duration = duration
             self.mins_until_start: int = 0
             self.countdown_check_flag = False
             self.unavailable = False
@@ -235,11 +235,11 @@ def main():
             return True
 
         # Request availability from all participants
-        async def request_availability(self, interaction: Interaction, duration: int = 30, reschedule: bool = False):
+        async def request_availability(self, interaction: Interaction, duration = timedelta(minutes=30), reschedule: bool = False):
             self.avail_buttons = AvailabilityButtons(event=self)
             if not reschedule:
                 await interaction.response.send_message(f'**Event name:** {self.name}'
-                        f'\n**Duration:** {duration} minutes'
+                        f'\n**Duration:** {duration.seconds//60} minutes'
                         f'\n\nSelect **Respond** to enter your availability.'
                         f'\n**Full** will mark you as available from now until midnight tonight.'
                         f'\n**Use Existing** will attempt to grab your availability from another event.'
@@ -248,7 +248,7 @@ def main():
                         f'\n\nThe event will be either created or cancelled within a minute after the last person responds.️', view=self.avail_buttons)
             else:
                 await interaction.followup.send(f'**Event name:** {self.name}'
-                        f'\n**Duration:** {duration} minutes'
+                        f'\n**Duration:** {duration.seconds//60} minutes'
                         f'\n\nSelect **Respond** to enter your new availability.'
                         f'\n**Full** will mark you as available from now until midnight tonight.'
                         f'\n**Use Existing** will attempt to grab your availability from another event.'
@@ -310,7 +310,7 @@ def main():
                 logger.exception(e)
 
         async def on_error(self, interaction: Interaction, error: Exception):
-            await interaction.response.send_message(f'Oops! Something went wrong: {error}', ephemeral=True)
+            await interaction.response.send_message(f'Error getting availability: {error}', ephemeral=True)
             logger.error(f'{self.event.name}: Error getting availability from {interaction.user.name} (AvailabilityModal): {error}')
             logger.exception(error)
 
@@ -522,7 +522,7 @@ def main():
                 participant_names = [participant.member.name for participant in self.event.participants]
                 if interaction.user.name not in participant_names:
                     self.event.participants.append(interaction.user)
-                new_event = Event(self.event.name, self.event.entity_type, self.event.voice_channel, self.event.participants, self.event.guild, interaction.channel, self.event.image_url, self.event.duration) #, weekly
+                new_event = Event(self.event.name, self.event.entity_type, self.event.voice_channel, self.event.participants, self.event.guild, interaction.channel, self.event.image_url, self.event.duration)
                 try:
                     await self.event.scheduled_event.delete(reason=f'Reschedule button pressed by {interaction.user.name}.')
                     self.event.event_buttons_msg_content_pt2 = f'\n**RESCHEDULED**'
@@ -540,7 +540,7 @@ def main():
                 self.event = new_event
                 client.events.append(self.event)
                 try:
-                    await self.event.request_availability(interaction, int(round(self.event.duration.seconds/60)), reschedule=True)
+                    await self.event.request_availability(interaction, self.event.duration, reschedule=True)
                     await self.event.update_message()
                 except Exception as e:
                     logger.error(f'Error with RESCHEDULE button requesting availability: {e}')
@@ -650,12 +650,13 @@ def main():
         hour = int(start_time[:2])
         minute = int(start_time[2:])
         start_time_obj = datetime.now().astimezone().replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if start_time_obj <= datetime.now().astimezone.replace(second=0, microsecond=0):
+        if start_time_obj <= datetime.now().astimezone().replace(second=0, microsecond=0):
             start_time_obj += timedelta(days=1)
 
         participants = get_participants_from_interaction(interaction, include_exclude, role)
 
         # Make event
+        duration = timedelta(minutes=duration)
         event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration, start_time_obj)
         client.events.append(event)
         await event.make_scheduled_event()
@@ -691,6 +692,7 @@ def main():
 
         # Make event object
         try:
+            duration = timedelta(minutes=duration)
             event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration)
             mentions = '\nWaiting for a response from:\n' + event.get_names_string(subscribed_only=True, mention=True)
             client.events.append(event)
@@ -781,6 +783,7 @@ def main():
                     # Countdown (adjust every other update since it is on 30 second intervals)
                     event.countdown_check_flag = not event.countdown_check_flag
                     if event.countdown_check_flag:
+                        time_until_start: timedelta = event.start_time - datetime.now().astimezone()
                         event.mins_until_start = int(round(time_until_start.seconds/60)) + 1
                         if event.mins_until_start < 0:
                             event.event_buttons_msg_content_pt2 = f'\n**Overdue by:**'
