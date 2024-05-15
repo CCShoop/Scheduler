@@ -1,7 +1,7 @@
 TODO CORRECT
 - if someone submits time that butts up to or intersects with another of their blocks, combine them
+- Remove scheduled event time from participant's availability
 - Check for events that each participant may be in that have been created
--     Remove scheduled event time from participant's availability
 
 TODO IMPLEMENT
 - Attach command (connect to an existing guild scheduled event)

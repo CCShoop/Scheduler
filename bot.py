@@ -268,7 +268,7 @@ def main():
                 return
             try:
                 mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
-                await self.responded_message.edit(content=f'Waiting for a response from these participants:\n{mentions}')
+                await self.responded_message.edit(content=f'Waiting for a response from:\n{mentions}')
             except Exception as e:
                 logger.error(f'{self.name}: Error getting mentions string or editing responded message: {e}')
                 logger.exception(e)
@@ -296,9 +296,8 @@ def main():
             try:
                 participant.set_specific_availability(avail_string, self.date.value)
                 participant.answered = True
-                availability = ''
-                logger.info(f'{self.event.name}: Received availability from {interaction.user.name}:\n{response}')
                 response = participant.get_availability_string()
+                logger.info(f'{self.event.name}: Received availability from {interaction.user.name}:\n{response}')
                 await interaction.response.send_message(response, ephemeral=True)
                 self.event.changed = True
                 await self.event.update_message()
@@ -352,7 +351,7 @@ def main():
                     logger.info(f'{self.event.name}: {interaction.user.name} selected full availability')
                     participant.set_full_availability()
                     participant.answered = True
-                    reponse = participant.get_availability_string()
+                    response = participant.get_availability_string()
                     await interaction.response.send_message(response, ephemeral=True)
                 else:
                     logger.info(f'{self.event.name}: {interaction.user.name} deselected full availability')
@@ -693,7 +692,7 @@ def main():
         # Make event object
         try:
             event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration)
-            mentions = '\nWaiting for a response from these participants:\n' + event.get_names_string(subscribed_only=True, mention=True)
+            mentions = '\nWaiting for a response from:\n' + event.get_names_string(subscribed_only=True, mention=True)
             client.events.append(event)
         except Exception as e:
             await interaction.response.send_message(f'Failed to make event object: {e}')
