@@ -26,10 +26,16 @@ class Participant():
                 return True
         return False
 
-    def set_full_availability(self):
+    def get_availability_string(self):
+        response = '**__Availability Received!__**\n'
+        for timeblock in self.availability:
+            response += f'{timeblock.start_time.strftime("%A, %m/%d: %H%M")} - {timeblock.end_time.strftime("%A, %m/%d: %H%M")}\n'
+        return response
+
+    def set_full_availability(self, month=datetime.now().astimezone().month, day=datetime.now().astimezone().day, year=datetime.now().astimezone().year):
         try:
-            start_time = datetime.now().astimezone().replace(second=0, microsecond=0)
-            end_time = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+            start_time = datetime.now().astimezone().replace(month=month, day=day, year=year, second=0, microsecond=0)
+            end_time = datetime.now().astimezone().replace(month=month, day=day, year=year, hour=0, minute=0, second=0, microsecond=0)
             end_time += timedelta(days=1)
             avail_block = TimeBlock(start_time, end_time)
             self.availability.append(avail_block)
@@ -37,9 +43,10 @@ class Participant():
         except Exception as e:
             raise(e)
 
-    def set_no_availability(self):
-        self.availability.clear()
-        self.answered = True
+    def set_no_availability(self, month=datetime.now().astimezone().month, day=datetime.now().astimezone().day, year=datetime.now().astimezone().year):
+        for idx, timeblock in enumerate(self.availability.copy()):
+            if timeblock.start_time.day == day:
+                self.availability.remove(timeblock)
 
     def set_specific_availability(self, avail_string: str, date_string: str):
         avail_string = avail_string.lower()
@@ -52,7 +59,12 @@ class Participant():
                 month, day = date_string.split('/')
                 year = datetime.now().astimezone().year
             except:
-                raise(Exception(f'Invalid date format provided by user: {date_string}'))
+                try:
+                    day = int(date_string)
+                    month = datetime.now().astimezone().month
+                    year = datetime.now().astimezone().year
+                except:
+                    raise(Exception(f'Invalid date format provided by user: {date_string}'))
         try:
             month = int(month)
         except:
@@ -108,6 +120,14 @@ class Participant():
         curDay = datetime.now().astimezone().day
         if curMonth == month and curDay == day:
             date_is_today = True
+
+        # Keyword shortcuts
+        if 'full' in avail_string or 'all' in avail_string:
+            set_full_availability(month=month, day=day, year=year)
+            return
+        if 'clear' in avail_string or 'empty' in avail_string:
+            set_no_availability(month=month, day=day, year=year)
+            return
 
         # Timezone parsing
         timezone_offset = 0

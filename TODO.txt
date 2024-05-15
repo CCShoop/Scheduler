@@ -1,14 +1,20 @@
 TODO CORRECT
-
-TODO IMPLEMENT
+- if someone submits time that butts up to or intersects with another of their blocks, combine them
 - Check for events that each participant may be in that have been created
 -     Remove scheduled event time from participant's availability
+
+TODO IMPLEMENT
 - Attach command (connect to an existing guild scheduled event)
 - Scheduling persistence
 - Reuse availability: give options on which event to take availability from?
 - ? Modal for schedule command/reschedule
 
 TODO TEST
+- day names added to availability response
+- just entering day number or just month and day for date input
+- convert time until start to display in hours and minutes
+- accept “all” and “full” in Availability Modal
+- accept “clear” and “empty” in availability modal to clear that day’s availability
 - Create command (create event at specified time)
 - Rescheduling functionality
 - Roles, include_exclude
