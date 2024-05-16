@@ -1,6 +1,7 @@
 '''Written by Cael Shoop.'''
 
 import os
+import json
 import random
 import logging
 import requests
@@ -13,6 +14,7 @@ from discord import app_commands, Interaction, Intents, Client, ButtonStyle, Eve
 from discord.ui import View, Button, Modal, TextInput
 from discord.ext import tasks
 
+from persistence import Persistence
 from participant import Participant, TimeBlock
 
 # .env
@@ -34,12 +36,16 @@ console_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
+# Persistence
+persist = Persistence('data.json')
+
 # Literals
 INCLUDE = 'INCLUDE'
 EXCLUDE = 'EXCLUDE'
 INCLUDE_EXCLUDE: Literal = Literal[INCLUDE, EXCLUDE]
 
 
+# Return an HH:MM format string from the total minutes
 def mins_to_hrs_mins_string(minutes: int):
     hours = minutes//60
     minutes %= 60
@@ -53,12 +59,26 @@ def mins_to_hrs_mins_string(minutes: int):
         minutes = f'{minutes}'
     return f'{hours}:{minutes}'
 
+
+# Add a 0 if the digit is < 10
+def double_digit_string(digit_string: str):
+    if int(digit_string) < 10 and len(digit_string) == 1:
+        digit_string = '0' + digit_string
+    return digit_string
+
+
 def main():
     class SchedulerClient(Client):
         def __init__(self, intents):
             super(SchedulerClient, self).__init__(intents=intents)
             self.tree = app_commands.CommandTree(self)
+            self.loaded_json = False
             self.events = []
+
+        def get_events_dict(self):
+            events_data = {}
+            events_data['events'] = [event.to_dict() for event in self.events]
+            return events_data
 
         async def setup_hook(self):
             await self.tree.sync()
@@ -67,35 +87,59 @@ def main():
     client = SchedulerClient(intents=Intents.all())
 
     class Event:
-        def __init__(self, name: str, entity_type: EntityType, voice_channel: VoiceChannel, participants: list, guild: Guild, text_channel: TextChannel, image_url: str, duration = timedelta(minutes=30), start_time: datetime = None):
+        def __init__(self, 
+            name: str,
+            voice_channel: VoiceChannel,
+            participants: list,
+            guild: Guild,
+            text_channel: TextChannel,
+            image_url: str = '',
+            duration = timedelta(minutes=30),
+            start_time: datetime = None,
+            interaction_message = None,
+            avail_buttons = None,
+            responded_message = None,
+            event_buttons_message = None,
+            event_buttons = None,
+            event_buttons_msg_content_pt1: str = '',
+            event_buttons_msg_content_pt2: str = '',
+            event_buttons_msg_content_pt3: str = '',
+            event_buttons_msg_content_pt4: str = '',
+            ready_to_create: bool = False,
+            created: bool = False,
+            started: bool = False,
+            scheduled_event = None,
+            changed: bool = False,
+            unavailable: bool = False
+        ):
             self.name = name
             self.guild = guild
-            self.entity_type = entity_type
-            self.interaction_message = None
-            self.responded_message = None
+            self.entity_type = EntityType.voice
             self.text_channel = text_channel
+            self.interaction_message = interaction_message
+            self.responded_message = responded_message
             self.voice_channel = voice_channel
             self.privacy_level = PrivacyLevel.guild_only
             self.participants = participants
             self.image_url = image_url
-            self.avail_buttons: AvailabilityButtons = None
-            self.event_buttons: EventButtons = None
-            self.event_buttons_message: Message = None
-            self.event_buttons_msg_content_pt1: str = ''
-            self.event_buttons_msg_content_pt2: str = ''
-            self.event_buttons_msg_content_pt3: str = ''
-            self.event_buttons_msg_content_pt4: str = ''
+            self.avail_buttons: AvailabilityButtons = avail_buttons
+            self.event_buttons_message: Message = event_buttons_message
+            self.event_buttons: EventButtons = event_buttons
+            self.event_buttons_msg_content_pt1: str = event_buttons_msg_content_pt1
+            self.event_buttons_msg_content_pt2: str = event_buttons_msg_content_pt2
+            self.event_buttons_msg_content_pt3: str = event_buttons_msg_content_pt3
+            self.event_buttons_msg_content_pt4: str = event_buttons_msg_content_pt4
             self.five_minute_warning_flag = False
-            self.ready_to_create = False
-            self.created = False
-            self.started = False
-            self.scheduled_event: ScheduledEvent = None
-            self.changed = False
+            self.ready_to_create = ready_to_create
+            self.created = created
+            self.started = started
+            self.scheduled_event: ScheduledEvent = scheduled_event
+            self.changed = changed
             self.start_time: datetime = start_time
             self.duration = duration
             self.mins_until_start: int = 0
             self.countdown_check_flag = False
-            self.unavailable = False
+            self.unavailable = unavailable
 
         async def intersect_time_blocks(self, timeblocks1: list, timeblocks2: list):
             intersected_time_blocks = []
@@ -239,7 +283,7 @@ def main():
             self.avail_buttons = AvailabilityButtons(event=self)
             if not reschedule:
                 await interaction.response.send_message(f'**Event name:** {self.name}'
-                        f'\n**Duration:** {duration.seconds//60} minutes'
+                        f'\n**Duration:** {duration.total_seconds()//60} minutes'
                         f'\n\nSelect **Respond** to enter your availability.'
                         f'\n**Full** will mark you as available from now until midnight tonight.'
                         f'\n**Use Existing** will attempt to grab your availability from another event.'
@@ -248,7 +292,7 @@ def main():
                         f'\n\nThe event will be either created or cancelled within a minute after the last person responds.️', view=self.avail_buttons)
             else:
                 await interaction.followup.send(f'**Event name:** {self.name}'
-                        f'\n**Duration:** {duration.seconds//60} minutes'
+                        f'\n**Duration:** {duration.total_seconds()//60} minutes'
                         f'\n\nSelect **Respond** to enter your new availability.'
                         f'\n**Full** will mark you as available from now until midnight tonight.'
                         f'\n**Use Existing** will attempt to grab your availability from another event.'
@@ -272,6 +316,201 @@ def main():
             except Exception as e:
                 logger.error(f'{self.name}: Error getting mentions string or editing responded message: {e}')
                 logger.exception(e)
+
+        @classmethod
+        async def from_dict(cls, data):
+            # Name
+            event_name = data["name"]
+            if event_name == '':
+                raise(Exception(f'Event has no name, disregarding event'))
+            else:
+                logger.info(f'{event_name}: loading event')
+
+            # Guild
+            event_guild = client.get_guild(data["guild_id"])
+            if event_guild:
+                logger.info(f'{event_name}: guild found: {event_guild.name}')
+            else:
+                raise(Exception(f'Could not find guild for {event_name}, disregarding event'))
+
+            # Text channel
+            event_text_channel = event_guild.get_channel(data["text_channel_id"])
+            if not event_text_channel:
+                logger.info(f'{event_name}: no text channel found')
+            else:
+                logger.info(f'{event_name}: text channel found: {event_text_channel.name}')
+
+            # Voice channel
+            event_voice_channel = utils.get(event_guild.voice_channels, id=data["voice_channel_id"])
+            if event_voice_channel:
+                logger.info(f'{event_name}: voice channel found: {event_voice_channel.name}')
+            else:
+                raise(Exception(f'Could not find voice channel for {event_name}, disregarding event'))
+
+            # Participants
+            event_participants = [Participant.from_dict(event_guild, participant) for participant in data["participants"]]
+            for participant in event_participants.copy():
+                if not participant:
+                    event_participants.remove(participant)
+            if event_participants:
+                logger.info(f'{event_name}: found participant(s): {", ".join([p.member.name for p in event_participants])}')
+            else:
+                raise(Exception(f'{event_name}: no participant(s) found, disregarding event'))
+
+            # Interaction (availability) message
+            event_interaction_message = await event_text_channel.fetch_message(data["interaction_message_id"])
+            event_avail_buttons = None
+            if event_interaction_message:
+                logger.info(f'{event_name}: found interaction_message: {event_interaction_message.id}')
+            else:
+                logger.warning(f'{event_name}: no interaction_message found')
+
+            # Responded message
+            event_responded_message = None
+            try:
+                event_responded_message = await event_text_channel.fetch_message(data["responded_message_id"])
+                logger.info(f'{event_name}: found responded_message: {event_responded_message.id}')
+            except Exception as e:
+                logger.info(f'{event_name}: no responded_message found')
+
+            # Event buttons message
+            event_event_buttons_message = await event_text_channel.fetch_message(data["event_buttons_message_id"])
+            event_event_buttons = None
+            if event_event_buttons_message:
+                logger.info(f'{event_name}: found event_buttons_message: {event_event_buttons_message.id}')
+            else:
+                logger.info(f'{event_name}: no event_buttons_message found')
+
+            # Image url
+            event_image_url = data["image_url"]
+            logger.info(f'{event_name}: image url: {event_image_url}')
+
+            # Event buttons msg content
+            event_event_buttons_msg_content_pt1 = data["event_buttons_msg_content_pt1"]
+            logger.info(f'{event_name}: event_buttons_msg_content_pt1: ' + r'{event_event_buttons_msg_content_pt1}')
+            event_event_buttons_msg_content_pt2 = data["event_buttons_msg_content_pt2"]
+            logger.info(f'{event_name}: event_buttons_msg_content_pt2: ' + r'{event_event_buttons_msg_content_pt2}')
+            event_event_buttons_msg_content_pt3 = data["event_buttons_msg_content_pt3"]
+            logger.info(f'{event_name}: event_buttons_msg_content_pt3: ' + r'{event_event_buttons_msg_content_pt3}')
+            event_event_buttons_msg_content_pt4 = data["event_buttons_msg_content_pt4"]
+            logger.info(f'{event_name}: event_buttons_msg_content_pt4: ' + r'{event_event_buttons_msg_content_pt4}')
+
+            # Ready to create
+            event_ready_to_create = data["ready_to_create"]
+            logger.info(f'{event_name}: ready_to_create: {event_ready_to_create}')
+
+            # Created
+            event_created = data["created"]
+            logger.info(f'{event_name}: created: {event_created}')
+
+            # Started
+            event_started = data["started"]
+            logger.info(f'{event_name}: started: {event_started}')
+
+            # Scheduled event
+            event_scheduled_event = None
+            for guild_scheduled_event in event_guild.scheduled_events:
+                if guild_scheduled_event.id == data["scheduled_event_id"]:
+                    event_scheduled_event = guild_scheduled_event
+                    logger.info(f'{event_name}: found guild scheduled event: {event_scheduled_event.id}')
+                    break
+            if not event_scheduled_event:
+                logger.info(f'{event_name}: no guild scheduled event found')
+
+            # Changed
+            event_changed = data["changed"]
+            logger.info(f'{event_name}: changed: {event_changed}')
+
+            # Start time
+            try:
+                event_start_time = datetime.fromisoformat(data["start_time"])
+                logger.info(f'{event_name}: start time found: {event_start_time.strftime("%A, %m/%d/%Y %H%M")}')
+            except:
+                event_start_time = None
+                logger.info(f'{event_name}: no start time found')
+
+            # Duration
+            event_duration = timedelta(minutes=data["duration"])
+            if event_duration:
+                logger.info(f'{event_name}: duration found: {event_duration.total_seconds()//60}')
+            else:
+                logger.info(f'{event_name}: no duration found')
+
+            # Unavailable
+            event_unavailable = data["unavailable"]
+            logger.info(f'{event_name}: unavailable: {event_unavailable}')
+
+            return cls(
+                name = event_name,
+                guild = event_guild,
+                text_channel = event_text_channel,
+                interaction_message = event_interaction_message,
+                avail_buttons = event_avail_buttons,
+                responded_message = event_responded_message,
+                voice_channel = event_voice_channel,
+                participants = event_participants,
+                image_url = event_image_url,
+                event_buttons_message = event_event_buttons_message,
+                event_buttons = event_event_buttons,
+                event_buttons_msg_content_pt1 = event_event_buttons_msg_content_pt1,
+                event_buttons_msg_content_pt2 = event_event_buttons_msg_content_pt2,
+                event_buttons_msg_content_pt3 = event_event_buttons_msg_content_pt3,
+                event_buttons_msg_content_pt4 = event_event_buttons_msg_content_pt4,
+                ready_to_create = event_ready_to_create,
+                created = event_created,
+                started = event_started,
+                scheduled_event = event_scheduled_event,
+                changed = event_changed,
+                start_time = event_start_time,
+                duration = event_duration,
+                unavailable = event_unavailable
+            )
+
+        def to_dict(self):
+            try:
+                interaction_message_id = self.interaction_message.id
+            except:
+                interaction_message_id = 0
+            try:
+                responded_message_id = self.responded_message.id
+            except:
+                responded_message_id = 0
+            try:
+                event_buttons_message_id = self.event_buttons_message.id
+            except:
+                event_buttons_message_id = 0
+            try:
+                scheduled_event_id = self.scheduled_event.id
+            except:
+                scheduled_event_id = 0
+            try:
+                start_time = self.start_time.isoformat()
+            except:
+                start_time = ''
+            return {
+                'name': self.name,
+                'guild_id': self.guild.id,
+                'text_channel_id': self.text_channel.id,
+                'interaction_message_id': interaction_message_id,
+                'responded_message_id': responded_message_id,
+                'voice_channel_id': self.voice_channel.id,
+                'participants': [participant.to_dict() for participant in self.participants],
+                'image_url': self.image_url,
+                'event_buttons_message_id': event_buttons_message_id,
+                'event_buttons_msg_content_pt1': self.event_buttons_msg_content_pt1,
+                'event_buttons_msg_content_pt2': self.event_buttons_msg_content_pt2,
+                'event_buttons_msg_content_pt3': self.event_buttons_msg_content_pt3,
+                'event_buttons_msg_content_pt4': self.event_buttons_msg_content_pt4,
+                'ready_to_create': self.ready_to_create,
+                'created': self.created,
+                'started': self.started,
+                'scheduled_event_id': scheduled_event_id,
+                'changed': self.changed,
+                'start_time': start_time,
+                'duration': self.duration.total_seconds()//60,
+                'unavailable': self.unavailable
+            }
+
 
     class AvailabilityModal(Modal):
         def __init__(self, event, *args, **kwargs):
@@ -337,6 +576,7 @@ def main():
                 except Exception as e:
                     logger.error(f'Error sending availability modal: {e}')
                     logger.exception(e)
+                persist.write(client.get_events_dict())
             button.callback=respond_button_callback
             self.add_item(button)
             return button
@@ -350,16 +590,19 @@ def main():
                 if not participant.full_availability_flag:
                     logger.info(f'{self.event.name}: {interaction.user.name} selected full availability')
                     participant.set_full_availability()
+                    participant.full_availability_flag = True
                     participant.answered = True
                     response = participant.get_availability_string()
                     await interaction.response.send_message(response, ephemeral=True)
                 else:
                     logger.info(f'{self.event.name}: {interaction.user.name} deselected full availability')
                     participant.set_no_availability()
+                    participant.full_availability_flag = False
                     if participant.subscribed:
                         participant.answered = False
                     await interaction.response.send_message(f'Your availability has been cleared.', ephemeral=True)
                 await self.event.update_message()
+                persist.write(client.get_events_dict())
             button.callback = full_button_callback
             self.add_item(button)
             return button
@@ -380,6 +623,7 @@ def main():
                 response = participant.get_availability_string()
                 await interaction.response.send_message(response, ephemeral=True)
                 await self.event.update_message()
+                persist.write(client.get_events_dict())
             button.callback = reuse_button_callback
             self.add_item(button)
             return button
@@ -401,6 +645,7 @@ def main():
                     participant.answered = False
                     await interaction.response.send_message(f'You have been resubscribed to {self.event.name}.', ephemeral=True)
                 await self.event.update_message()
+                persist.write(client.get_events_dict())
             button.callback = unsub_button_callback
             self.add_item(button)
             return button
@@ -416,7 +661,7 @@ def main():
                     participant.unavailable = True
                     participant.answered = True
                     self.event.unavailable = True
-                    await interaction.response.send_message(f'{self.event.name} will be cancelled shortly unless you deselect the button.', ephemeral=True)
+                    await interaction.response.send_message(f'{self.event.name} will be cancelled shortly unless you click the **Cancel** button again.', ephemeral=True)
                     logger.info(f'{self.event.name}: {interaction.user.name} selected cancel')
                 else:
                     participant.unavailable = False
@@ -426,6 +671,7 @@ def main():
                     await interaction.response.send_message(f'{self.event.name} will not be cancelled.', ephemeral=True)
                     logger.info(f'{self.event.name}: {interaction.user.name} deselected cancel')
                 await self.event.update_message()
+                persist.write(client.get_events_dict())
             button.callback = cancel_button_callback
             self.add_item(button)
             return button
@@ -457,9 +703,6 @@ def main():
         def add_start_button(self):
             async def start_button_callback(interaction: Interaction):
                 self.event.text_channel = interaction.channel
-                if not self.event.created or self.event.scheduled_event.status != EventStatus.scheduled:
-                    await interaction.response.edit_message(view=self)
-                    return
                 logger.info(f'{self.event.name}: {interaction.user} started by button press')
                 participant_names = [participant.member.name for participant in self.event.participants]
                 if interaction.user.name not in participant_names:
@@ -482,6 +725,7 @@ def main():
                 except Exception as e:
                     logger.error(f'Error responding to START button interaction: {e}')
                     logger.exception(e)
+                persist.write(client.get_events_dict())
             self.start_button.callback = start_button_callback
             self.add_item(self.start_button)
 
@@ -489,9 +733,6 @@ def main():
             self.end_button.disabled = True
             async def end_button_callback(interaction: Interaction):
                 self.event.text_channel = interaction.channel
-                if self.event.scheduled_event.status != EventStatus.active and self.event.scheduled_event.status != EventStatus.scheduled:
-                    await interaction.response.edit_message(view=self)
-                    return
                 logger.info(f'{self.event.name}: {interaction.user} ended by button press')
                 try:
                     await self.event.scheduled_event.delete(reason=f'End button pressed by {interaction.user.name}.')
@@ -511,6 +752,7 @@ def main():
                 except Exception as e:
                     logger.error(f'Error responding to END button interaction: {e}')
                     logger.exception(e)
+                persist.write(client.get_events_dict())
             self.end_button.callback = end_button_callback
             self.add_item(self.end_button)
 
@@ -522,7 +764,7 @@ def main():
                 participant_names = [participant.member.name for participant in self.event.participants]
                 if interaction.user.name not in participant_names:
                     self.event.participants.append(interaction.user)
-                new_event = Event(self.event.name, self.event.entity_type, self.event.voice_channel, self.event.participants, self.event.guild, interaction.channel, self.event.image_url, self.event.duration)
+                new_event = Event(self.event.name, self.event.voice_channel, self.event.participants, self.event.guild, interaction.channel, self.event.image_url, self.event.duration)
                 try:
                     await self.event.scheduled_event.delete(reason=f'Reschedule button pressed by {interaction.user.name}.')
                     self.event.event_buttons_msg_content_pt2 = f'\n**RESCHEDULED**'
@@ -545,6 +787,7 @@ def main():
                 except Exception as e:
                     logger.error(f'Error with RESCHEDULE button requesting availability: {e}')
                     logger.exception(e)
+                persist.write(client.get_events_dict())
             self.reschedule_button.callback = reschedule_button_callback
             self.add_item(self.reschedule_button)
 
@@ -573,14 +816,9 @@ def main():
                 except Exception as e:
                     logger.error(f'Error sending CANCEL button interaction response or cancelled message to text channel: {e}')
                     logger.exception(e)
+                persist.write(client.get_events_dict())
             self.cancel_button.callback = cancel_button_callback
             self.add_item(self.cancel_button)
-
-    # Add a 0 if the digit is < 10
-    def double_digit_string(digit_string: str):
-        if int(digit_string) < 10 and len(digit_string) == 1:
-            digit_string = '0' + digit_string
-        return digit_string
 
     # Put participants into a list
     def get_participants_from_interaction(interaction: Interaction, include_exclude: INCLUDE_EXCLUDE, role: str):
@@ -601,6 +839,31 @@ def main():
     @client.event
     async def on_ready():
         logger.info(f'{client.user} has connected to Discord!')
+        # Read in current events
+        if not client.loaded_json:
+            client.loaded_json = True
+            events_data = persist.read()
+            if events_data:
+                for event_data in events_data['events']:
+                    try:
+                        event = await Event.from_dict(event_data)
+                        if not event:
+                            raise(Exception(f'Event failed to be created'))
+                        try:
+                            event.avail_buttons = AvailabilityButtons(event)
+                            await event.interaction_message.edit(view=event.avail_buttons)
+                        except:
+                            raise(Exception(f'Event does not have an interaction message'))
+                        if event.event_buttons_message:
+                            event.event_buttons = EventButtons(event)
+                            await event.event_buttons_message.edit(view=event.event_buttons)
+                        client.events.append(event)
+                        logger.info(f'{event.name}: event loaded and added to client event list')
+                    except Exception as e:
+                        logger.error(f'Could not add event to client event list: {e}')
+            else:
+                logger.info(f'No json data found')
+        # Start update
         if not update.is_running():
             update.start()
 
@@ -640,6 +903,10 @@ def main():
     async def create_command(interaction: Interaction, event_name: str, voice_channel: VoiceChannel, start_time: str, image_url: str = None, include_exclude: INCLUDE_EXCLUDE = INCLUDE, role: str = None, duration: int = 30):
         logger.info(f'{event_name}: Received event creation request from {interaction.user.name}')
 
+        if event_name in [event.name for event in client.events]:
+            await interaction.response.send_message(f'Sorry, I already have an event called {event_name}. Please choose a different name.', ephemeral=True)
+            return
+
         # Parse start time
         start_time = start_time.strip()
         start_time = start_time.replace(':', '')
@@ -657,12 +924,12 @@ def main():
 
         # Make event
         duration = timedelta(minutes=duration)
-        event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration, start_time_obj)
+        event = Event(event_name, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration, start_time_obj)
         client.events.append(event)
         await event.make_scheduled_event()
         response =  f'{event.get_names_string(mention=True)}'
         response += f'\n**Event name:** {event.name}'
-        response += f'\n**Duration:** {int(round(event.duration.seconds/60))}'
+        response += f'\n**Duration:** {int(round(event.duration.seconds/60))} minutes'
         response += f'\n**Starts at:** {event.start_time.strftime("%m/%d at %H:%M")} ET'
         try:
             event.event_buttons = EventButtons(event)
@@ -670,6 +937,7 @@ def main():
         except Exception as e:
             logger.error(f'Error sending interaction response to create event command): {e}')
             logger.exception(e)
+        persist.write(client.get_events_dict())
 
     @client.tree.command(name='schedule', description='Create a scheduling event.')
     @app_commands.describe(event_name='Name for the event.')
@@ -680,6 +948,10 @@ def main():
     @app_commands.describe(duration="Event duration in minutes (30 minutes default).")
     async def schedule_command(interaction: Interaction, event_name: str, voice_channel: VoiceChannel, image_url: str = None, include_exclude: INCLUDE_EXCLUDE = INCLUDE, role: str = None, duration: int = 30):
         logger.info(f'{event_name}: Received event schedule request from {interaction.user.name}')
+
+        if event_name in [event.name for event in client.events]:
+            await interaction.response.send_message(f'Sorry, I already have an event called {event_name}. Please choose a different name.', ephemeral=True)
+            return
 
         # Generate participants list
         try:
@@ -693,7 +965,7 @@ def main():
         # Make event object
         try:
             duration = timedelta(minutes=duration)
-            event = Event(event_name, EntityType.voice, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration)
+            event = Event(event_name, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration)
             mentions = '\nWaiting for a response from:\n' + event.get_names_string(subscribed_only=True, mention=True)
             client.events.append(event)
         except Exception as e:
@@ -709,13 +981,18 @@ def main():
         except Exception as e:
             logger.error(f'Error sending responded message or requesting availability: {e}')
             logger.exception(e)
+        persist.write(client.get_events_dict())
 
     @client.tree.command(name='bind', description='Bind a text channel to an existing event.')
     @app_commands.describe(event_name='Name of the vent to set this text channel for.')
     async def bind_command(interaction: Interaction, event_name: str):
+        logger.info(f'{interaction.user.name} used bind command')
         event_name = event_name.lower()
         for event in client.events:
             if event_name == event.name.lower():
+                if event.text_channel:
+                    await interaction.response.send_message(f'Event {event.name} already has a text channel: <#{event.text_channel.id}>', ephemeral=True)
+                    return
                 # Bind the text channel to the interaction channel
                 try:
                     event.text_channel = interaction.channel
@@ -784,21 +1061,25 @@ def main():
                     event.countdown_check_flag = not event.countdown_check_flag
                     if event.countdown_check_flag:
                         time_until_start: timedelta = event.start_time - datetime.now().astimezone()
-                        event.mins_until_start = int(round(time_until_start.seconds/60)) + 1
+                        event.mins_until_start = int(round(time_until_start.seconds/60))
                         if event.mins_until_start < 0:
                             event.event_buttons_msg_content_pt2 = f'\n**Overdue by:**'
                             mins_until_start_string = f'{event.mins_until_start}'
                             mins_until_start_string = mins_until_start_string.replace('-', '')
-                            response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {mins_until_start_string} {event.event_buttons_msg_content_pt3} {event.event_buttons_msg_content_pt4}'
+                            response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {mins_until_start_string} {event.event_buttons_msg_content_pt4}'
                         elif event.mins_until_start == 0:
                             event.event_buttons_msg_content_pt2 = f'\n**Starting now**'
                             response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {event.event_buttons_msg_content_pt4}'
                         else:
                             event.event_buttons_msg_content_pt2 = f'\n**Starts in:**'
                             hrs_mins_until_start_string = mins_to_hrs_mins_string(event.mins_until_start)
-                            response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {hrs_mins_until_start_string} {event.event_buttons_msg_content_pt3} {event.event_buttons_msg_content_pt4}'
+                            response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {hrs_mins_until_start_string} {event.event_buttons_msg_content_pt4}'
                         await event.event_buttons_message.edit(content=response, view=event.event_buttons)
+                except Exception as e:
+                    logger.error(f'{event.name}: Error counting down: {e}')
+                    logger.exception(e)
 
+                try:
                     # Send 5 minute warning
                     if datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=5) == event.start_time and event.scheduled_event.status == EventStatus.scheduled and not event.started:
                         if not event.five_minute_warning_flag:
@@ -866,20 +1147,20 @@ def main():
                     # Calculate time until start
                     try:
                         time_until_start: timedelta = event.start_time - datetime.now().astimezone()
-                        event.mins_until_start = int(round(time_until_start.seconds/60)) + 1
+                        event.mins_until_start = int(round(time_until_start.seconds/60))
                         event.event_buttons_msg_content_pt1 = f'{event.get_names_string(subscribed_only=True, mention=True)}'
                         event.event_buttons_msg_content_pt1 += f'\n**Event name:** {event.name}'
                         event.event_buttons_msg_content_pt1 += f'\n**Scheduled:** {event.start_time.strftime("%m/%d")} at {event.start_time.strftime("%H:%M")} ET'
                         event.event_buttons_msg_content_pt2 = f'\n**Starts in:**'
-                        event.event_buttons_msg_content_pt3 = f'minutes'
                         event.event_buttons_msg_content_pt4 += f'\n{unsubbed}'
-                        response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {event.mins_until_start} {event.event_buttons_msg_content_pt3} {event.event_buttons_msg_content_pt4}'
+                        response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {mins_to_hrs_mins_string(event.mins_until_start)} {event.event_buttons_msg_content_pt4}'
                         await event.responded_message.delete()
                         event.event_buttons = EventButtons(event)
                         event.event_buttons_message = await event.text_channel.send(content=response, view=event.event_buttons)
                     except Exception as e:
                         logger.error(f'{event.name}: Error sending event created notification with buttons: {e}')
                         logger.exception(e)
+        persist.write(client.get_events_dict())
 
     client.run(discord_token)
 

@@ -1,4 +1,6 @@
 .env
 PushChanges.bat
 __pycache__
-TODO.txt
+*.txt
+*.json
+*.log

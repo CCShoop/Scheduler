@@ -1,5 +1,5 @@
 import re
-from discord import Member
+from discord import Guild, Member
 from asyncio import Lock
 from datetime import datetime, timedelta
 from calendar import isleap
@@ -10,15 +10,28 @@ class TimeBlock():
         self.end_time: datetime = end_time
         self.duration: timedelta = end_time - start_time
 
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls(
+            start_time = datetime.fromisoformat(data["start_time"]),
+            end_time = datetime.fromisoformat(data["end_time"])
+        )
+
+    def to_dict(self):
+        return {
+            'start_time': self.start_time.isoformat(),
+            'end_time': self.end_time.isoformat()
+        }
+
 class Participant():
-    def __init__(self, member: Member):
+    def __init__(self, member: Member, answered = False, subscribed = True, unavailable = False, full_availability_flag = False, availability = []):
         self.member = member
-        self.answered = False
-        self.subscribed = True
-        self.unavailable = False
-        self.full_availability_flag = False
+        self.answered = answered
+        self.subscribed = subscribed
+        self.unavailable = unavailable
+        self.full_availability_flag = full_availability_flag
         self.msg_lock = Lock()
-        self.availability = []
+        self.availability = availability
 
     def is_available_at(self, time: datetime, duration: timedelta):
         for timeblock in self.availability:
@@ -49,6 +62,10 @@ class Participant():
                 self.availability.remove(timeblock)
 
     def set_specific_availability(self, avail_string: str, date_string: str):
+        # Blank input to view current availability
+        if avail_string == '':
+            return
+
         avail_string = avail_string.lower()
 
         # Date parsing
@@ -123,10 +140,10 @@ class Participant():
 
         # Keyword shortcuts
         if 'full' in avail_string or 'all' in avail_string:
-            set_full_availability(month=month, day=day, year=year)
+            self.set_full_availability(month=month, day=day, year=year)
             return
         if 'clear' in avail_string or 'empty' in avail_string:
-            set_no_availability(month=month, day=day, year=year)
+            self.set_no_availability(month=month, day=day, year=year)
             return
 
         # Timezone parsing
@@ -233,3 +250,24 @@ class Participant():
             avail_block = TimeBlock(start_time, end_time)
             self.availability.append(avail_block)
         self.answered = True
+
+    @classmethod
+    def from_dict(cls, guild: Guild, data: dict):
+        return cls(
+            member = guild.get_member(data['member_id']),
+            answered = data['answered'],
+            subscribed = data['subscribed'],
+            unavailable = data['unavailable'],
+            full_availability_flag = data['full_availability_flag'],
+            availability = [TimeBlock.from_dict(timeblock_data) for timeblock_data in data['availability']]
+        )
+
+    def to_dict(self):
+        return {
+            'member_id': self.member.id,
+            'answered': self.answered,
+            'subscribed': self.subscribed,
+            'unavailable': self.unavailable,
+            'full_availability_flag': self.full_availability_flag,
+            'availability': [timeblock.to_dict() for timeblock in self.availability]
+        }
