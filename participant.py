@@ -54,7 +54,7 @@ class Participant():
             self.availability.append(avail_block)
             self.answered = True
         except Exception as e:
-            raise(e)
+            raise e
 
     def set_no_availability(self, month=datetime.now().astimezone().month, day=datetime.now().astimezone().day, year=datetime.now().astimezone().year):
         for idx, timeblock in enumerate(self.availability.copy()):
@@ -81,55 +81,55 @@ class Participant():
                     month = datetime.now().astimezone().month
                     year = datetime.now().astimezone().year
                 except:
-                    raise(Exception(f'Invalid date format provided by user: {date_string}'))
+                    raise Exception(f'Invalid date format provided by user: {date_string}')
         try:
             month = int(month)
         except:
-            raise(Exception(f'Invalid month: {month}'))
+            raise Exception(f'Invalid month: {month}')
         try:
             day = int(day)
         except:
-            raise(Exception(f'Invalid day: {day}'))
+            raise Exception(f'Invalid day: {day}')
         try:
             year = int(year)
         except:
-            raise(Exception(f'Invalid year: {year}'))
+            raise Exception(f'Invalid year: {year}')
 
         # Date validity check
         if year < datetime.now().astimezone().year:
-            raise(Exception(f'Cannot schedule for the past: {year}'))
+            raise Exception(f'Cannot schedule for the past: {year}')
         if month < 1 or month > 12:
-            raise(Exception(f'Invalid month provided by user: {month}'))
+            raise Exception(f'Invalid month provided by user: {month}')
         if day < 0:
-            raise(Exception(f'Invalid day provided by user: {day}'))
+            raise Exception(f'Invalid day provided by user: {day}')
         if month == 1 and day > 31:
-            raise(Exception(f'Invalid day provided by user: {day}'))
+            raise Exception(f'Invalid day provided by user: {day}')
         if isleap(datetime.now().astimezone().year):
             if month == 2 and day > 29:
-                raise(Exception(f'Invalid day provided by user: {day}'))
+                raise Exception(f'Invalid day provided by user: {day}')
         else:
             if month == 2 and day > 28:
-                raise(Exception(f'Invalid day provided by user: {day}'))
+                raise Exception(f'Invalid day provided by user: {day}')
         if month == 3 and day > 31:
-            raise(Exception(f'Invalid day provided by user: {day}'))
+            raise Exception(f'Invalid day provided by user: {day}')
         if month == 4 and day > 30:
-            raise(Exception(f'Invalid day provided by user: {day}'))
+            raise Exception(f'Invalid day provided by user: {day}')
         if month == 5 and day > 31:
-            raise(Exception(f'Invalid day provided by user: {day}'))
+            raise Exception(f'Invalid day provided by user: {day}')
         if month == 6 and day > 31:
-            raise(Exception(f'Invalid day provided by user: {day}'))
+            raise Exception(f'Invalid day provided by user: {day}')
         if month == 7 and day > 30:
-            raise(Exception(f'Invalid day provided by user: {day}'))
+            raise Exception(f'Invalid day provided by user: {day}')
         if month == 8 and day > 31:
-            raise(Exception(f'Invalid day provided by user: {day}'))
+            raise Exception(f'Invalid day provided by user: {day}')
         if month == 9 and day > 30:
-            raise(Exception(f'Invalid day provided by user: {day}'))
+            raise Exception(f'Invalid day provided by user: {day}')
         if month == 10 and day > 31:
-            raise(Exception(f'Invalid day provided by user: {day}'))
+            raise Exception(f'Invalid day provided by user: {day}')
         if month == 11 and day > 30:
-            raise(Exception(f'Invalid day provided by user: {day}'))
+            raise Exception(f'Invalid day provided by user: {day}')
         if month == 12 and day > 31:
-            raise(Exception(f'Invalid day provided by user: {day}'))
+            raise Exception(f'Invalid day provided by user: {day}')
 
         # Check if the entered date is today
         date_is_today = False
@@ -180,14 +180,14 @@ class Participant():
             timeblock = timeblock.replace(':', '')
             timeblock = timeblock.replace(';', '')
             if '--' in timeblock:
-                raise(Exception(f'Invalid time provided by user: cannot double hyphen (--)'))
+                raise Exception(f'Invalid time provided by user: cannot double hyphen (--)')
             start_time, part, end_time = timeblock.partition('-')
 
             # Start/end time keywords
             if 'now' in start_time or 'cur' in start_time or 'curr' in start_time or 'current' in start_time:
                 start_time = datetime.now().astimezone().replace(second=0, microsecond=0).strftime("%H%M")
             if 'now' in end_time or 'cur' in end_time or 'curr' in end_time or 'current' in end_time:
-                raise(Exception(f'Invalid end time provided by user: cannot use current time as block\'s end time'))
+                raise Exception(f'Invalid end time provided by user: cannot use current time as block\'s end time')
 
             # 12-hour time parsing pt. 2
             if 'pm' in start_time:
@@ -215,9 +215,9 @@ class Participant():
 
             # Validity check
             if start_time != '' and (len(start_time) < 4 or int(start_time) > 2359):
-                raise(Exception(f'Invalid start time provided by user: {start_time}'))
+                raise Exception(f'Invalid start time provided by user: {start_time}')
             if end_time != '' and (len(end_time) < 4 or int(end_time) > 2359):
-                raise(Exception(f'Invalid end time provided by user: {start_time}'))
+                raise Exception(f'Invalid end time provided by user: {start_time}')
 
             # Convert to datetime objects
             start_time_string = start_time
