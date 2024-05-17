@@ -105,7 +105,7 @@ def main():
             events_data['events'] = [event.to_dict() for event in self.events]
             return events_data
 
-        async def setup_hook(self):
+        async def sync_commands(self):
             for guild in self.guilds:
                 await self.tree.sync(guild=guild)
 
@@ -901,11 +901,8 @@ def main():
     @client.event
     async def on_ready():
         logger.info(f'{client.user} has connected to Discord!')
-        # Update commands in all guilds
-        await client.setup_hook()
-        # Read in current events
+        await client.sync_commands()
         await client.retrieve_events()
-        # Start update
         if not update.is_running():
             update.start()
         logger.info(f'{client.user} is ready!')
