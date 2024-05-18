@@ -793,6 +793,7 @@ def main():
         def add_reschedule_button(self):
             async def reschedule_button_callback(interaction: Interaction):
                 logger.info(f'{self.event.name}: {interaction.user} rescheduled by button press')
+                await interaction.response.defer()
                 participants = self.event.participants
                 if interaction.user.name not in [participant.member.name for participant in participants]:
                     member = self.guild.get_member(interaction.user.id)
@@ -1028,6 +1029,7 @@ def main():
 
         # Request availability and make participant response tracker message
         try:
+            await interaction.response.defer()
             await event.request_availability(interaction)
         except Exception as e:
             logger.exception(f'Error sending responded message or requesting availability: {e}')
