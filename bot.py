@@ -10,7 +10,7 @@ from asyncio import Lock
 from typing import Literal
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
-from discord import app_commands, Interaction, Intents, Client, ButtonStyle, EventStatus, EntityType, TextChannel, VoiceChannel, Message, ScheduledEvent, Guild, PrivacyLevel, User, utils, File
+from discord import app_commands, Interaction, Intents, Client, ButtonStyle, EventStatus, EntityType, TextChannel, VoiceChannel, Message, ScheduledEvent, Guild, PrivacyLevel, User, utils, File, NotFound, HTTPException
 from discord.ui import View, Button, Modal, TextInput
 from discord.ext import tasks
 
@@ -105,11 +105,8 @@ def main():
             events_data['events'] = [event.to_dict() for event in self.events]
             return events_data
 
-        async def sync_commands(self):
-            for guild in self.guilds:
-                await self.tree.sync(guild=guild)
-
-    discord_token = os.getenv('DISCORD_TOKEN')
+    OWNER_ID = int(os.getenv('OWNER_ID'))
+    DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
     client = SchedulerClient(intents=Intents.all())
 
     class Event:
@@ -334,8 +331,16 @@ def main():
                 participant = self.get_participant(interaction.user.name)
                 participant.answered = False
             self.interaction_message = await interaction.original_response()
+            await self.update_message()
 
         async def update_message(self):
+            if not self.responded_message:
+                try:
+                    mentions = self.get_names_string(unanswered_only=True, mention=True)
+                    self.responded_message = await self.text_channel.send(f'{mentions}')
+                except Exception as e:
+                    logger.exception(f'{self.name}: Error sending responded message: {e}')
+                return
             if self.has_everyone_answered():
                 try:
                     await self.responded_message.edit(content=f'Everyone has responded.')
@@ -787,11 +792,12 @@ def main():
 
         def add_reschedule_button(self):
             async def reschedule_button_callback(interaction: Interaction):
-                interaction.response.defer()
                 logger.info(f'{self.event.name}: {interaction.user} rescheduled by button press')
-                participant_names = [participant.member.name for participant in self.event.participants]
-                if interaction.user.name not in participant_names:
-                    self.event.participants.append(interaction.user)
+                participants = self.event.participants
+                if interaction.user.name not in [participant.member.name for participant in participants]:
+                    member = self.guild.get_member(interaction.user.id)
+                    participant = Participant(member)
+                    self.event.participants.append(participant)
                 new_event = Event(self.event.name, self.event.voice_channel, self.event.participants, self.event.guild, interaction.channel, self.event.image_url, self.event.duration)
                 try:
                     await self.event.scheduled_event.delete(reason=f'Reschedule button pressed by {interaction.user.name}.')
@@ -810,7 +816,6 @@ def main():
                 client.events.append(self.event)
                 try:
                     await self.event.request_availability(interaction, reschedule=True)
-                    await self.event.update_message()
                 except Exception as e:
                     logger.exception(f'Error with RESCHEDULE button requesting availability: {e}')
                 persist.write(client.get_events_dict())
@@ -901,7 +906,6 @@ def main():
     @client.event
     async def on_ready():
         logger.info(f'{client.user} has connected to Discord!')
-        await client.sync_commands()
         await client.retrieve_events()
         if not update.is_running():
             update.start()
@@ -931,6 +935,10 @@ def main():
                     return
             await message.channel.send(f'Could not find event {msg_content}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}', ephemeral=True)
             return
+        # Owner syncs commands
+        if 'sync' in message.content and message.author.id == OWNER_ID:
+            await client.tree.sync()
+            logger.info(f'User {message.author.name} synced commands')
 
     @client.tree.command(name='create', description='Create an event.')
     @app_commands.describe(event_name='Name for the event.')
@@ -1021,7 +1029,6 @@ def main():
         # Request availability and make participant response tracker message
         try:
             await event.request_availability(interaction)
-            event.responded_message = await interaction.channel.send(f'{mentions}')
         except Exception as e:
             logger.exception(f'Error sending responded message or requesting availability: {e}')
         persist.write(client.get_events_dict())
@@ -1188,7 +1195,7 @@ def main():
                         logger.exception(f'{event.name}: Error sending event created notification with buttons: {e}')
         persist.write(client.get_events_dict())
 
-    client.run(discord_token)
+    client.run(DISCORD_TOKEN)
 
 
 if __name__ == '__main__':

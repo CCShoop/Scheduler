@@ -1,5 +1,5 @@
 import re
-from discord import Guild, Member
+from discord import Guild, Member, NotFound, HTTPException
 from asyncio import Lock
 from datetime import datetime, timedelta
 from calendar import isleap
@@ -187,7 +187,7 @@ class Participant():
             if 'now' in start_time or 'cur' in start_time or 'curr' in start_time or 'current' in start_time:
                 start_time = datetime.now().astimezone().replace(second=0, microsecond=0).strftime("%H%M")
             if 'now' in end_time or 'cur' in end_time or 'curr' in end_time or 'current' in end_time:
-                raise Exception(f'Invalid end time provided by user: cannot use current time as block\'s end time')
+                raise Exception(f'Invalid end time provided by user: cannot use current time as end time')
 
             # 12-hour time parsing pt. 2
             if 'pm' in start_time:
@@ -232,8 +232,8 @@ class Participant():
             else:
                 start_hr = int(start_time_string[:2])
                 start_min = int(start_time_string[2:])
-                start_hr += timezone_offset
                 start_time = datetime.now().astimezone().replace(month=month, day=day, hour=start_hr, minute=start_min, second=0, microsecond=0)
+                start_time += timedelta(hours=timezone_offset)
             # End time is midnight
             if end_time_string == '':
                 end_time = datetime.now().astimezone().replace(month=month, day=day, hour=0, minute=0, second=0, microsecond=0)
@@ -242,8 +242,8 @@ class Participant():
             else:
                 end_hr = int(end_time_string[:2])
                 end_min = int(end_time_string[2:])
-                end_hr += timezone_offset
                 end_time = datetime.now().astimezone().replace(month=month, day=day, hour=end_hr, minute=end_min, second=0, microsecond=0)
+                end_time += timedelta(hours=timezone_offset)
                 if end_time < start_time:
                     end_time += timedelta(days=1)
 
