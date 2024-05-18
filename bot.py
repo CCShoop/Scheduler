@@ -271,13 +271,14 @@ def main():
             return ", ".join(names)
 
         # Get a participant from the event with a username
-        def get_participant(self, username: str):
+        def get_participant(self, username: str) -> Participant:
             for participant in self.participants:
                 if participant.member.name == username:
                     return participant
+            return None
 
         # Has shares participants with another event
-        def shares_participants(self, event):
+        def shares_participants(self, event) -> Participant:
             for self_participant in self.participants:
                 for other_participant in event.participants:
                     if self_participant.member == other_participant.member:
@@ -285,7 +286,7 @@ def main():
             return None
 
         # Get availability for participant from another event
-        def get_other_availability(self, participant: Participant):
+        def get_other_availability(self, participant: Participant) -> list:
             for other_event in client.events:
                 if other_event != self:
                     for other_participant in other_event.participants:
@@ -560,9 +561,9 @@ def main():
             super().__init__(*args, **kwargs)
             self.event = event
             date = datetime.now().astimezone().strftime('%m/%d/%Y')
-            self.timeslot1 = TextInput(label='Timeslot 1', placeholder='8-11, 1pm-3pm (i.e. Available 0800-1100, 1300-1500)')
-            self.timeslot2 = TextInput(label='Timeslot 2', placeholder='15:30-17 (i.e. Available 1530-1700)', required=False)
-            self.timeslot3 = TextInput(label='Timeslot 3', placeholder='-2030, 22- (i.e. Available now-2030, 2200-0000)', required=False)
+            self.timeslot1 = TextInput(label='Timeslot 1', placeholder='8-11, 1pm-3pm (i.e. Available 0800-1100, 1300-1500)', default='')
+            self.timeslot2 = TextInput(label='Timeslot 2', placeholder='15:30-17 (i.e. Available 1530-1700)', default='', required=False)
+            self.timeslot3 = TextInput(label='Timeslot 3', placeholder='-2030, 22- (i.e. Available now-2030, 2200-0000)', default='', required=False)
             self.date = TextInput(label='Date', placeholder='MM/DD/YYYY', default=date)
             self.timezone = TextInput(label='Timezone', placeholder='ET|EST|EDT|CT|CST|CDT|MT|MST|MDT|PT|PST|PDT', default='ET')
             self.add_item(self.timeslot1)
@@ -579,7 +580,7 @@ def main():
                 participant.set_specific_availability(avail_string, self.date.value)
                 participant.answered = True
                 response = participant.get_availability_string()
-                logger.info(f'{self.event.name}: Received availability from {interaction.user.name}:\n{response}')
+                logger.info(f'{self.event.name}: Received availability from {participant.member.name}:\n{response}')
                 await interaction.response.send_message(response, ephemeral=True)
                 self.event.changed = True
                 await self.event.update_message()
@@ -628,14 +629,14 @@ def main():
                 self.event.ready_to_create = False
                 participant = self.event.get_participant(interaction.user.name)
                 if not participant.full_availability_flag:
-                    logger.info(f'{self.event.name}: {interaction.user.name} selected full availability')
+                    logger.info(f'{self.event.name}: {participant.member.name} selected full availability')
                     participant.set_full_availability()
                     participant.full_availability_flag = True
                     participant.answered = True
                     response = participant.get_availability_string()
                     await interaction.response.send_message(response, ephemeral=True)
                 else:
-                    logger.info(f'{self.event.name}: {interaction.user.name} deselected full availability')
+                    logger.info(f'{self.event.name}: {participant.member.name} deselected full availability')
                     participant.set_no_availability()
                     participant.full_availability_flag = False
                     if participant.subscribed:
@@ -793,7 +794,7 @@ def main():
         def add_reschedule_button(self):
             async def reschedule_button_callback(interaction: Interaction):
                 logger.info(f'{self.event.name}: {interaction.user} rescheduled by button press')
-                await interaction.response.defer()
+                await interaction.response.defer(ephemeral=True)
                 participants = self.event.participants
                 if interaction.user.name not in [participant.member.name for participant in participants]:
                     member = self.guild.get_member(interaction.user.id)
@@ -833,7 +834,7 @@ def main():
                         await self.event.scheduled_event.delete(reason=f'Cancel button pressed by {interaction.user.name}.')
                 except Exception as e:
                     logger.exception(f'Error in cancel button callback: {e}')
-                logger.info(f'{self.event.name}: {interaction.user} cancelled by button press')
+                logger.info(f'{self.event.name}: {interaction.user} cancelled by button press and removed from memory')
                 client.events.remove(self.event)
                 self.event = None
                 self.cancel_button.style = ButtonStyle.gray
@@ -859,44 +860,54 @@ def main():
                 break
 
         # Add users meeting role criteria
-        if roles:
+        if roles and roles != '':
+            logger.info(f'Getting participants based on roles')
             try:
                 roles = roles.split(',')
                 roles = [role.strip() for role in roles]
                 roles = [utils.find(lambda r: r.name.lower() == role.lower(), interaction.guild.roles) for role in roles]
+                logger.debug(f'Roles: {roles}')
             except Exception as e:
                 raise Exception(f'Failed to parse role(s): {e}')
             for member in interaction.channel.members:
                 if member.bot or member.name == interaction.user.name:
                     continue
+                logger.debug(f'Member roles: {member.roles}')
                 found_role = False
                 for role in roles:
                     if role in member.roles:
                         found_role = True
                         break
                 if include_exclude == INCLUDE and found_role:
+                    logger.debug(f'Added member {member.name}')
                     participants.append(Participant(member))
                 elif include_exclude == EXCLUDE and not found_role:
+                    logger.debug(f'Added member {member.name}')
                     participants.append(Participant(member))
             return participants
 
         # Add users meeting username criteria
-        if usernames:
+        if usernames and usernames != '':
+            logger.info(f'Getting participants based on usernames/ids')
             try:
                 usernames = usernames.split(',')
                 usernames = [username.strip() for username in usernames]
+                logger.debug(f'Usernames: {usernames}')
             except:
                 raise Exception(f'Failed to parse username(s): {e}')
             for member in interaction.channel.members:
                 if member.bot or member.name == interaction.user.name:
                     continue
-                if include_exclude == INCLUDE and (member.name in usernames or member.id in usernames):
+                if include_exclude == INCLUDE and (member.name in usernames or str(member.id) in usernames):
+                    logger.debug(f'Added member {member.name}')
                     participants.append(Participant(member))
-                elif include_exclude == EXCLUDE and member.name not in usernames and member.id not in usernames:
+                elif include_exclude == EXCLUDE and member.name not in usernames and str(member.id) not in usernames:
+                    logger.debug(f'Added member {member.name}')
                     participants.append(Participant(member))
             return participants
 
         # Add all users in the channel
+        logger.info(f'Getting all participants in {interaction.channel.name}')
         for member in interaction.channel.members:
             if member.bot or member.name == interaction.user.name:
                 continue
@@ -1029,43 +1040,10 @@ def main():
 
         # Request availability and make participant response tracker message
         try:
-            await interaction.response.defer()
             await event.request_availability(interaction)
         except Exception as e:
             logger.exception(f'Error sending responded message or requesting availability: {e}')
         persist.write(client.get_events_dict())
-
-    @client.tree.command(name='bind', description='Bind a text channel to an existing event.')
-    @app_commands.describe(event_name='Name of the vent to set this text channel for.')
-    async def bind_command(interaction: Interaction, event_name: str):
-        logger.info(f'{interaction.user.name} used bind command')
-        event_name = event_name.lower()
-        for event in client.events:
-            if event_name == event.name.lower():
-                if event.text_channel:
-                    await interaction.response.send_message(f'Event {event.name} already has a text channel: <#{event.text_channel.id}>', ephemeral=True)
-                    return
-                # Bind the text channel to the interaction channel
-                try:
-                    event.text_channel = interaction.channel
-                except Exception as e:
-                    logger.exception(f'Error binding channel: {e}')
-                    try:
-                        await interaction.response.send_message(f'Failed to bind channel: {e}', ephemeral=True)
-                    except:
-                        logger.exception(f'Failed to respond to bind command: {e}')
-                    return
-                # Respond to interaction
-                try:
-                    await interaction.response.send_message(f'Bound this text channel to {event.name}.', ephemeral=True)
-                    await interaction.channel.send(f'{event.name} is scheduled to start at {event.get_start_time_string()}.\n', view=EventButtons(event))
-                except Exception as e:
-                    logger.exception(f'Error responding to bind command: {e}')
-                return
-        try:
-            await interaction.response.send_message(f'Could not find event {event_name}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}', ephemeral=True)
-        except Exception as e:
-            logger.exception(f'Error responding to bind command: {e}')
 
     @tasks.loop(seconds=30)
     async def update():
@@ -1080,9 +1058,7 @@ def main():
                         if participant.unavailable:
                             unavailable_names += f'{participant.member.name} '
                             unavailable_counter += 1
-                    notification_message = f'{event.get_names_string(subscribed_only=True, mention=True)}\nScheduling for **{event.name}** has been cancelled.\n'
-                    notification_message += unavailable_names
-                    notification_message += 'cancelled the event.'
+                    notification_message = f'{event.get_names_string(subscribed_only=True, mention=True)}\nScheduling for **{event.name}** has been cancelled by {unavailable_names}.\n'
                     if event.text_channel:
                         await event.text_channel.send(notification_message)
                     else:
@@ -1183,7 +1159,7 @@ def main():
                     # Calculate time until start
                     try:
                         time_until_start: timedelta = event.start_time - datetime.now().astimezone()
-                        event.mins_until_start = int(round(time_until_start.seconds/60))
+                        event.mins_until_start = int(time_until_start.total_seconds()//60) + 1
                         event.event_buttons_msg_content_pt1 = f'{event.get_names_string(subscribed_only=True, mention=True)}'
                         event.event_buttons_msg_content_pt1 += f'\n**Event name:** {event.name}'
                         event.event_buttons_msg_content_pt1 += f'\n**Scheduled:** {event.start_time.strftime("%m/%d")} at {event.start_time.strftime("%H:%M")} ET'
