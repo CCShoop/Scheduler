@@ -238,9 +238,11 @@ def main():
 
             for participant in self.participants:
                 if mention:
-                    name_string = f"{participant.member.mention} "
+                    name_string = f'{participant.member.mention} '
+                elif participant.member.nick:
+                    name_string = f'{participant.member.nick}'
                 else:
-                    name_string = f"{participant.member.name}"
+                    name_string = f'{participant.member.name}'
 
                 # No conditions are true
                 if (not subscribed_only) and (not unsubscribed_only) and (not unanswered_only):
@@ -1057,20 +1059,21 @@ def main():
             if event.unavailable:
                 try:
                     await event.avail_buttons.disable_all_buttons()
-                    unavailable_names = ''
-                    unavailable_counter = 0
+                    unavailable_names = []
                     for participant in event.participants:
                         if participant.unavailable:
-                            unavailable_names += f'{participant.member.name} '
-                            unavailable_counter += 1
-                    notification_message = f'{event.get_names_string(subscribed_only=True, mention=True)}\nScheduling for **{event.name}** has been cancelled by {unavailable_names}.\n'
+                            if participant.member.nick:
+                                unavailable_names.append(f'{participant.member.nick} ')
+                            else:
+                                unavailable_names.append(f'{participant.member.name} ')
+                    notification_message = f'{event.get_names_string(subscribed_only=True, mention=True)}\nScheduling for **{event.name}** has been cancelled by {", ".join(unavailable_names)}.\n'
                     if event.text_channel:
                         await event.text_channel.send(notification_message)
                     else:
                         for participant in event.participants:
                             async with participant.msg_lock:
                                 participant.member.send(notification_message)
-                    logger.info(f'{event.name}: Participants lacked common availability, removed event from memory')
+                    logger.info(f'{event.name}: Participant(s) lacked (common) availability, removed event from memory')
                     client.events.remove(event)
                     del event
                 except Exception as e:
@@ -1151,8 +1154,9 @@ def main():
                 # Create the event if it is ready to create
                 else:
                     if event.start_time <= datetime.now().astimezone():
-                        logger.warning(f'Tried to create event in the past! Moving to 5 minutes from now.')
-                        event.start_time = datetime.now().astimezone().replace(minute=0, microsecond=0) + timedelta(minutes=5)
+                        logger.warning(f'{event.name}: Tried to create event in the past at {event.start_time.strftime("%A, %m/%d %H:%M")}!')
+                        event.start_time = datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=5)
+                        logger.warning(f'{event.name}: Moved start time to 5 minutes from now: {event.start_time.strftime("%A, %m/%d %H:%M")}.')
                     try:
                         await event.make_scheduled_event()
                     except Exception as e:
@@ -1161,7 +1165,7 @@ def main():
                     # List subscribed people and list unsubscribed people
                     unsubbed = event.get_names_string(unsubscribed_only=True)
                     if unsubbed:
-                        unsubbed = f'\nUnsubscribed: {unsubbed}'
+                        unsubbed = f'**Unsubscribed:** {unsubbed}'
 
                     # Calculate time until start
                     try:
@@ -1171,7 +1175,7 @@ def main():
                         event.event_buttons_msg_content_pt1 += f'\n**Event name:** {event.name}'
                         event.event_buttons_msg_content_pt1 += f'\n**Scheduled:** {event.start_time.strftime("%m/%d")} at {event.start_time.strftime("%H:%M")} ET'
                         event.event_buttons_msg_content_pt2 = f'\n**Starts in:**'
-                        event.event_buttons_msg_content_pt4 += f'\n{unsubbed}'
+                        event.event_buttons_msg_content_pt4 = f'\n{unsubbed}'
                         response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {mins_to_hrs_mins_string(event.mins_until_start)} {event.event_buttons_msg_content_pt4}'
                         if event.responded_message:
                             await event.responded_message.delete()
