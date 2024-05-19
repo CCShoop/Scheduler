@@ -260,9 +260,26 @@ class Participant:
                 if end_time < start_time:
                     end_time += timedelta(days=1)
 
-            # TODO: check if timeblock is overlapping/touching another
-
             self.availability.append(TimeBlock(start_time, end_time))
+            self.clean_availability()
+
+    def clean_availability(self):
+        # Sort the availability by start time (and by end time if start times are the same)
+        self.availability.sort(key=lambda x: (x.start_time, x.end_time))
+
+        merged_availability = []
+        for timeblock in self.availability:
+            if not merged_availability:
+                merged_availability.append(timeblock)
+            else:
+                last = merged_availability[-1]
+                # overlapping or touching timeblocks
+                if timeblock.start_time <= last.end_time:
+                    last.end_time = max(last.end_time, timeblock.end_time)
+                else:
+                    merged_availability.append(timeblock)
+
+        self.availability = merged_availability
 
     @classmethod
     def from_dict(cls, guild: Guild, data: dict):

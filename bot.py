@@ -340,7 +340,7 @@ def main():
             if not self.responded_message:
                 try:
                     mentions = self.get_names_string(unanswered_only=True, mention=True)
-                    self.responded_message = await self.text_channel.send(f'{mentions}')
+                    self.responded_message = await self.text_channel.send(content=f'Waiting for a response from:\n{mentions}')
                 except Exception as e:
                     logger.exception(f'{self.name}: Error sending responded message: {e}')
                 return
