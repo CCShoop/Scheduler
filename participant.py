@@ -23,15 +23,22 @@ class TimeBlock():
             'end_time': self.end_time.isoformat()
         }
 
-class Participant():
-    def __init__(self, member: Member, answered = False, subscribed = True, unavailable = False, full_availability_flag = False, availability = []):
+class Participant:
+    def __init__(self,
+        member: Member,
+        availability: list = None,
+        answered: bool = False,
+        subscribed: bool = True,
+        unavailable: bool = False,
+        full_availability_flag: bool = False
+    ):
         self.member = member
+        self.availability = availability if availability else []
         self.answered = answered
         self.subscribed = subscribed
         self.unavailable = unavailable
         self.full_availability_flag = full_availability_flag
         self.msg_lock = Lock()
-        self.availability = availability
 
     def is_available_at(self, time: datetime, duration: timedelta):
         for timeblock in self.availability:
@@ -47,11 +54,17 @@ class Participant():
 
     def set_full_availability(self, month=datetime.now().astimezone().month, day=datetime.now().astimezone().day, year=datetime.now().astimezone().year):
         try:
+            # Remove all timeblocks that start today
+            for timeblock in self.availability.copy():
+                if timeblock.start_time.date == datetime.now().astimezone().date and timeblock.end_time.date == datetime.now().astimezone().date:
+                    self.availability.remove(timeblock)
+                elif timeblock.start_time.date == datetime.now().astimezone().date and timeblock.end_time.date != datetime.now().astimezone().date:
+                    timeblock.start_time += timedelta(days=1)
+                    timeblock.start_time = timeblock.start_time.replace(hour=0, minute=0, second=0, microsecond=0)
             start_time = datetime.now().astimezone().replace(month=month, day=day, year=year, second=0, microsecond=0)
             end_time = datetime.now().astimezone().replace(month=month, day=day, year=year, hour=0, minute=0, second=0, microsecond=0)
             end_time += timedelta(days=1)
-            avail_block = TimeBlock(start_time, end_time)
-            self.availability.append(avail_block)
+            self.availability.append(TimeBlock(start_time, end_time))
             self.answered = True
         except Exception as e:
             raise e
@@ -247,9 +260,9 @@ class Participant():
                 if end_time < start_time:
                     end_time += timedelta(days=1)
 
-            avail_block = TimeBlock(start_time, end_time)
-            self.availability.append(avail_block)
-        self.answered = True
+            # TODO: check if timeblock is overlapping/touching another
+
+            self.availability.append(TimeBlock(start_time, end_time))
 
     @classmethod
     def from_dict(cls, guild: Guild, data: dict):

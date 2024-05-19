@@ -577,13 +577,15 @@ def main():
             participant = self.event.get_participant(interaction.user.name)
             avail_string = f'{self.timeslot1.value}, {self.timeslot2.value}, {self.timeslot3.value} {self.timezone.value}'
             try:
+                logger.info(f'{self.event.name}: Received availability from {participant.member.name}')
                 participant.set_specific_availability(avail_string, self.date.value)
                 participant.answered = True
                 response = participant.get_availability_string()
-                logger.info(f'{self.event.name}: Received availability from {participant.member.name}:\n{response}')
                 await interaction.response.send_message(response, ephemeral=True)
                 self.event.changed = True
                 await self.event.update_message()
+                for timeblock in participant.availability:
+                    logger.info(f'{timeblock.start_time.strftime("%A, %m/%d %H:%M")} - {timeblock.end_time.strftime("%A, %m/%d %H:%M")}')
             except Exception as e:
                 try:
                     await interaction.response.send_message(f'Error setting your availability: {e}')
@@ -717,12 +719,13 @@ def main():
             self.add_item(button)
             return button
 
-        def disable_all_buttons(self):
+        async def disable_all_buttons(self):
             self.respond_button.disabled = True
             self.full_button.disabled = True
             self.reuse_button.disabled = True
             self.unsub_button.disabled = True
             self.cancel_button.disabled = True
+            await self.event.interaction_message.edit(view=self)
 
     class EventButtons(View):
         def __init__(self, event: Event):
@@ -777,6 +780,7 @@ def main():
                     await self.event.event_buttons_message.edit(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt3} {self.event.event_buttons_msg_content_pt4}', view=self.event.event_buttons)
                 except Exception as e:
                     logger.exception(f'Error ending event or manipulating event control message: {e}')
+                logger.info(f'{self.event.name}: removed from memory')
                 client.events.remove(self.event)
                 self.event = None
                 self.end_button.style = ButtonStyle.blurple
@@ -795,10 +799,9 @@ def main():
             async def reschedule_button_callback(interaction: Interaction):
                 logger.info(f'{self.event.name}: {interaction.user} rescheduled by button press')
                 await interaction.response.defer(ephemeral=True)
-                participants = self.event.participants
-                if interaction.user.name not in [participant.member.name for participant in participants]:
+                if interaction.user.id not in [participant.member.id for participant in self.event.participants]:
                     member = self.guild.get_member(interaction.user.id)
-                    participant = Participant(member)
+                    participant = Participant(member=member, availability=[])
                     self.event.participants.append(participant)
                 new_event = Event(self.event.name, self.event.voice_channel, self.event.participants, self.event.guild, interaction.channel, self.event.image_url, self.event.duration)
                 try:
@@ -856,12 +859,11 @@ def main():
         # Add the scheduler/creator as a participant
         for member in interaction.channel.members:
             if member.name == interaction.user.name:
-                participants.append(Participant(member))
+                participants.append(Participant(member=member, availability=[]))
                 break
 
         # Add users meeting role criteria
         if roles and roles != '':
-            logger.info(f'Getting participants based on roles')
             try:
                 roles = roles.split(',')
                 roles = [role.strip() for role in roles]
@@ -880,15 +882,14 @@ def main():
                         break
                 if include_exclude == INCLUDE and found_role:
                     logger.debug(f'Added member {member.name}')
-                    participants.append(Participant(member))
+                    participants.append(Participant(member=member, availability=[]))
                 elif include_exclude == EXCLUDE and not found_role:
                     logger.debug(f'Added member {member.name}')
-                    participants.append(Participant(member))
+                    participants.append(Participant(member=member, availability=[]))
             return participants
 
         # Add users meeting username criteria
         if usernames and usernames != '':
-            logger.info(f'Getting participants based on usernames/ids')
             try:
                 usernames = usernames.split(',')
                 usernames = [username.strip() for username in usernames]
@@ -900,18 +901,17 @@ def main():
                     continue
                 if include_exclude == INCLUDE and (member.name in usernames or str(member.id) in usernames):
                     logger.debug(f'Added member {member.name}')
-                    participants.append(Participant(member))
+                    participants.append(Participant(member=member, availability=[]))
                 elif include_exclude == EXCLUDE and member.name not in usernames and str(member.id) not in usernames:
                     logger.debug(f'Added member {member.name}')
-                    participants.append(Participant(member))
+                    participants.append(Participant(member=member, availability=[]))
             return participants
 
         # Add all users in the channel
-        logger.info(f'Getting all participants in {interaction.channel.name}')
         for member in interaction.channel.members:
             if member.bot or member.name == interaction.user.name:
                 continue
-            participants.append(Participant(member))
+            participants.append(Participant(member=member, availability=[]))
         return participants
 
 
@@ -1048,10 +1048,15 @@ def main():
     @tasks.loop(seconds=30)
     async def update():
         for event in client.events.copy():
+            # Reset to ensure at least a minute to finish answering
+            if event.changed:
+                event.changed = False
+                continue
+
             # Remove events if a participant is unavailable
             if event.unavailable:
                 try:
-                    event.avail_buttons.disable_all_buttons()
+                    await event.avail_buttons.disable_all_buttons()
                     unavailable_names = ''
                     unavailable_counter = 0
                     for participant in event.participants:
@@ -1114,13 +1119,12 @@ def main():
                     logger.exception(f'{event.name}: Error sending 5 minute warning: {e}')
                 continue
 
-            # Reset to ensure at least a minute to finish answering
-            if event.changed or not event.has_everyone_answered():
-                event.changed = False
+            # Skip the rest of update() if we are waiting for answers
+            if not event.has_everyone_answered():
                 continue
 
             # Disable availability message buttons
-            event.avail_buttons.disable_all_buttons()
+            await event.avail_buttons.disable_all_buttons()
 
             if not event.created:
                 # Compare availabilities
@@ -1146,6 +1150,9 @@ def main():
                     continue
                 # Create the event if it is ready to create
                 else:
+                    if event.start_time <= datetime.now().astimezone():
+                        logger.warning(f'Tried to create event in the past! Moving to 5 minutes from now.')
+                        event.start_time = datetime.now().astimezone().replace(minute=0, microsecond=0) + timedelta(minutes=5)
                     try:
                         await event.make_scheduled_event()
                     except Exception as e:
