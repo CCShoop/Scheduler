@@ -721,14 +721,6 @@ def main():
             self.add_item(button)
             return button
 
-        async def disable_all_buttons(self):
-            self.respond_button.disabled = True
-            self.full_button.disabled = True
-            self.reuse_button.disabled = True
-            self.unsub_button.disabled = True
-            self.cancel_button.disabled = True
-            await self.event.interaction_message.edit(view=self)
-
     class EventButtons(View):
         def __init__(self, event: Event):
             super().__init__(timeout=None)
@@ -1058,7 +1050,7 @@ def main():
             # Remove events if a participant is unavailable
             if event.unavailable:
                 try:
-                    await event.avail_buttons.disable_all_buttons()
+                    await event.interaction_message.delete()
                     unavailable_names = []
                     for participant in event.participants:
                         if participant.unavailable:
@@ -1126,8 +1118,8 @@ def main():
             if not event.has_everyone_answered():
                 continue
 
-            # Disable availability message buttons
-            await event.avail_buttons.disable_all_buttons()
+            # Delete availability message
+            await event.interaction_message.delete()
 
             if not event.created:
                 # Compare availabilities
