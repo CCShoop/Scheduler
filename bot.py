@@ -1173,7 +1173,8 @@ def main():
                         event.event_buttons_msg_content_pt2 = f'\n**Starts in:**'
                         event.event_buttons_msg_content_pt4 += f'\n{unsubbed}'
                         response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {mins_to_hrs_mins_string(event.mins_until_start)} {event.event_buttons_msg_content_pt4}'
-                        await event.responded_message.delete()
+                        if event.responded_message:
+                            await event.responded_message.delete()
                         event.event_buttons = EventButtons(event)
                         event.event_buttons_message = await event.text_channel.send(content=response, view=event.event_buttons)
                     except Exception as e:
