@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from calendar import isleap
 
 class TimeBlock():
-    def __init__(self, start_time: datetime, end_time: datetime):
+    def __init__(self, start_time: datetime, end_time: datetime) -> None:
         self.start_time: datetime = start_time
         self.end_time: datetime = end_time
         self.duration: timedelta = end_time - start_time
@@ -17,11 +17,14 @@ class TimeBlock():
             end_time = datetime.fromisoformat(data["end_time"])
         )
 
-    def to_dict(self):
+    def to_dict(self) -> dict:
         return {
             'start_time': self.start_time.isoformat(),
             'end_time': self.end_time.isoformat()
         }
+
+    def __repr__(self):
+        return f'{self.start_time.strftime("%A, %m/%d %H:%M")} - {self.end_time.strftime("%A, %m/%d %H:%M")}'
 
 class Participant:
     def __init__(self,
@@ -31,7 +34,7 @@ class Participant:
         subscribed: bool = True,
         unavailable: bool = False,
         full_availability_flag: bool = False
-    ):
+    ) -> None:
         self.member = member
         self.availability = availability if availability else []
         self.answered = answered
@@ -40,19 +43,19 @@ class Participant:
         self.full_availability_flag = full_availability_flag
         self.msg_lock = Lock()
 
-    def is_available_at(self, time: datetime, duration: timedelta):
+    def is_available_at(self, time: datetime, duration: timedelta) -> bool:
         for timeblock in self.availability:
-            if (time >= timeblock.start_time) and ((time + duration) <= timeblock.end_time):
+            if (timeblock.start_time <= time) and ((time + duration) <= timeblock.end_time):
                 return True
         return False
 
-    def get_availability_string(self):
-        response = '**__Availability Received!__**\n'
+    def get_availability_string(self) -> str:
+        response = ''
         for timeblock in self.availability:
-            response += f'{timeblock.start_time.strftime("%A, %m/%d: %H%M")} - {timeblock.end_time.strftime("%A, %m/%d: %H%M")}\n'
+            response += f'{timeblock}\n'
         return response
 
-    def set_full_availability(self, month=datetime.now().astimezone().month, day=datetime.now().astimezone().day, year=datetime.now().astimezone().year):
+    def set_full_availability(self, month=datetime.now().astimezone().month, day=datetime.now().astimezone().day, year=datetime.now().astimezone().year) -> None:
         try:
             # Remove all timeblocks that start today
             for timeblock in self.availability.copy():
@@ -69,12 +72,12 @@ class Participant:
         except Exception as e:
             raise e
 
-    def set_no_availability(self, month=datetime.now().astimezone().month, day=datetime.now().astimezone().day, year=datetime.now().astimezone().year):
+    def set_no_availability(self, month=datetime.now().astimezone().month, day=datetime.now().astimezone().day, year=datetime.now().astimezone().year) -> None:
         for idx, timeblock in enumerate(self.availability.copy()):
             if timeblock.start_time.day == day:
                 self.availability.remove(timeblock)
 
-    def set_specific_availability(self, avail_string: str, date_string: str):
+    def set_specific_availability(self, avail_string: str, date_string: str) -> None:
         # Blank input to view current availability
         if avail_string == '':
             return
@@ -263,7 +266,7 @@ class Participant:
             self.availability.append(TimeBlock(start_time, end_time))
             self.clean_availability()
 
-    def clean_availability(self):
+    def clean_availability(self) -> None:
         # Sort the availability by start time (and by end time if start times are the same)
         self.availability.sort(key=lambda x: (x.start_time, x.end_time))
 
@@ -281,6 +284,23 @@ class Participant:
 
         self.availability = merged_availability
 
+    def remove_availability_for_event(self, event) -> None:
+        event_end_time = event.start_time + event.duration
+        new_availability = []
+        for timeblock in self.availability:
+            # Timeblock does not overlap with event
+            if timeblock.end_time <= event.start_time or event_end_time <= timeblock.start_time:
+                new_availability.append(timeblock)
+            # Timeblock overlaps with event
+            else:
+                # Timeblock starts before event
+                if timeblock.start_time < event.start_time:
+                    new_availability.append(TimeBlock(timeblock.start_time, event.start_time))
+                # Timeblock ends after event
+                if event_end_time < timeblock.end_time:
+                    new_availability.append(TimeBlock(event_end_time, timeblock.end_time))
+        self.availability = new_availability
+
     @classmethod
     def from_dict(cls, guild: Guild, data: dict):
         return cls(
@@ -292,7 +312,7 @@ class Participant:
             availability = [TimeBlock.from_dict(timeblock_data) for timeblock_data in data['availability']]
         )
 
-    def to_dict(self):
+    def to_dict(self) -> dict:
         return {
             'member_id': self.member.id,
             'answered': self.answered,
