@@ -84,12 +84,10 @@ def main():
                         try:
                             event = await Event.from_dict(event_data)
                             if not event:
-                                raise Exception(f'Event failed to be created')
-                            try:
+                                raise Exception(f'Failed to create event object')
+                            if event.interaction_message:
                                 event.avail_buttons = AvailabilityButtons(event)
                                 await event.interaction_message.edit(view=event.avail_buttons)
-                            except:
-                                raise Exception(f'Event does not have an interaction message')
                             if event.event_buttons_message:
                                 event.event_buttons = EventButtons(event)
                                 await event.event_buttons_message.edit(view=event.event_buttons)
@@ -1083,6 +1081,7 @@ def main():
 
     @tasks.loop(seconds=30)
     async def update():
+        # Go through created events and remove availability during the event time of all shared participants
         for event in client.events:
             if event.created:
                 for other_event in client.events:
@@ -1101,6 +1100,7 @@ def main():
             if event.unavailable:
                 try:
                     await event.interaction_message.delete()
+                    await event.responded_message.delete()
                     unavailable_names = []
                     for participant in event.participants:
                         if participant.unavailable:
@@ -1167,12 +1167,15 @@ def main():
                     logger.exception(f'{event.name}: Error sending 5 minute warning: {e}')
                 continue
 
-            # Skip the rest of update() if we are waiting for answers
+            # Skip the rest of update() for this event if we are waiting for answers
             if not event.has_everyone_answered():
                 continue
 
             # Delete availability message
-            await event.interaction_message.delete()
+            try:
+                await event.interaction_message.delete()
+            except Exception as e:
+                logger.error(f'{event.name}: Error deleting interaction message: {e}')
 
             if not event.created:
                 # Compare availabilities
