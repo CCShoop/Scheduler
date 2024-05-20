@@ -297,8 +297,8 @@ def main():
             for other_event in client.events:
                 if other_event != self:
                     for other_participant in other_event.participants:
-                        if other_participant.member.name == participant.member.name:
-                            return participant.availability
+                        if other_participant.member.id == participant.member.id:
+                            return other_participant.availability
             return None
 
         # Get duration value
