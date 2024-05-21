@@ -10,8 +10,8 @@ from asyncio import Lock
 from typing import Literal
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
-from discord import app_commands, Interaction, Intents, Client, ButtonStyle, EventStatus, EntityType, TextChannel, VoiceChannel, Message, ScheduledEvent, Guild, PrivacyLevel, User, utils, File, NotFound, HTTPException
-from discord.ui import View, Button, Modal, TextInput
+from discord import app_commands, Interaction, Intents, Client, ButtonStyle, EventStatus, EntityType, TextChannel, VoiceChannel, Message, SelectOption, ScheduledEvent, Guild, PrivacyLevel, User, utils, File, NotFound, HTTPException
+from discord.ui import View, Button, Modal, TextInput, Select
 from discord.ext import tasks
 
 from persistence import Persistence
@@ -832,7 +832,7 @@ def main():
                 await interaction.response.defer(ephemeral=True)
                 if interaction.user.id not in [participant.member.id for participant in self.event.participants]:
                     member = self.guild.get_member(interaction.user.id)
-                    participant = Participant(member=member, availability=[])
+                    participant = Participant(member=member)
                     self.event.participants.append(participant)
                 new_event = Event(self.event.name, self.event.voice_channel, self.event.participants, self.event.guild, interaction.channel, self.event.image_url, self.event.duration)
                 try:
@@ -887,13 +887,48 @@ def main():
             self.cancel_button.callback = cancel_button_callback
             self.add_item(self.cancel_button)
 
+    class ExistingGuildEventsSelect(Select):
+        def __init__(self, guild: Guild):
+            self.guild = guild
+            options = [
+                SelectOption(label=guild_event.name, description=guild_event.description, value=str(guild_event.id))
+                for guild_event in self.guild.scheduled_events
+            ]
+            super().__init__(placeholder='Guild Event', options=options)
+
+        async def callback(self, interaction: Interaction):
+            selected_guild_event_id = int(self.values[0])
+            selected_guild_event: ScheduledEvent = await self.guild.get_scheduled_event(selected_guild_event_id)
+            if selected_guild_event:
+                await interaction.response.defer(ephemeral=True)
+                participants = get_participants_from_interaction(interaction)
+                event = Event(name=selected_guild_event.name, voice_channel=selected_guild_event.location, participants=participants, guild=self.guild, text_channel=interaction.channel, start_time=selected_guild_event.start_time)
+                event.created = True
+                time_until_start: timedelta = event.start_time - datetime.now().astimezone()
+                event.mins_until_start = int(time_until_start.total_seconds()//60) + 1
+                response = event.get_names_string(mention=True)
+                response += f'\n**Event name:** {event.name}'
+                response += f'\n**Scheduled:** {event.get_start_time_string()}'
+                response += f'\n**Starts in:** {mins_to_hrs_mins_string(event.mins_until_start)}'
+                event.event_buttons = EventButtons(event)
+                event.event_buttons_message = await event.text_channel.send(content=response, view=event.event_buttons)
+                await interaction.followup.send(f'Success!', ephemeral=True)
+            else:
+                await interaction.response.send_message(f'Error getting guild scheduled event.')
+                logger.exception(f'Error getting guild scheduled event selected by {interaction.user.name}')
+
+    class ExistingGuildEventsSelectView(View):
+        def __init__(self, guild: Guild):
+            super().__init__()
+            self.add_item(ExistingGuildEventsSelect(guild))
+
     # Put participants into a list
-    def get_participants_from_interaction(interaction: Interaction, include_exclude: INCLUDE_EXCLUDE, usernames: str, roles: str) -> list:
+    def get_participants_from_interaction(interaction: Interaction, include_exclude: INCLUDE_EXCLUDE = None, usernames: str = None, roles: str = None) -> list:
         participants = []
         # Add the scheduler/creator as a participant
         for member in interaction.channel.members:
             if member.name == interaction.user.name:
-                participants.append(Participant(member=member, availability=[]))
+                participants.append(Participant(member=member))
                 break
 
         # Add users meeting role criteria
@@ -916,10 +951,10 @@ def main():
                         break
                 if include_exclude == INCLUDE and found_role:
                     logger.debug(f'Added member {member.name}')
-                    participants.append(Participant(member=member, availability=[]))
+                    participants.append(Participant(member=member))
                 elif include_exclude == EXCLUDE and not found_role:
                     logger.debug(f'Added member {member.name}')
-                    participants.append(Participant(member=member, availability=[]))
+                    participants.append(Participant(member=member))
             return participants
 
         # Add users meeting username criteria
@@ -935,17 +970,17 @@ def main():
                     continue
                 if include_exclude == INCLUDE and (member.name in usernames or str(member.id) in usernames):
                     logger.debug(f'Added member {member.name}')
-                    participants.append(Participant(member=member, availability=[]))
+                    participants.append(Participant(member=member))
                 elif include_exclude == EXCLUDE and member.name not in usernames and str(member.id) not in usernames:
                     logger.debug(f'Added member {member.name}')
-                    participants.append(Participant(member=member, availability=[]))
+                    participants.append(Participant(member=member))
             return participants
 
         # Add all users in the channel
         for member in interaction.channel.members:
             if member.bot or member.name == interaction.user.name:
                 continue
-            participants.append(Participant(member=member, availability=[]))
+            participants.append(Participant(member=member))
         return participants
 
 
@@ -1078,6 +1113,11 @@ def main():
         except Exception as e:
             logger.exception(f'Error sending responded message or requesting availability: {e}')
         persist.write(client.get_events_dict())
+
+    @client.tree.command(name='attach', description='Create an event message with control buttons for an existing guild event.')
+    async def attach_command(interaction: Interaction):
+        logger.info(f'Received attach command request from {interaction.user.name}')
+        await interaction.response.send_message(f'Select an existing guild event from the dropdown menu.', view=ExistingGuildEventsSelectView(), ephemeral=True)
 
     @tasks.loop(seconds=30)
     async def update():
