@@ -802,7 +802,6 @@ def main():
                     logger.error(f'Error ending event or manipulating event control message: {e}')
                 logger.info(f'{self.event.name}: removed from memory')
                 client.events.remove(self.event)
-                self.event = None
                 self.end_button.style = ButtonStyle.blurple
                 self.end_button.disabled = True
                 self.reschedule_button.disabled = True
@@ -822,6 +821,7 @@ def main():
                         await event.event_buttons_message.edit(view=event.event_buttons)
                     except Exception as e:
                         logger.error(f'{self.event.name}: Failed to re-enable start button for {event.name}: {e}')
+                self.event = None
                 persist.write(client.get_events_dict())
             self.end_button.callback = end_button_callback
             self.add_item(self.end_button)
