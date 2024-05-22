@@ -26,7 +26,7 @@ logger.setLevel(logging.DEBUG)
 formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] %(message)s')
 
 file_handler = logging.FileHandler('scheduler.log')
-file_handler.setLevel(logging.WARNING)
+file_handler.setLevel(logging.DEBUG)
 file_handler.setFormatter(formatter)
 
 console_handler = logging.StreamHandler()
@@ -111,10 +111,10 @@ def main():
         def __init__(self, 
             name: str,
             voice_channel: VoiceChannel,
-            participants: list,
             guild: Guild,
             text_channel: TextChannel,
             image_url: str = '',
+            participants: list = None,
             duration = timedelta(minutes=30),
             start_time: datetime = None,
             interaction_message = None,
@@ -161,21 +161,22 @@ def main():
             self.mins_until_start: int = 0
             self.unavailable = unavailable
 
-        async def intersect_time_blocks(self, timeblocks1: list, timeblocks2: list) -> list:
+        def intersect_time_blocks(self, timeblocks1: list, timeblocks2: list) -> list:
             intersected_time_blocks = []
             for block1 in timeblocks1:
                 for block2 in timeblocks2:
                     start_time = max(block1.start_time, block2.start_time)
                     end_time = min(block1.end_time, block2.end_time)
                     if start_time < end_time:
-                        logger.debug(f'Found intersected timeblocks:')
-                        logger.debug(f'{block1}')
-                        logger.debug(f'{block2}')
+                        logger.debug(f'\tFound intersected timeblocks:')
+                        logger.debug(f'\t\t{block1}')
+                        logger.debug(f'\t\t{block2}')
                         intersected_time_blocks.append(TimeBlock(start_time, end_time))
             return intersected_time_blocks
 
         # Compare availabilities of all subscribed participants
-        async def compare_availabilities(self) -> None:
+        def compare_availabilities(self) -> None:
+            logger.debug('Comparing availabilities')
             subbed_participants = []
             for participant in self.participants:
                 if participant.subscribed:
@@ -202,15 +203,54 @@ def main():
                 available_timeblocks.append(participant.availability)
             intersected_timeblocks = available_timeblocks[0]
             for timeblocks in available_timeblocks[1:]:
-                intersected_timeblocks = await self.intersect_time_blocks(intersected_timeblocks, timeblocks)
+                intersected_timeblocks = self.intersect_time_blocks(intersected_timeblocks, timeblocks)
+                logger.debug(f'\tIntersected timeblocks:')
+                for timeblock in intersected_timeblocks:
+                    logger.debug(f'\t\t{timeblock}')
 
             for timeblock in intersected_timeblocks:
-                logger.debug(f'Checking timeblock {timeblock}')
+                logger.debug(f'\tChecking timeblock: "{timeblock}"')
                 if timeblock.duration >= self.duration:
-                    logger.debug(f'\tDuration is sufficient, using for event start time')
+                    logger.debug(f'\t\tDuration is sufficient, using for event start time')
                     self.start_time = timeblock.start_time
                     self.ready_to_create = True
                     return
+
+        def check_availabilities(self) -> None:
+            logger.debug('Checking availabilities')
+            lacks_availability = True
+            subbed_participants = []
+            for participant in self.participants:
+                if participant.subscribed and participant.answered:
+                    subbed_participants.append(participant)
+
+            current_time = datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=5)
+
+            # Find common availability
+            available_timeblocks = []
+            for participant in subbed_participants:
+                available_timeblocks.append(participant.availability)
+            intersected_timeblocks = available_timeblocks[0]
+            for timeblocks in available_timeblocks[1:]:
+                intersected_timeblocks = self.intersect_time_blocks(intersected_timeblocks, timeblocks)
+                logger.debug(f'\tIntersected timeblocks:')
+                for timeblock in intersected_timeblocks:
+                    logger.debug(f'\t\t{timeblock}')
+
+            for timeblock in intersected_timeblocks:
+                logger.debug(f'\tChecking timeblock {timeblock}')
+                if timeblock.duration >= self.duration:
+                    logger.debug(f'\t\tDuration is sufficient, event is still possible')
+                    return
+            logger.debug(f'\tNo common availability found between currently responded participants, cancelling event')
+            self.unavailable = True
+
+        def number_of_responded(self) -> int:
+            responded = 0
+            for participant in self.participants:
+                if participant.subscribed and participant.answered:
+                    responded += 1
+            return responded
 
         async def make_scheduled_event(self) -> None:
             self.scheduled_event = await self.guild.create_scheduled_event(name=self.name, description='Bot-generated event', start_time=self.start_time, entity_type=self.entity_type, channel=self.voice_channel, privacy_level=self.privacy_level)
@@ -671,7 +711,7 @@ def main():
                     logger.info(f'{self.event.name}: \tNo existing availability found for {interaction.user.name}')
                     await interaction.response.send_message(f'No existing availability found.', ephemeral=True)
                     return
-                logger.info(f'{self.event.name}: Found existing availability for {interaction.user.name}')
+                logger.info(f'{self.event.name}: \tFound existing availability for {interaction.user.name}')
                 participant.availability = found_availability
                 for timeblock in participant.availability:
                     logger.debug(f'{timeblock}')
@@ -731,6 +771,14 @@ def main():
             button.callback = cancel_button_callback
             self.add_item(button)
             return button
+
+        async def disable_buttons(self):
+            self.respond_button.disabled = True
+            self.full_button.disabled = True
+            self.reuse_button.disabled = True
+            self.unsub_button.disabled = True
+            self.cancel_button.disabled = True
+            await self.event.interaction_message.edit(view=self.event.avail_buttons)
 
     class EventButtons(View):
         def __init__(self, event: Event) -> None:
@@ -834,7 +882,7 @@ def main():
                     member = self.guild.get_member(interaction.user.id)
                     participant = Participant(member=member)
                     self.event.participants.append(participant)
-                new_event = Event(self.event.name, self.event.voice_channel, self.event.participants, self.event.guild, interaction.channel, self.event.image_url, self.event.duration)
+                new_event = Event(name=self.event.name, voice_channel=self.event.voice_channel, participants=self.event.participants, guild=self.event.guild, text_channel=interaction.channel, image_url=self.event.image_url, duration=self.event.duration)
                 try:
                     await self.event.scheduled_event.delete(reason=f'Reschedule button pressed by {interaction.user.name}.')
                     self.event.event_buttons_msg_content_pt2 = f'\n**Rescheduled at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
@@ -1056,7 +1104,7 @@ def main():
 
         # Make event
         duration = timedelta(minutes=duration)
-        event = Event(event_name, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration, start_time_obj)
+        event = Event(name=event_name, voice_channel=voice_channel, participants=participants, guild=interaction.guild, text_channel=interaction.channel, image_url=image_url, duration=duration, start_time=start_time_obj)
         client.events.append(event)
         await event.make_scheduled_event()
         response =  f'{event.get_names_string(mention=True)}'
@@ -1099,7 +1147,7 @@ def main():
         # Make event object
         try:
             duration = timedelta(minutes=duration)
-            event = Event(event_name, voice_channel, participants, interaction.guild, interaction.channel, image_url, duration)
+            event = Event(name=event_name, voice_channel=voice_channel, participants=participants, guild=interaction.guild, text_channel=interaction.channel, image_url=image_url, duration=duration)
             mentions = '\nWaiting for a response from:\n' + event.get_names_string(subscribed_only=True, mention=True)
             client.events.append(event)
         except Exception as e:
@@ -1139,7 +1187,7 @@ def main():
             # Remove events if a participant is unavailable
             if event.unavailable:
                 try:
-                    await event.interaction_message.delete()
+                    await event.avail_buttons.disable_buttons()
                     await event.responded_message.delete()
                     unavailable_names = []
                     for participant in event.participants:
@@ -1148,7 +1196,10 @@ def main():
                                 unavailable_names.append(f'{participant.member.nick} ')
                             else:
                                 unavailable_names.append(f'{participant.member.name} ')
-                    notification_message = f'{event.get_names_string(subscribed_only=True, mention=True)}\nScheduling for **{event.name}** has been cancelled by {", ".join(unavailable_names)}.\n'
+                    if unavailable_names:
+                        notification_message = f'{event.get_names_string(subscribed_only=True, mention=True)}\nScheduling for **{event.name}** has been cancelled by {", ".join(unavailable_names)}.\n'
+                    else:
+                        notification_message = f'{event.get_names_string(subscribed_only=True, mention=True)}\nScheduling for **{event.name}** has been cancelled; participants lack common availability.\n'
                     if event.text_channel:
                         await event.text_channel.send(notification_message)
                     else:
@@ -1209,77 +1260,79 @@ def main():
 
             # Skip the rest of update() for this event if we are waiting for answers
             if not event.has_everyone_answered():
+                if event.number_of_responded() > 1:
+                    event.check_availabilities()
                 continue
 
-            # Delete availability message
+            if event.created:
+                continue
+
+            # Disable buttons on availability request message
+            await event.avail_buttons.disable_buttons()
+
+            # Compare availabilities
             try:
-                await event.interaction_message.delete()
+                event.compare_availabilities()
             except Exception as e:
-                logger.error(f'{event.name}: Error deleting interaction message: {e}')
+                logger.exception(f'Error comparing availabilities: {e}')
 
-            if not event.created:
-                # Compare availabilities
+            # Cancel the event if no common availability was found
+            if not event.ready_to_create:
                 try:
-                    await event.compare_availabilities()
+                    logger.info(f'{event.name}: No common availability found')
+                    if event.text_channel:
+                        await event.text_channel.send(f'No common availability was found. Scheduling for {event.name} has been cancelled.')
+                    else:
+                        for participant in event.participants:
+                            async with participant.msg_lock:
+                                await participant.member.send(f'No common availability was found. Scheduling for {event.name} has been cancelled.')
+                    client.events.remove(event)
+                    del event
                 except Exception as e:
-                    logger.exception(f'Error comparing availabilities: {e}')
-
-                # Cancel the event if no common availability was found
-                if not event.ready_to_create:
-                    try:
-                        logger.info(f'{event.name}: No common availability found')
-                        if event.text_channel:
-                            await event.text_channel.send(f'No common availability was found. Scheduling for {event.name} has been cancelled.')
-                        else:
-                            for participant in event.participants:
-                                async with participant.msg_lock:
-                                    await participant.member.send(f'No common availability was found. Scheduling for {event.name} has been cancelled.')
-                        client.events.remove(event)
-                        del event
-                    except Exception as e:
-                        logger.exception(f'{event.name}: Error messaging participants: {e}')
+                    logger.exception(f'{event.name}: Error messaging participants: {e}')
+                continue
+            # Create the event if it is ready to create
+            else:
+                # If start time is in the past, reset so it can recompare availabilities
+                if event.start_time <= datetime.now().astimezone():
+                    logger.warning(f'{event.name}: Tried to create event in the past! Resetting to recompare availabilities.')
+                    event.start_time = None
+                    event.ready_to_create = False
                     continue
-                # Create the event if it is ready to create
-                else:
-                    # If start time is in the past, reset so it can recompare availabilities
-                    if event.start_time <= datetime.now().astimezone():
-                        logger.warning(f'{event.name}: Tried to create event in the past! Resetting to recompare availabilities.')
-                        event.start_time = None
-                        event.ready_to_create = False
-                        continue
 
-                    # Create event
-                    try:
-                        await event.make_scheduled_event()
-                    except Exception as e:
-                        logger.exception(f'{event.name}: Error creating scheduled event: {e}')
-                        continue
+                # Create event
+                try:
+                    await event.make_scheduled_event()
+                except Exception as e:
+                    logger.exception(f'{event.name}: Error creating scheduled event: {e}')
+                    continue
 
-                    # Remove availability from these participants
-                    for participant in event.participants:
+                # Go through created events and remove availability during the event time of all shared participants
+                for other_event in client.events:
+                    for participant in other_event.participants:
                         participant.remove_availability_for_event(event)
 
-                    # List subscribed people and list unsubscribed people
-                    unsubbed = event.get_names_string(unsubscribed_only=True)
-                    if unsubbed:
-                        unsubbed = f'**Unsubscribed:** {unsubbed}'
+                # List subscribed people and list unsubscribed people
+                unsubbed = event.get_names_string(unsubscribed_only=True)
+                if unsubbed:
+                    unsubbed = f'**Unsubscribed:** {unsubbed}'
 
-                    # Calculate time until start
-                    try:
-                        time_until_start: timedelta = event.start_time - datetime.now().astimezone()
-                        event.mins_until_start = int(time_until_start.total_seconds()//60) + 1
-                        event.event_buttons_msg_content_pt1 = f'{event.get_names_string(subscribed_only=True, mention=True)}'
-                        event.event_buttons_msg_content_pt1 += f'\n**Event name:** {event.name}'
-                        event.event_buttons_msg_content_pt1 += f'\n**Scheduled:** {event.start_time.strftime("%m/%d")} at {event.start_time.strftime("%H:%M")} ET'
-                        event.event_buttons_msg_content_pt2 = f'\n**Starts in:**'
-                        event.event_buttons_msg_content_pt4 = f'\n{unsubbed}'
-                        response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {mins_to_hrs_mins_string(event.mins_until_start)} {event.event_buttons_msg_content_pt4}'
-                        if event.responded_message:
-                            await event.responded_message.delete()
-                        event.event_buttons = EventButtons(event)
-                        event.event_buttons_message = await event.text_channel.send(content=response, view=event.event_buttons)
-                    except Exception as e:
-                        logger.exception(f'{event.name}: Error sending event created notification with buttons: {e}')
+                # Calculate time until start
+                try:
+                    time_until_start: timedelta = event.start_time - datetime.now().astimezone()
+                    event.mins_until_start = int(time_until_start.total_seconds()//60) + 1
+                    event.event_buttons_msg_content_pt1 = f'{event.get_names_string(subscribed_only=True, mention=True)}'
+                    event.event_buttons_msg_content_pt1 += f'\n**Event name:** {event.name}'
+                    event.event_buttons_msg_content_pt1 += f'\n**Scheduled:** {event.start_time.strftime("%m/%d")} at {event.start_time.strftime("%H:%M")} ET'
+                    event.event_buttons_msg_content_pt2 = f'\n**Starts in:**'
+                    event.event_buttons_msg_content_pt4 = f'\n{unsubbed}'
+                    response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {mins_to_hrs_mins_string(event.mins_until_start)} {event.event_buttons_msg_content_pt4}'
+                    if event.responded_message:
+                        await event.responded_message.delete()
+                    event.event_buttons = EventButtons(event)
+                    event.event_buttons_message = await event.text_channel.send(content=response, view=event.event_buttons)
+                except Exception as e:
+                    logger.exception(f'{event.name}: Error sending event created notification with buttons: {e}')
         persist.write(client.get_events_dict())
 
     client.run(DISCORD_TOKEN)
