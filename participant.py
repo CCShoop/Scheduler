@@ -284,6 +284,15 @@ class Participant:
 
         self.availability = merged_availability
 
+    def remove_past_availability(self) -> None:
+        new_availability = []
+        for timeblock in self.availability:
+            if datetime.now().astimezone() < timeblock.end_time:
+                new_availability.append(timeblock)
+        self.availability = new_availability
+        if not self.availability:
+            self.answered = False
+
     def remove_availability_for_event(self, event) -> None:
         event_end_time = event.start_time + event.duration
         new_availability = []
