@@ -290,8 +290,6 @@ class Participant:
             if datetime.now().astimezone() < timeblock.end_time:
                 new_availability.append(timeblock)
         self.availability = new_availability
-        if not self.availability:
-            self.answered = False
 
     def remove_availability_for_event(self, event) -> None:
         event_end_time = event.start_time + event.duration
