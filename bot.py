@@ -1137,6 +1137,8 @@ def main():
             start_time_obj += timedelta(days=1)
 
         participants = get_participants_from_interaction(interaction, include_exclude, usernames, roles)
+        for participant in participants:
+            participant.answered = True
 
         # Make event
         duration = timedelta(minutes=duration)
@@ -1207,6 +1209,8 @@ def main():
         for event in client.events:
             for participant in event.participants:
                 participant.remove_past_availability()
+                if not event.created and not participant.availability:
+                    participant.answered = False
             if event.created:
                 for other_event in client.events:
                     if other_event == event:
@@ -1216,7 +1220,7 @@ def main():
             await event.update_responded_message()
 
         for event in client.events.copy():
-            # Reset to ensure at least a minute to finish answering
+            # Reset to ensure at least 30 seconds to finish answering
             if event.changed:
                 event.changed = False
                 continue
@@ -1225,7 +1229,6 @@ def main():
             if event.unavailable:
                 try:
                     try:
-                        # await event.avail_buttons.disable_buttons()
                         await event.availability_message.delete()
                     except Exception as e:
                         logger.error(f'Error disabling availability buttons: {e}')
@@ -1251,7 +1254,8 @@ def main():
                     client.events.remove(event)
                     del event
                 except Exception as e:
-                    logger.exception(f'Error invalidating and deleting event: {e}')
+                    logger.error(f'Error invalidating and deleting event: {e}')
+                    continue
                 continue
 
             # Countdown to start + 5 minute warning
@@ -1282,7 +1286,8 @@ def main():
                         response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {hrs_mins_until_start_string} {event.event_buttons_msg_content_pt4}'
                     await event.event_buttons_message.edit(content=response, view=event.event_buttons)
                 except Exception as e:
-                    logger.exception(f'{event.name}: Error counting down: {e}')
+                    logger.error(f'{event.name}: Error counting down: {e}')
+                    continue
 
                 # Send 5 minute warning
                 try:
@@ -1293,13 +1298,14 @@ def main():
                                 try:
                                     await event.text_channel.send(f'{event.get_names_string(subscribed_only=True, mention=True)}\n**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
                                 except Exception as e:
-                                    logger.exception(f'Error sending 5 minute nudge: {e}')
+                                    logger.error(f'Error sending 5 minute nudge: {e}')
+                                    continue
                             else:
                                 for participant in event.participants:
                                     async with participant.msg_lock:
                                         await participant.member.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
                 except Exception as e:
-                    logger.exception(f'{event.name}: Error sending 5 minute warning: {e}')
+                    logger.error(f'{event.name}: Error sending 5 minute warning: {e}')
                 continue
 
             # Skip the rest of update() for this event if we are waiting for answers
@@ -1311,9 +1317,8 @@ def main():
             if event.created:
                 continue
 
-            # Disable buttons on availability request message
+            # Delete availability request message
             try:
-                # await event.avail_buttons.disable_buttons()
                 await event.availability_message.delete()
             except Exception as e:
                 logger.error(f'Error disabling availability buttons: {e}')
@@ -1322,7 +1327,8 @@ def main():
             try:
                 event.compare_availabilities()
             except Exception as e:
-                logger.exception(f'Error comparing availabilities: {e}')
+                logger.error(f'Error comparing availabilities: {e}')
+                continue
 
             # Cancel the event if no common availability was found
             if not event.ready_to_create:
@@ -1337,7 +1343,7 @@ def main():
                     client.events.remove(event)
                     del event
                 except Exception as e:
-                    logger.exception(f'{event.name}: Error messaging participants: {e}')
+                    logger.error(f'{event.name}: Error messaging participants: {e}')
                 continue
             # Create the event if it is ready to create
             else:
@@ -1352,7 +1358,7 @@ def main():
                 try:
                     await event.make_scheduled_event()
                 except Exception as e:
-                    logger.exception(f'{event.name}: Error creating scheduled event: {e}')
+                    logger.error(f'{event.name}: Error creating scheduled event: {e}')
                     continue
 
                 # Go through created events and remove availability during the event time of all shared participants
@@ -1368,7 +1374,8 @@ def main():
                     event.event_buttons = EventButtons(event)
                     event.event_buttons_message = await event.text_channel.send(content=response, view=event.event_buttons)
                 except Exception as e:
-                    logger.exception(f'{event.name}: Error sending event created notification with buttons: {e}')
+                    logger.error(f'{event.name}: Error sending event created notification with buttons: {e}')
+                    continue
         persist.write(client.get_events_dict())
 
     client.run(DISCORD_TOKEN)
