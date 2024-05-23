@@ -410,6 +410,8 @@ def main():
 
         # Create or edit the responded message to show who still needs to respond to the availability request
         async def update_responded_message(self) -> None:
+            if self.created:
+                return
             if not self.responded_message:
                 try:
                     mentions = self.get_names_string(unanswered_only=True, mention=True)
