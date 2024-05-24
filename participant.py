@@ -307,6 +307,7 @@ class Participant:
                 if event_end_time < timeblock.end_time:
                     new_availability.append(TimeBlock(event_end_time, timeblock.end_time))
         self.availability = new_availability
+        self.clean_availability()
 
     @classmethod
     def from_dict(cls, guild: Guild, data: dict):

@@ -171,15 +171,11 @@ def main():
                     start_time = max(block1.start_time, block2.start_time)
                     end_time = min(block1.end_time, block2.end_time)
                     if start_time < end_time:
-                        logger.debug(f'{self.name}: \tFound intersected timeblocks:')
-                        logger.debug(f'{self.name}: \t\t{block1}')
-                        logger.debug(f'{self.name}: \t\t{block2}')
                         intersected_time_blocks.append(TimeBlock(start_time, end_time))
             return intersected_time_blocks
 
         # Compare availabilities of all subscribed participants
         def compare_availabilities(self) -> None:
-            logger.debug(f'{self.name}: Comparing availabilities')
             subbed_participants = []
             for participant in self.participants:
                 if participant.subscribed:
@@ -207,18 +203,13 @@ def main():
             intersected_timeblocks = available_timeblocks[0]
             for timeblocks in available_timeblocks[1:]:
                 intersected_timeblocks = self.intersect_time_blocks(intersected_timeblocks, timeblocks)
-                logger.debug(f'{self.name}: \tIntersected timeblocks:')
-                for timeblock in intersected_timeblocks:
-                    logger.debug(f'{self.name}: \t\t{timeblock}')
 
             for timeblock in intersected_timeblocks:
-                logger.debug(f'{self.name}: \tChecking timeblock: "{timeblock}"')
                 if timeblock.duration >= self.duration:
-                    logger.debug(f'{self.name}: \t\tDuration is sufficient, using for event start time')
                     self.start_time = timeblock.start_time
                     self.ready_to_create = True
                     return
-            logger.debug(f'{self.name}: compare_availabilities: No common availability found between all participants, cancelling event')
+            logger.info(f'{self.name}: compare_availabilities: No common availability found between all participants, cancelling event')
 
         # Check before everyone has responded to see if two people have answered and are not available
         def check_availabilities(self) -> None:
@@ -244,7 +235,7 @@ def main():
             for timeblock in intersected_timeblocks:
                 if timeblock.duration >= self.duration:
                     return
-            logger.debug(f'{self.name}: check_availabilities: No common availability found between currently responded participants, cancelling event')
+            logger.info(f'{self.name}: check_availabilities: No common availability found between currently responded participants, cancelling event')
             self.unavailable = True
 
         # Return the number of participants who have responded
@@ -338,13 +329,14 @@ def main():
 
         # Get availability for participant from another event
         def get_other_availability(self, participant: Participant) -> list:
-            availabilities = []
+            event_availabilities = []
             for other_event in client.events:
                 if other_event != self:
                     for other_participant in other_event.participants:
-                        if other_participant.member.id == participant.member.id:
-                            availabilities.append(other_participant.availability)
-            return availabilities
+                        if other_participant.member.id == participant.member.id and other_participant.answered:
+                            event_avail = EventAvailability(other_event, other_participant.availability)
+                            event_availabilities.append(event_avail)
+            return event_availabilities
 
         # Set event_buttons_msg_content parts and get response message
         def get_event_buttons_message_string(self) -> str:
@@ -452,12 +444,19 @@ def main():
             if not event_text_channel:
                 logger.info(f'{event_name}: no text channel found')
             else:
-                logger.info(f'{event_name}: text channel found: {event_text_channel.name}')
+                # the logger does not like Japanese
+                try:
+                    logger.info(f'{event_name}: text channel found: {event_text_channel.name}')
+                except:
+                    logger.info(f'{event_name}: text channel found: {event_text_channel.id}')
 
             # Voice channel
             event_voice_channel = utils.get(event_guild.voice_channels, id=data["voice_channel_id"])
             if event_voice_channel:
-                logger.info(f'{event_name}: voice channel found: {event_voice_channel.name}')
+                try:
+                    logger.info(f'{event_name}: voice channel found: {event_voice_channel.name}')
+                except:
+                    logger.info(f'{event_name}: voice channel found: {event_voice_channel.id}')
             else:
                 raise Exception(f'Could not find voice channel for {event_name}, disregarding event')
 
@@ -467,7 +466,10 @@ def main():
                 if not participant:
                     event_participants.remove(participant)
             if event_participants:
-                logger.info(f'{event_name}: found participant(s): {", ".join([p.member.name for p in event_participants])}')
+                try:
+                    logger.info(f'{event_name}: found participant(s): {", ".join([p.member.name for p in event_participants])}')
+                except:
+                    logger.info(f'{event_name}: found participant(s): {", ".join([p.member.id for p in event_participants])}')
             else:
                 raise Exception(f'{event_name}: no participant(s) found, disregarding event')
 
@@ -662,7 +664,7 @@ def main():
                 self.event.changed = True
                 await self.event.update_responded_message()
                 for timeblock in participant.availability:
-                    logger.info(f'{timeblock}')
+                    logger.info(f'\t{timeblock}')
             except Exception as e:
                 try:
                     await interaction.response.send_message(f'Error setting your availability: {e}')
@@ -746,18 +748,17 @@ def main():
                     return
                 logger.info(f'{self.event.name}: \tFound existing availability for {interaction.user.name}')
                 if len(found_availabilities) == 1:
-                    participant.availability = found_availabilities[0]
+                    participant.availability = found_availabilities[0].avail
                     for timeblock in participant.availability:
-                        logger.debug(f'{timeblock}')
+                        logger.debug(f'\t{timeblock}')
                     participant.answered = True
-                    response = f'**__Availability for {self.event.name}:__**'
+                    response = f'**__Availability for {self.event.name}:__**\n'
                     response += participant.get_availability_string()
                     await interaction.response.send_message(response, ephemeral=True)
                     await self.event.update_responded_message()
                     persist.write(client.get_events_dict())
                 else:
-                    pass
-                    # TODO pass into select here
+                    await interaction.response.send_message(f'Select another event to grab your availability from.', view=ExistingAvailabilitiesSelectView(found_availabilities, participant), ephemeral=True)
             button.callback = reuse_button_callback
             self.add_item(button)
             return button
@@ -976,6 +977,7 @@ def main():
             self.cancel_button.callback = cancel_button_callback
             self.add_item(self.cancel_button)
 
+    # Dropdown of existing guild scheduled events
     class ExistingGuildEventsSelect(Select):
         def __init__(self, guild: Guild):
             self.guild = guild
@@ -1007,10 +1009,55 @@ def main():
                 await interaction.response.send_message(f'Error getting guild scheduled event.')
                 logger.exception(f'Error getting guild scheduled event selected by {interaction.user.name}')
 
+    # View to house the existing guild events dropdown
     class ExistingGuildEventsSelectView(View):
         def __init__(self, guild: Guild):
             super().__init__()
             self.add_item(ExistingGuildEventsSelect(guild))
+
+
+    # Class for ease of tying availabilities to events for the Select dropdown
+    class EventAvailability:
+        def __init__(self, event: Event, avail: list):
+            self.event = event
+            self.avail = avail
+
+    # Dropdown to select previous availability options
+    class ExistingAvailabilitiesSelect(Select):
+        def __init__(self, event_avails: list, participant: Participant):
+            self.event_avails = event_avails
+            self.participant = participant
+            options = [
+                SelectOption(label=event_avail.event.name, value=event_avail.event.name)
+                for event_avail in self.event_avails
+            ]
+            super().__init__(placeholder='Event Availabilities', options=options)
+
+        # Select an availability to attach
+        async def callback(self, interaction: Interaction):
+            logger.info(f'{interaction.user.name} selected an event to get their availability from')
+            for event_avail in self.event_avails:
+                if event_avail.event.name == self.values[0]:
+                    if event_avail.event.created:
+                        await interaction.response.send_message(content=f'{event_avail.event.name} has already been created.', ephemeral=True)
+                        return
+                    self.participant.availability = event_avail.avail
+                    break
+            if self.participant.availability:
+                self.participant.answered = True
+                response = f'**__Success! Your availability:__**'
+                for timeblock in self.participant.availability:
+                    response += f'\n{timeblock}'
+            else:
+                response = f'**__Failed to get your availability.__**'
+            await interaction.response.send_message(content=response, ephemeral=True)
+
+    # View to house the previous availability dropdown
+    class ExistingAvailabilitiesSelectView(View):
+        def __init__(self, event_avails: list, participant: Participant):
+            super().__init__()
+            self.add_item(ExistingAvailabilitiesSelect(event_avails, participant))
+
 
     # Put participants into a list
     def get_participants_from_interaction(interaction: Interaction, include_exclude: INCLUDE_EXCLUDE = None, usernames: str = None, roles: str = None) -> list:
