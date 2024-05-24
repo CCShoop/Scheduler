@@ -686,7 +686,9 @@ def main():
             button = Button(label=self.respond_label, style=ButtonStyle.blurple)
             async def respond_button_callback(interaction: Interaction):
                 try:
-                    await interaction.response.send_modal(AvailabilityModal(event=self.event, title=f'Availability for {self.event.name}'))
+                    am_title = f'Availability for {self.event.name}'
+                    am_title = am_title[:41] + '...'
+                    await interaction.response.send_modal(AvailabilityModal(event=self.event, title=am_title))
                 except Exception as e:
                     logger.exception(f'Error sending availability modal: {e}')
                 persist.write(client.get_events_dict())
