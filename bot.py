@@ -463,7 +463,7 @@ def main():
                 if not participant:
                     event_participants.remove(participant)
             if event_participants:
-                logger.info(f'{event_name}: found participant(s): {", ".join([p.member.id for p in event_participants])}')
+                logger.info(f'{event_name}: found participant(s): {", ".join([str(p.member.id) for p in event_participants])}')
             else:
                 raise Exception(f'{event_name}: no participant(s) found, disregarding event')
 
