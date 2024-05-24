@@ -316,6 +316,13 @@ def main():
                 return mentions
             return ", ".join(names)
 
+        # If a user isn't a participant, add them
+        def add_user_as_participant(self, user: User) -> None:
+            if user.id not in [participant.member.id for participant in self.participants]:
+                member = self.guild.get_member(user.id)
+                participant = Participant(member=member)
+                self.participants.append(participant)
+
         # Get a participant from the event with a username
         def get_participant(self, username: str) -> Participant:
             for participant in self.participants:
@@ -845,9 +852,7 @@ def main():
                     await self.event.scheduled_event.start(reason=f'Start button pressed by {interaction.user.name}.')
                 except Exception as e:
                     logger.error(f'{self.event.name}: \tFailed to start event')
-                participant_names = [participant.member.name for participant in self.event.participants]
-                if interaction.user.name not in participant_names:
-                    self.event.participants.append(interaction.user)
+                self.event.add_user_as_participant(interaction.user)
                 self.event.event_buttons_msg_content_pt2 = f'\n**Started at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
                 self.event.started = True
                 self.start_button.style = ButtonStyle.green
@@ -916,10 +921,7 @@ def main():
             async def reschedule_button_callback(interaction: Interaction):
                 logger.info(f'{self.event.name}: {interaction.user} rescheduled by button press')
                 await interaction.response.defer(ephemeral=True)
-                if interaction.user.id not in [participant.member.id for participant in self.event.participants]:
-                    member = self.guild.get_member(interaction.user.id)
-                    participant = Participant(member=member)
-                    self.event.participants.append(participant)
+                self.event.add_user_as_participant(interaction.user)
                 new_event = Event(name=self.event.name, voice_channel=self.event.voice_channel, participants=self.event.participants, guild=self.event.guild, text_channel=interaction.channel, image_url=self.event.image_url, duration=self.event.duration)
                 try:
                     await self.event.scheduled_event.delete(reason=f'Reschedule button pressed by {interaction.user.name}.')
