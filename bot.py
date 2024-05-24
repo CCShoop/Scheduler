@@ -1322,12 +1322,12 @@ def main():
                         time_until_start: timedelta = datetime.now().astimezone() - event.start_time
                         event.mins_until_start = int(time_until_start.total_seconds()//60) + 1
                     # Event start time is in the past
-                    if event.mins_until_start < 0:
+                    if event.start_time < datetime.now().astimezone().replace(second=0, microsecond=0):
                         event.event_buttons_msg_content_pt2 = f'\n**Overdue by:**'
                         hrs_mins_overdue_start_string = mins_to_hrs_mins_string(event.mins_until_start)
                         response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {hrs_mins_overdue_start_string} {event.event_buttons_msg_content_pt4}'
                     # It is event start time
-                    elif event.mins_until_start == 0:
+                    elif event.start_time == datetime.now().astimezone().replace(second=0, microsecond=0):
                         event.event_buttons_msg_content_pt2 = f'\n**Starting now**'
                         response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {event.event_buttons_msg_content_pt4}'
                     # Event start time is in the future
