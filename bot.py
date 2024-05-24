@@ -105,6 +105,10 @@ def main():
             events_data['events'] = [event.to_dict() for event in self.events]
             return events_data
 
+        async def setup_hook(self):
+            await self.tree.sync()
+
+
     OWNER_ID = int(os.getenv('OWNER_ID'))
     DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
     client = SchedulerClient(intents=Intents.all())
