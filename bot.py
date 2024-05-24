@@ -89,6 +89,8 @@ def main():
                             if event.availability_message:
                                 event.avail_buttons = AvailabilityButtons(event)
                                 await event.availability_message.edit(view=event.avail_buttons)
+                            if event.responded_message:
+                                await event.update_responded_message()
                             if event.event_buttons_message:
                                 event.event_buttons = EventButtons(event)
                                 await event.event_buttons_message.edit(view=event.event_buttons)
