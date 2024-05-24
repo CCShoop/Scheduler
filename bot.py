@@ -1144,6 +1144,7 @@ def main():
         if 'sync' in message.content and message.author.id == OWNER_ID:
             await client.tree.sync()
             logger.info(f'User {message.author.name} synced commands')
+            await message.channel.send('Synced')
 
     @client.tree.command(name='create', description='Create an event.')
     @app_commands.describe(event_name='Name for the event.')
