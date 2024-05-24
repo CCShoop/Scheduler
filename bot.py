@@ -435,7 +435,7 @@ def main():
             # Guild
             event_guild = client.get_guild(data["guild_id"])
             if event_guild:
-                logger.info(f'{event_name}: guild found: {event_guild.name}')
+                logger.info(f'{event_name}: guild found: {event_guild.id}')
             else:
                 raise Exception(f'Could not find guild for {event_name}, disregarding event')
 
@@ -444,19 +444,12 @@ def main():
             if not event_text_channel:
                 logger.info(f'{event_name}: no text channel found')
             else:
-                # the logger does not like Japanese
-                try:
-                    logger.info(f'{event_name}: text channel found: {event_text_channel.name}')
-                except:
-                    logger.info(f'{event_name}: text channel found: {event_text_channel.id}')
+                logger.info(f'{event_name}: text channel found: {event_text_channel.id}')
 
             # Voice channel
             event_voice_channel = utils.get(event_guild.voice_channels, id=data["voice_channel_id"])
             if event_voice_channel:
-                try:
-                    logger.info(f'{event_name}: voice channel found: {event_voice_channel.name}')
-                except:
-                    logger.info(f'{event_name}: voice channel found: {event_voice_channel.id}')
+                logger.info(f'{event_name}: voice channel found: {event_voice_channel.id}')
             else:
                 raise Exception(f'Could not find voice channel for {event_name}, disregarding event')
 
@@ -466,10 +459,7 @@ def main():
                 if not participant:
                     event_participants.remove(participant)
             if event_participants:
-                try:
-                    logger.info(f'{event_name}: found participant(s): {", ".join([p.member.name for p in event_participants])}')
-                except:
-                    logger.info(f'{event_name}: found participant(s): {", ".join([p.member.id for p in event_participants])}')
+                logger.info(f'{event_name}: found participant(s): {", ".join([p.member.id for p in event_participants])}')
             else:
                 raise Exception(f'{event_name}: no participant(s) found, disregarding event')
 
