@@ -846,16 +846,11 @@ def main():
                 try:
                     await self.event.scheduled_event.start(reason=f'Start button pressed by {interaction.user.name}.')
                 except Exception as e:
-                    await interaction.response.edit_message(view=self)
-                    return
+                    logger.error(f'{self.event.name}: \tFailed to start event')
                 participant_names = [participant.member.name for participant in self.event.participants]
                 if interaction.user.name not in participant_names:
                     self.event.participants.append(interaction.user)
-                try:
-                    self.event.event_buttons_msg_content_pt2 = f'\n**Started at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
-                    await self.event.event_buttons_message.edit(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt4}', view=self.event.event_buttons)
-                except Exception as e:
-                    logger.exception(f'Error starting event or manipulating event control message: {e}')
+                self.event.event_buttons_msg_content_pt2 = f'\n**Started at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
                 self.event.started = True
                 self.start_button.style = ButtonStyle.green
                 self.start_button.disabled = True
@@ -864,9 +859,9 @@ def main():
                 self.cancel_button.disabled = True
                 # Interaction response
                 try:
-                    await interaction.response.edit_message(view=self)
+                    await interaction.response.edit_message(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt4}', view=self.event.event_buttons)
                 except Exception as e:
-                    logger.exception(f'{self.event.name}: Error responding to START button interaction: {e}')
+                    logger.error(f'{self.event.name}: Error responding to START button interaction: {e}')
                 # Disable start buttons of events scheduled for the same channel
                 for event in client.events:
                     if event == self.event or not event.created or event.voice_channel != self.event.voice_channel:
