@@ -223,7 +223,7 @@ def main():
         # Check before everyone has responded to see if two people have answered and are not available
         def check_availabilities(self) -> None:
             # Make sure it's been at least one update cycle since the last response
-            if event.changed:
+            if self.changed:
                 return
             lacks_availability = True
             subbed_participants = []
@@ -739,21 +739,25 @@ def main():
             async def reuse_button_callback(interaction: Interaction):
                 logger.info(f'{self.event.name}: Reuse button pressed by {interaction.user.name}')
                 participant = self.event.get_participant(interaction.user.name)
-                found_availability = self.event.get_other_availability(participant)
-                if not found_availability:
+                found_availabilities = self.event.get_other_availability(participant)
+                if not found_availabilities:
                     logger.info(f'{self.event.name}: \tNo existing availability found for {interaction.user.name}')
                     await interaction.response.send_message(f'No existing availability found.', ephemeral=True)
                     return
                 logger.info(f'{self.event.name}: \tFound existing availability for {interaction.user.name}')
-                # TODO pass into select here
-                participant.availability = found_availability[0]
-                for timeblock in participant.availability:
-                    logger.debug(f'{timeblock}')
-                participant.answered = True
-                response = participant.get_availability_string()
-                await interaction.response.send_message(response, ephemeral=True)
-                await self.event.update_responded_message()
-                persist.write(client.get_events_dict())
+                if len(found_availabilities) == 1:
+                    participant.availability = found_availabilities[0]
+                    for timeblock in participant.availability:
+                        logger.debug(f'{timeblock}')
+                    participant.answered = True
+                    response = f'**__Availability for {self.event.name}:__**'
+                    response += participant.get_availability_string()
+                    await interaction.response.send_message(response, ephemeral=True)
+                    await self.event.update_responded_message()
+                    persist.write(client.get_events_dict())
+                else:
+                    pass
+                    # TODO pass into select here
             button.callback = reuse_button_callback
             self.add_item(button)
             return button
@@ -1210,16 +1214,20 @@ def main():
         # Go through created events and remove availability during the event time of all shared participants
         for event in client.events:
             for participant in event.participants:
-                participant.remove_past_availability()
-                if not event.created and not participant.availability:
-                    participant.answered = False
+                if participant.availability:
+                    participant.remove_past_availability()
+                    if not event.created and not participant.availability:
+                        participant.answered = False
+                        await event.update_responded_message()
             if event.created:
                 for other_event in client.events:
                     if other_event == event:
                         continue
                     for participant in other_event.participants:
-                        participant.remove_availability_for_event(event)
-            await event.update_responded_message()
+                        if participant.availability:
+                            participant.remove_availability_for_event(event)
+                            if not participant.availability:
+                                await event.update_responded_message()
 
         for event in client.events.copy():
             # Reset to ensure at least 30 seconds to finish answering
