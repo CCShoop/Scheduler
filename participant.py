@@ -281,7 +281,6 @@ class Participant:
                     last.end_time = max(last.end_time, timeblock.end_time)
                 else:
                     merged_availability.append(timeblock)
-
         self.availability = merged_availability
 
     def remove_past_availability(self) -> None:

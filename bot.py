@@ -23,7 +23,7 @@ load_dotenv()
 # Logger setup
 logger = logging.getLogger("Event Scheduler")
 logger.setLevel(logging.DEBUG)
-formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] %(message)s')
+formatter = logging.Formatter(fmt='[%(asctime)s] [%(levelname)s] %(message)s', datefmt='%Y-%m-%d,%H:%M:%S')
 
 file_handler = logging.FileHandler('scheduler.log')
 file_handler.setLevel(logging.DEBUG)
@@ -472,7 +472,7 @@ def main():
                 if not participant:
                     event_participants.remove(participant)
             if event_participants:
-                logger.info(f'{event_name}: found participant(s): {", ".join([str(p.member.id) for p in event_participants])}')
+                logger.info(f'{event_name}: found participant(s): {", ".join([p.member.name for p in event_participants])}')
             else:
                 raise Exception(f'{event_name}: no participant(s) found, disregarding event')
 
@@ -1260,6 +1260,7 @@ def main():
                 if participant.availability:
                     participant.remove_past_availability()
                     if not event.created and not participant.availability:
+                        logger.debug(f'{event.name}: removed past availability of {participant.member.name}')
                         participant.answered = False
                         await event.update_responded_message()
             if event.created:
