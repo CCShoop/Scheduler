@@ -853,6 +853,7 @@ def main():
                     await self.event.scheduled_event.start(reason=f'Start button pressed by {interaction.user.name}.')
                 except Exception as e:
                     logger.error(f'{self.event.name}: \tFailed to start event')
+                self.event.start_time = datetime.now().astimezone()
                 self.event.add_user_as_participant(interaction.user)
                 self.event.event_buttons_msg_content_pt2 = f'\n**Started at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
                 self.event.started = True
@@ -887,7 +888,13 @@ def main():
                 logger.info(f'{self.event.name}: {interaction.user} ended by button press')
                 try:
                     await self.event.scheduled_event.delete(reason=f'End button pressed by {interaction.user.name}.')
-                    self.event.event_buttons_msg_content_pt3 = f'\n**Ended at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
+                    end_time: datetime = datetime.now().astimezone()
+                    self.event.duration = end_time - self.event.start_time
+                    msg_pt1_partition1 = self.event.event_buttons_msg_content_pt1.partition('**Duration:** ')
+                    msg_pt1_partition2 = msg_pt1_partition1[2].partition(' minutes')
+                    msg_pt1_partition2[0] = f'{self.event.get_duration_minutes()}'
+                    self.event.event_buttons_msg_content_pt1 = f'{msg_pt1_partition1[0]}{msg_pt1_partition1[1]}{msg_pt1_partition2[0]}{msg_pt1_partition2[1]}{msg_pt1_partition2[2]}'
+                    self.event.event_buttons_msg_content_pt3 = f'\n**Ended at:** {end_time.strftime("%H:%M")} ET'
                     await self.event.event_buttons_message.edit(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt3} {self.event.event_buttons_msg_content_pt4}', view=self.event.event_buttons)
                 except Exception as e:
                     logger.error(f'Error ending event or manipulating event control message: {e}')
