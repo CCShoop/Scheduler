@@ -949,6 +949,8 @@ def main():
                 try:
                     participant = self.event.get_participant(interaction.user.name)
                     participant.set_no_availability()
+                    for p in self.event.participants:
+                        p.confirm_answered(duration=self.event.duration)
                     await self.event.request_availability(interaction, reschedule=True)
                 except Exception as e:
                     logger.exception(f'Error with RESCHEDULE button requesting availability: {e}')
@@ -1259,26 +1261,23 @@ def main():
 
     @tasks.loop(seconds=30)
     async def update():
-        # Go through created events and remove availability during the event time of all shared participants
+        # Participant availability checks
         for event in client.events:
-            for participant in event.participants:
-                if participant.availability:
-                    participant.remove_past_availability()
-                    if not event.created and not participant.availability:
-                        logger.info(f'{event.name}: removed past availability of {participant.member.name}')
-                if not event.created and not participant.availability and not participant.unavailable:
-                    participant.full_availability_flag = False
-                    participant.answered = False
-                    await event.update_responded_message()
-            if event.created:
-                for other_event in client.events:
-                    if other_event == event:
-                        continue
-                    for participant in other_event.participants:
-                        if participant.availability:
-                            participant.remove_availability_for_event(event)
-                            if not participant.availability:
-                                await event.update_responded_message()
+            # If availability expires before the event is created, mark the participant as unanswered
+            if not event.created:
+                for participant in event.participants:
+                    participant.confirm_answered()
+                await event.update_responded_message()
+            # Remove this event from each participant's other availabilities
+            else:
+                for participant in event.participants:
+                    for other_event in client.events:
+                        if other_event == event or other_event.created:
+                            continue
+                        for other_participant in other_event.participants:
+                            if other_participant.member.id == participant.member.id:
+                                other_participant.remove_availability_for_event(event_start_time=event.start_time, event_duration=event.duration)
+                        await other_event.update_responded_message()
 
         for event in client.events.copy():
             # Reset to ensure at least 30 seconds to finish answering
@@ -1425,7 +1424,7 @@ def main():
                 # Go through created events and remove availability during the event time of all shared participants
                 for other_event in client.events:
                     for participant in other_event.participants:
-                        participant.remove_availability_for_event(event)
+                        participant.remove_availability_for_event(event_start_time=event.start_time, event_duration=event.duration)
 
                 # Calculate time until start
                 try:

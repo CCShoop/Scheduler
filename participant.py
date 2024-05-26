@@ -43,18 +43,21 @@ class Participant:
         self.full_availability_flag = full_availability_flag
         self.msg_lock = Lock()
 
+    # Participant is available at the specified time for the specified duration
     def is_available_at(self, time: datetime, duration: timedelta) -> bool:
         for timeblock in self.availability:
             if (timeblock.start_time <= time) and ((time + duration) <= timeblock.end_time):
                 return True
         return False
 
+    # Get the participant's availability in string format
     def get_availability_string(self) -> str:
         response = ''
         for timeblock in self.availability:
             response += f'{timeblock}\n'
         return response
 
+    # Set the participant as available until midnight today
     def set_full_availability(self, month=datetime.now().astimezone().month, day=datetime.now().astimezone().day, year=datetime.now().astimezone().year) -> None:
         try:
             start_time = datetime.now().astimezone().replace(month=month, day=day, year=year, second=0, microsecond=0)
@@ -66,11 +69,13 @@ class Participant:
         except Exception as e:
             raise e
 
+    # Remove the participant's availability for the specified day, otherwise today
     def set_no_availability(self, month=datetime.now().astimezone().month, day=datetime.now().astimezone().day, year=datetime.now().astimezone().year) -> None:
         for idx, timeblock in enumerate(self.availability.copy()):
             if timeblock.start_time.day == day:
                 self.availability.remove(timeblock)
 
+    # Complex availability input from the Availability Modal
     def set_specific_availability(self, avail_string: str, date_string: str) -> None:
         # Blank input to view current availability
         if avail_string == '':
@@ -260,6 +265,7 @@ class Participant:
             self.availability.append(TimeBlock(start_time, end_time))
             self.clean_availability()
 
+    # Combine intersecting/touching availability
     def clean_availability(self) -> None:
         # Sort the availability by start time (and by end time if start times are the same)
         self.availability.sort(key=lambda x: (x.start_time, x.end_time))
@@ -277,30 +283,39 @@ class Participant:
                     merged_availability.append(timeblock)
         self.availability = merged_availability
 
-    def remove_past_availability(self) -> None:
-        new_availability = []
-        for timeblock in self.availability:
-            if datetime.now().astimezone() < timeblock.end_time:
-                new_availability.append(timeblock)
-        self.availability = new_availability
-
-    def remove_availability_for_event(self, event) -> None:
-        event_end_time = event.start_time + event.duration
+    # Remove the participant's availability for an event with its start time and duration
+    def remove_availability_for_event(self, event_start_time: datetime, event_duration: timedelta) -> None:
+        if not self.availability:
+            return
+        event_end_time = event_start_time + event_duration
         new_availability = []
         for timeblock in self.availability:
             # Timeblock does not overlap with event
-            if timeblock.end_time <= event.start_time or event_end_time <= timeblock.start_time:
+            if timeblock.end_time <= event_start_time or event_end_time <= timeblock.start_time:
                 new_availability.append(timeblock)
             # Timeblock overlaps with event
             else:
                 # Timeblock starts before event
-                if timeblock.start_time < event.start_time:
-                    new_availability.append(TimeBlock(timeblock.start_time, event.start_time))
+                if timeblock.start_time < event_start_time:
+                    new_availability.append(TimeBlock(timeblock.start_time, event_start_time))
                 # Timeblock ends after event
                 if event_end_time < timeblock.end_time:
                     new_availability.append(TimeBlock(event_end_time, timeblock.end_time))
         self.availability = new_availability
         self.clean_availability()
+
+    # Confirm the participant's availability is still valid
+    def confirm_answered(self, duration: timedelta = timedelta(minutes=30)) -> None:
+        if self.availability:
+            new_availability = []
+            cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
+            for tb in self.availability:
+                if cur_time + duration <= tb.end_time:
+                    new_availability.append(tb)
+            self.availability = new_availability
+        if not self.availability:
+            self.answered = False
+            self.full_availability_flag = False
 
     @classmethod
     def from_dict(cls, guild: Guild, data: dict):
