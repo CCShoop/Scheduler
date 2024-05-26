@@ -23,7 +23,7 @@ load_dotenv()
 # Logger setup
 logger = logging.getLogger("Event Scheduler")
 logger.setLevel(logging.DEBUG)
-formatter = logging.Formatter(fmt='[%(asctime)s] [%(levelname)s] %(message)s', datefmt='%Y-%m-%d,%H:%M:%S')
+formatter = logging.Formatter(fmt='[%(asctime)s] [%(levelname)s\t] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 
 file_handler = logging.FileHandler('scheduler.log')
 file_handler.setLevel(logging.DEBUG)
@@ -661,7 +661,8 @@ def main():
             try:
                 logger.info(f'{self.event.name}: Received availability from {participant.member.name}')
                 participant.set_specific_availability(avail_string, self.date.value)
-                participant.answered = True
+                if participant.availability:
+                    participant.answered = True
                 response = f'**__Availability received for {self.event.name}!__**\n' + participant.get_availability_string()
                 await interaction.response.send_message(response, ephemeral=True)
                 self.event.changed = True
@@ -1094,17 +1095,14 @@ def main():
             try:
                 usernames = usernames.split(',')
                 usernames = [username.strip() for username in usernames]
-                logger.debug(f'Usernames: {usernames}')
             except:
                 raise Exception(f'Failed to parse username(s): {e}')
             for member in interaction.channel.members:
                 if member.bot or member.name == interaction.user.name:
                     continue
                 if include_exclude == INCLUDE and (member.name in usernames or str(member.id) in usernames):
-                    logger.debug(f'Added member {member.name}')
                     participants.append(Participant(member=member))
                 elif include_exclude == EXCLUDE and member.name not in usernames and str(member.id) not in usernames:
-                    logger.debug(f'Added member {member.name}')
                     participants.append(Participant(member=member))
             return participants
 
@@ -1260,9 +1258,11 @@ def main():
                 if participant.availability:
                     participant.remove_past_availability()
                     if not event.created and not participant.availability:
-                        logger.debug(f'{event.name}: removed past availability of {participant.member.name}')
-                        participant.answered = False
-                        await event.update_responded_message()
+                        logger.info(f'{event.name}: removed past availability of {participant.member.name}')
+                if not event.created and not participant.availability and not participant.unavailable:
+                    participant.full_availability_flag = False
+                    participant.answered = False
+                    await event.update_responded_message()
             if event.created:
                 for other_event in client.events:
                     if other_event == event:

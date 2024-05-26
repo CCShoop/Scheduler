@@ -57,18 +57,12 @@ class Participant:
 
     def set_full_availability(self, month=datetime.now().astimezone().month, day=datetime.now().astimezone().day, year=datetime.now().astimezone().year) -> None:
         try:
-            # Remove all timeblocks that start today
-            for timeblock in self.availability.copy():
-                if timeblock.start_time.date == datetime.now().astimezone().date and timeblock.end_time.date == datetime.now().astimezone().date:
-                    self.availability.remove(timeblock)
-                elif timeblock.start_time.date == datetime.now().astimezone().date and timeblock.end_time.date != datetime.now().astimezone().date:
-                    timeblock.start_time += timedelta(days=1)
-                    timeblock.start_time = timeblock.start_time.replace(hour=0, minute=0, second=0, microsecond=0)
             start_time = datetime.now().astimezone().replace(month=month, day=day, year=year, second=0, microsecond=0)
             end_time = datetime.now().astimezone().replace(month=month, day=day, year=year, hour=0, minute=0, second=0, microsecond=0)
             end_time += timedelta(days=1)
             self.availability.append(TimeBlock(start_time, end_time))
             self.answered = True
+            self.clean_availability()
         except Exception as e:
             raise e
 
