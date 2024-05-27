@@ -663,6 +663,8 @@ def main():
                 participant.set_specific_availability(avail_string, self.date.value)
                 if participant.availability:
                     participant.answered = True
+                else:
+                    participant.answered = False
                 response = f'**__Availability received for {self.event.name}!__**\n' + participant.get_availability_string()
                 await interaction.response.send_message(response, ephemeral=True)
                 self.event.changed = True
