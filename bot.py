@@ -894,8 +894,7 @@ def main():
                     self.event.duration = end_time - self.event.start_time
                     msg_pt1_partition1 = self.event.event_buttons_msg_content_pt1.partition('**Duration:** ')
                     msg_pt1_partition2 = msg_pt1_partition1[2].partition(' minutes')
-                    msg_pt1_partition2[0] = f'{self.event.get_duration_minutes()}'
-                    self.event.event_buttons_msg_content_pt1 = f'{msg_pt1_partition1[0]}{msg_pt1_partition1[1]}{msg_pt1_partition2[0]}{msg_pt1_partition2[1]}{msg_pt1_partition2[2]}'
+                    self.event.event_buttons_msg_content_pt1 = f'{msg_pt1_partition1[0]}{msg_pt1_partition1[1]}{self.event.get_duration_minutes()}{msg_pt1_partition2[1]}{msg_pt1_partition2[2]}'
                     self.event.event_buttons_msg_content_pt3 = f'\n**Ended at:** {end_time.strftime("%H:%M")} ET'
                     await self.event.event_buttons_message.edit(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt3} {self.event.event_buttons_msg_content_pt4}', view=self.event.event_buttons)
                 except Exception as e:
