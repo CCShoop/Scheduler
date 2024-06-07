@@ -344,3 +344,6 @@ class Participant:
             'full_availability_flag': self.full_availability_flag,
             'availability': [timeblock.to_dict() for timeblock in self.availability]
         }
+
+    def __repr__(self) -> str:
+        return f'{self.member.name}'

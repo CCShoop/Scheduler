@@ -638,6 +638,9 @@ def main():
                 'unavailable': self.unavailable
             }
 
+        def __repr__(self) -> str:
+            return f'{self.name}'
+
     class AvailabilityModal(Modal):
         def __init__(self, event, *args, **kwargs) -> None:
             super().__init__(*args, **kwargs)
@@ -1051,6 +1054,7 @@ def main():
                     break
             if self.participant.availability:
                 self.participant.answered = True
+                await event_avail.event.update_responded_message()
                 response = f'**__Success! Your availability:__**'
                 for timeblock in self.participant.availability:
                     response += f'\n{timeblock}'
@@ -1258,7 +1262,7 @@ def main():
     @client.tree.command(name='attach', description='Create an event message for an existing guild event.')
     async def attach_command(interaction: Interaction):
         logger.info(f'Received attach command request from {interaction.user.name}')
-        await interaction.response.send_message(f'Select an existing guild event from the dropdown menu.', view=ExistingGuildEventsSelectView(), ephemeral=True)
+        await interaction.response.send_message(f'Select an existing guild event from the dropdown menu.', view=ExistingGuildEventsSelectView(interaction.guild), ephemeral=True)
 
     @tasks.loop(seconds=30)
     async def update():
