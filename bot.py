@@ -1132,7 +1132,7 @@ def main():
     # Check if an event is active in the given location
     def location_has_active_event(location: VoiceChannel) -> bool:
         for event in client.events:
-            if event.location == location and event.started:
+            if event.voice_channel == location and event.started:
                 return True
         return False
 
@@ -1452,7 +1452,7 @@ def main():
                     continue
 
                 # If there is an active event in the same location, disable the start button
-                if location_has_active_event(event.location):
+                if location_has_active_event(event.voice_channel):
                     event.event_buttons.start_button.disabled = True
         persist.write(client.get_events_dict())
 
