@@ -1000,7 +1000,7 @@ def main():
         async def callback(self, interaction: Interaction):
             logger.info(f'{interaction.user.name} selected a guild event to attach to')
             selected_guild_event_id = int(self.values[0])
-            selected_guild_event: ScheduledEvent = await self.guild.get_scheduled_event(selected_guild_event_id)
+            selected_guild_event: ScheduledEvent = self.guild.get_scheduled_event(selected_guild_event_id)
             if selected_guild_event:
                 if selected_guild_event.name in [event.name for event in client.events]:
                     logger.info(f'\tGuild event had the same name as an existing event object')
