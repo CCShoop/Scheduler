@@ -77,10 +77,9 @@ class Participant:
             raise e
 
     # Remove the participant's availability for the specified day, otherwise today
-    def set_no_availability(self, month=datetime.now().astimezone().month, day=datetime.now().astimezone().day, year=datetime.now().astimezone().year) -> None:
-        for idx, timeblock in enumerate(self.availability.copy()):
-            if timeblock.start_time.day == day:
-                self.availability.remove(timeblock)
+    def set_no_availability(self) -> None:
+        self.availability.clear()
+        self.answered = False
 
     # Complex availability input from the Availability Modal
     def set_specific_availability(self, avail_string: str, date_string: str) -> None:
@@ -165,7 +164,7 @@ class Participant:
             self.set_full_availability(month=month, day=day, year=year)
             return
         if 'clear' in avail_string or 'empty' in avail_string:
-            self.set_no_availability(month=month, day=day, year=year)
+            self.set_no_availability()
             return
 
         # Timezone parsing

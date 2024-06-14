@@ -44,6 +44,9 @@ INCLUDE = 'INCLUDE'
 EXCLUDE = 'EXCLUDE'
 INCLUDE_EXCLUDE: Literal = Literal[INCLUDE, EXCLUDE]
 
+# Time in minutes to delay "immediate" start
+START_TIME_DELAY = 10
+
 
 # Return an HH:MM format string from the total minutes
 def mins_to_hrs_mins_string(minutes: int) -> str:
@@ -58,7 +61,6 @@ def mins_to_hrs_mins_string(minutes: int) -> str:
     else:
         minutes = f'{minutes}'
     return f'{hours}:{minutes}'
-
 
 # Add a 0 if the digit is < 10
 def double_digit_string(digit_string: str) -> str:
@@ -187,9 +189,9 @@ def main():
                 if participant.subscribed:
                     subbed_participants.append(participant)
 
-            current_time = datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=5)
+            current_time = datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=START_TIME_DELAY)
 
-            # Check if all participants are available in 5 minutes
+            # Check if all participants are available in [START_TIME_DELAY] minutes
             all_participants_available = True
             for participant in subbed_participants:
                 if not participant.is_available_at(current_time, self.duration):
@@ -228,7 +230,7 @@ def main():
                 if participant.subscribed and participant.answered:
                     subbed_participants.append(participant)
 
-            current_time = datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=5)
+            current_time = datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=START_TIME_DELAY)
 
             # Find common availability
             available_timeblocks = []
@@ -1008,7 +1010,7 @@ def main():
                     return
                 await interaction.response.defer(ephemeral=True)
                 participants = get_participants_from_interaction(interaction)
-                event = Event(name=selected_guild_event.name, voice_channel=selected_guild_event.location, participants=participants, guild=self.guild, text_channel=interaction.channel, start_time=selected_guild_event.start_time)
+                event = Event(name=selected_guild_event.name, voice_channel=selected_guild_event.location, participants=participants, guild=self.guild, text_channel=interaction.channel, start_time=selected_guild_event.start_time.astimezone())
                 event.created = True
                 response = event.get_event_buttons_message_string()
                 event.event_buttons = EventButtons(event)
@@ -1126,6 +1128,13 @@ def main():
                 continue
             participants.append(Participant(member=member))
         return participants
+
+    # Check if an event is active in the given location
+    def location_has_active_event(location: VoiceChannel) -> bool:
+        for event in client.events:
+            if event.location == location and event.started:
+                return True
+        return False
 
 
     @client.event
@@ -1441,6 +1450,10 @@ def main():
                 except Exception as e:
                     logger.error(f'{event}: Error sending event created notification with buttons: {e}')
                     continue
+
+                # If there is an active event in the same location, disable the start button
+                if location_has_active_event(event.location):
+                    event.event_buttons.start_button.disabled = True
         persist.write(client.get_events_dict())
 
     client.run(DISCORD_TOKEN)
