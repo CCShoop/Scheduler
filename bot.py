@@ -1026,6 +1026,7 @@ def main():
                 await interaction.response.defer(ephemeral=True)
                 participants = get_participants_from_interaction(interaction)
                 event = Event(name=selected_guild_event.name, voice_channel=selected_guild_event.location, participants=participants, guild=self.guild, text_channel=interaction.channel, start_time=selected_guild_event.start_time.astimezone())
+                client.events.append(event)
                 event.created = True
                 response = event.get_event_buttons_message_string()
                 event.event_buttons = EventButtons(event)
