@@ -332,8 +332,17 @@ def main():
                     return participant
             return None
 
-        # Shares participants with another event
-        def shares_participants(self, event) -> list:
+        # Shares participants with other event
+        def shares_participants(self, event) -> bool:
+            other_participants = []
+            for self_participant in self.participants:
+                for other_participant in event.participants:
+                    if self_participant.member.id == other_participant.member.id:
+                        return True
+            return False
+
+        # Shared participants with other event
+        def shared_participants(self, event) -> list:
             other_participants = []
             for self_participant in self.participants:
                 for other_participant in event.participants:
@@ -875,7 +884,7 @@ def main():
                     await self.event.scheduled_event.start(reason=f'Start button pressed by {interaction.user.name}.')
                 except Exception as e:
                     logger.error(f'{self.event}: \tFailed to start event')
-                self.event.start_time = datetime.now().astimezone()
+                self.event.start_time = datetime.now().astimezone().replace(second=0, microsecond=0)
                 self.event.add_user_as_participant(interaction.user)
                 self.event.event_buttons_msg_content_pt2 = f'\n**Started at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
                 self.event.started = True
@@ -884,6 +893,21 @@ def main():
                 self.end_button.disabled = False
                 self.reschedule_button.disabled = True
                 self.cancel_button.disabled = True
+                # Offset all other events that share this location to start after the end of this event
+                buffer_time = timedelta(minutes=0)
+                other_events = []
+                prev_event = None
+                for other_event in client.events:
+                    if other_event != self.event and (other_event.voice_channel == self.event.voice_channel or other_event.shares_participants(self.event)):
+                        if other_event.start_time < (self.event.start_time + self.event.duration + buffer_time):
+                            other_event.start_time = (self.event.start_time + self.event.duration + buffer_time)
+                        other_events.append(other_event)
+                # Offset the events from each other to prevent stack smashing
+                for other_event in other_events:
+                    if prev_event:
+                        if other_event.start_time < (prev_event.start_time + prev_event.duration + buffer_time):
+                            other_event.start_time = (prev_event.start_time + prev_event.duration + buffer_time)
+                    prev_event = other_event
                 # Interaction response
                 try:
                     await interaction.response.edit_message(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt4}', view=self.event.event_buttons)
