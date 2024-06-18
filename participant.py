@@ -73,6 +73,7 @@ class Participant:
             end_time += timedelta(days=1)
             self.availability.append(TimeBlock(start_time, end_time))
             self.answered = True
+            self.full_availability_flag = True
             self.clean_availability()
         except Exception as e:
             raise e
@@ -309,7 +310,10 @@ class Participant:
                 if event_end_time < timeblock.end_time:
                     new_availability.append(TimeBlock(event_end_time, timeblock.end_time))
         self.availability = new_availability
-        self.clean_availability()
+        if self.availability:
+            self.clean_availability()
+        else:
+            self.full_availability_flag = False
 
     # Confirm the participant's availability is still valid
     def confirm_answered(self, duration: timedelta = timedelta(minutes=30)) -> None:

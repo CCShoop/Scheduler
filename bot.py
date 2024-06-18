@@ -673,6 +673,11 @@ def main():
                 response = f'**__Availability received for {self.event}!__**\n' + participant.get_availability_string()
                 await interaction.response.send_message(response, ephemeral=True)
                 self.event.changed = True
+                for other_participant in self.event.participants:
+                    if other_participant != participant and other_participant.full_availability_flag:
+                        for timeblock in participant.availability:
+                            if timeblock.start_time.date_is_today and other_participant.availability[0].end_time < timeblock.end_time:
+                                other_participant.availability[0].end_time = timeblock.end_time
                 await self.event.update_responded_message()
                 for timeblock in participant.availability:
                     logger.info(f'\t{timeblock}')
