@@ -1176,6 +1176,17 @@ def main():
                 return True
         return False
 
+    # Sort created events and then append uncreated events
+    def sort_events() -> None:
+        new_events = []
+        for event in client.events:
+            if event.created:
+                new_events.append(event)
+        new_events.sort(key=lambda event: event.start_time)
+        for event in client.events:
+            if not event.created:
+                new_events.append(event)
+
 
     @client.event
     async def on_ready():
@@ -1315,6 +1326,8 @@ def main():
 
     @tasks.loop(seconds=30)
     async def update():
+        sort_events()
+
         # Participant availability checks
         for event in client.events:
             # If availability expires before the event is created, mark the participant as unanswered
@@ -1467,6 +1480,20 @@ def main():
                     event.start_time = None
                     event.ready_to_create = False
                     continue
+
+                # If there is an active event in the same location, offset the start time to after the event
+                prev_event = None
+                for other_event in client.events:
+                    if other_event != event and (other_event.voice_channel == event.voice_channel or other_event.shares_participants(event)) and other_event == started:
+                        if not prev_event:
+                            prev_event = other_event
+                            continue
+                        if (prev_event.start_time + prev_event.duration + event.duration) > other_event.start_time:
+                            prev_event = other_event
+                            continue
+                        if event.start_time < (prev_event.start_time + prev_event.duration):
+                            event.start_time = (prev_event.start_time + prev_event.duration)
+                        break
 
                 # Create event
                 try:
