@@ -726,7 +726,17 @@ def main():
                 participant = self.event.get_participant(interaction.user.name)
                 if not participant.full_availability_flag:
                     logger.info(f'{self.event}: {participant} selected full availability button')
-                    participant.set_full_availability()
+                    # Get last availability time that starts today
+                    end_time: datetime = None
+                    for other_participant in self.event.participants:
+                        if other_participant != participant and other_participant.answered:
+                            for timeblock in other_participant.availability:
+                                if timeblock.start_time.date_is_today and not timeblock.end_time.date_is_today:
+                                    if not end_time:
+                                        end_time = timeblock.end_time
+                                    elif end_time < timeblock.end_time:
+                                        end_time = timeblock.end_time
+                    participant.set_full_availability(end_time=end_time)
                     for timeblock in participant.availability:
                         logger.info(f'{self.event}: \t{timeblock}')
                     participant.full_availability_flag = True

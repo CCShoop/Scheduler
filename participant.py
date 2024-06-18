@@ -58,7 +58,7 @@ class Participant:
         return response
 
     # Set the participant as available until midnight today
-    def set_full_availability(self, month = None, day = None, year = None) -> None:
+    def set_full_availability(self, month = None, day = None, year = None, end_time = None) -> None:
         try:
             cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
             if not month:
@@ -68,7 +68,8 @@ class Participant:
             if not year:
                 year = cur_time.year
             start_time = cur_time.replace(month=month, day=day, year=year)
-            end_time = cur_time.replace(month=month, day=day, year=year, hour=0, minute=0)
+            if not end_time:
+                end_time = cur_time.replace(month=month, day=day, year=year, hour=0, minute=0)
             end_time += timedelta(days=1)
             self.availability.append(TimeBlock(start_time, end_time))
             self.answered = True
