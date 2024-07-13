@@ -46,7 +46,8 @@ INCLUDE_EXCLUDE: Literal = Literal[INCLUDE, EXCLUDE]
 
 # Time in minutes to delay "immediate" start
 START_TIME_DELAY = 10
-
+# Number of updates before an event is cleared
+EVENT_TIMEOUT: int = (2 * 60 * 24 * 3) # updates/min * min/hour * hours/day * days
 
 # Return an HH:MM format string from the total minutes
 def mins_to_hrs_mins_string(minutes: int) -> str:
@@ -141,7 +142,8 @@ def main():
             started: bool = False,
             scheduled_event = None,
             changed: bool = False,
-            unavailable: bool = False
+            unavailable: bool = False,
+            timeout_counter: int = EVENT_TIMEOUT
         ) -> None:
             self.name = name
             self.guild = guild
@@ -170,6 +172,7 @@ def main():
             self.duration = duration
             self.mins_until_start: int = 0
             self.unavailable = unavailable
+            self.timeout_counter: int = timeout_counter
 
         # Return all timeblocks that intersect each other
         def intersect_time_blocks(self, timeblocks1: list, timeblocks2: list) -> list:
@@ -578,6 +581,13 @@ def main():
             event_unavailable = data["unavailable"]
             logger.info(f'{event_name}: unavailable: {event_unavailable}')
 
+            # Timeout counter
+            try:
+                event_timeout_counter = data["timeout_counter"]
+            except:
+                event_timeout_counter = EVENT_TIMEOUT
+            logger.info(f'{event_name}: timeout_counter: {event_timeout_counter}')
+
             return cls(
                 name = event_name,
                 guild = event_guild,
@@ -601,7 +611,8 @@ def main():
                 changed = event_changed,
                 start_time = event_start_time,
                 duration = event_duration,
-                unavailable = event_unavailable
+                unavailable = event_unavailable,
+                timeout_counter = event_timeout_counter
             )
 
         def to_dict(self) -> dict:
@@ -646,7 +657,8 @@ def main():
                 'changed': self.changed,
                 'start_time': start_time,
                 'duration': self.get_duration_minutes(),
-                'unavailable': self.unavailable
+                'unavailable': self.unavailable,
+                'timeout_counter': self.timeout_counter
             }
 
         def __repr__(self) -> str:
@@ -1186,6 +1198,27 @@ def main():
         for event in client.events:
             if not event.created:
                 new_events.append(event)
+        client.events = new_events
+
+    # Decrement event timeout counters and remove events that hit 0
+    def clear_timed_out_events() -> None:
+        new_events = []
+        for event in client.events:
+            if event.created:
+                continue
+            event.timeout_counter -= 1
+            if event.timeout_counter > 0:
+                new_events.append(event)
+            else:
+                notification_message = f'{event.get_names_string(subscribed_only=True, mention=True)}\nScheduling for **{event.name}** has timed out and has been cancelled.\n'
+                if event.text_channel:
+                    await event.text_channel.send(notification_message)
+                else:
+                    for participant in event.participants:
+                        async with participant.msg_lock:
+                            participant.member.send(notification_message)
+                logger.info(f'{event.name} has timed out and has been cancelled.')
+        client.events = new_events
 
 
     @client.event
@@ -1327,6 +1360,7 @@ def main():
     @tasks.loop(seconds=30)
     async def update():
         sort_events()
+        clear_timed_out_events()
 
         # Participant availability checks
         for event in client.events:
