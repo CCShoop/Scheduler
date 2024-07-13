@@ -1201,7 +1201,7 @@ def main():
         client.events = new_events
 
     # Decrement event timeout counters and remove events that hit 0
-    def clear_timed_out_events() -> None:
+    async def clear_timed_out_events() -> None:
         new_events = []
         for event in client.events:
             if event.created:
@@ -1360,7 +1360,7 @@ def main():
     @tasks.loop(seconds=30)
     async def update():
         sort_events()
-        clear_timed_out_events()
+        await clear_timed_out_events()
 
         # Participant availability checks
         for event in client.events:
