@@ -946,6 +946,8 @@ def main():
                 logger.info(f'{self.event}: {interaction.user} ended by button press')
                 try:
                     await self.event.scheduled_event.delete(reason=f'End button pressed by {interaction.user.name}.')
+                    self.event.scheduled_event = None
+                    self.event.created = False
                     end_time: datetime = datetime.now().astimezone()
                     self.event.duration = end_time - self.event.start_time
                     msg_pt1_partition1 = self.event.event_buttons_msg_content_pt1.partition('**Duration:** ')
@@ -988,8 +990,17 @@ def main():
                 await interaction.response.defer(ephemeral=True)
                 self.event.add_user_as_participant(interaction.user)
                 new_event = Event(name=self.event.name, voice_channel=self.event.voice_channel, participants=self.event.participants, guild=self.event.guild, text_channel=interaction.channel, image_url=self.event.image_url, duration=self.event.duration)
+                # Re-add availability for the period of time of the event to everyone else for all events they're in
+                event_timeblock = TimeBlock(self.event.start_time, (self.event.start_time + self.event.duration))
+                cur_event_participant_ids = [participant.member.id for participant in self.event.participants]
+                for event in client.events:
+                    for participant in event.participants:
+                        if participant.member.id in cur_event_participant_ids and participant.member.id != interaction.user.id:
+                            participant.availability.append(event_timeblock)
                 try:
                     await self.event.scheduled_event.delete(reason=f'Reschedule button pressed by {interaction.user.name}.')
+                    self.event.scheduled_event = None
+                    self.event.created = False
                     self.event.event_buttons_msg_content_pt2 = f'\n**Rescheduled at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
                     self.start_button.style = ButtonStyle.blurple
                     self.start_button.disabled = True
@@ -1024,6 +1035,8 @@ def main():
                     await self.event.text_channel.send(f'{self.event.get_names_string(subscribed_only=True, mention=True)}\n{interaction.user.name} cancelled {self.event}.')
                     if self.event.created:
                         await self.event.scheduled_event.delete(reason=f'Cancel button pressed by {interaction.user.name}.')
+                        self.event.scheduled_event = None
+                        self.event.created = False
                 except Exception as e:
                     logger.exception(f'Error in cancel button callback: {e}')
                 await self.event.event_buttons_message.delete()
