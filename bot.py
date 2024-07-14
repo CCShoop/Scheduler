@@ -241,8 +241,9 @@ def main():
             for participant in subbed_participants:
                 available_timeblocks.append(participant.availability)
             # Get the latest timeblock date
-            for timeblock in available_timeblocks:
-                latest_date = max(timeblock.start_time.date(), latest_date)
+            for availability in available_timeblocks:
+                for timeblock in availability:
+                    latest_date = max(timeblock.start_time.date(), latest_date)
             intersected_timeblocks = available_timeblocks[0]
             for timeblocks in available_timeblocks[1:]:
                 intersected_timeblocks = self.intersect_time_blocks(intersected_timeblocks, timeblocks)
@@ -257,6 +258,8 @@ def main():
                 if participant.answered:
                     if participant.availability[-1].start_time.date() < latest_date:
                         participant.answered = False
+            if self.has_everyone_answered():
+                return None
             return latest_date
 
         # Return the number of participants who have responded
@@ -1421,7 +1424,8 @@ def main():
             if event.unavailable:
                 try:
                     try:
-                        await event.availability_message.delete()
+                        if event.availability_message:
+                            await event.availability_message.delete()
                     except Exception as e:
                         logger.error(f'Error disabling availability buttons: {e}')
                     await event.responded_message.delete()
@@ -1503,24 +1507,36 @@ def main():
             # Skip the rest of update() for this event if we are waiting for answers
             if not event.has_everyone_answered():
                 if event.number_of_responded() > 1:
-                    latest_date = event.check_availabilities()
-                    await event.update_responded_message(latest_date)
+                    try:
+                        latest_date = event.check_availabilities()
+                        await event.update_responded_message(latest_date)
+                    except Exception as e:
+                        logger.error(f'{event}: Error checking availabilities before everyone responded: {e}')
                 continue
 
             if event.created:
                 continue
 
+            # Check availabilities to see if there is availability
+            # if not, ensure everyone has responded to the lastest date
+            try:
+                latest_date = event.check_availabilities()
+                if latest_date:
+                    await event.update_responded_message(latest_date)
+                    continue
+            except Exception as e:
+                logger.error(f'{event}: Error checking availabilities before comparing: {e}')
+                continue
             # Delete availability request message
             try:
                 await event.availability_message.delete()
             except Exception as e:
-                logger.error(f'Error disabling availability buttons: {e}')
-
+                logger.error(f'{event}: Error disabling availability buttons: {e}')
             # Compare availabilities
             try:
                 event.compare_availabilities()
             except Exception as e:
-                logger.error(f'Error comparing availabilities: {e}')
+                logger.error(f'{event}: Error comparing availabilities: {e}')
                 continue
 
             # Cancel the event if no common availability was found
