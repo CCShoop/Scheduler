@@ -223,10 +223,10 @@ def main():
             logger.info(f'{self.name}: compare_availabilities: No common availability found between all participants, cancelling event')
 
         # Check before everyone has responded to see if two people have answered and are not available
-        def check_availabilities(self) -> None:
+        def check_availabilities(self):
             # Make sure it's been at least one update cycle since the last response
             if self.changed:
-                return
+                return None
             lacks_availability = True
             subbed_participants = []
             for participant in self.participants:
@@ -236,18 +236,28 @@ def main():
             current_time = datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=START_TIME_DELAY)
 
             # Find common availability
+            latest_date = current_time.date()
             available_timeblocks = []
             for participant in subbed_participants:
                 available_timeblocks.append(participant.availability)
+            # Get the latest timeblock date
+            for timeblock in available_timeblocks:
+                latest_date = max(timeblock.start_time.date(), latest_date)
             intersected_timeblocks = available_timeblocks[0]
             for timeblocks in available_timeblocks[1:]:
                 intersected_timeblocks = self.intersect_time_blocks(intersected_timeblocks, timeblocks)
 
+            # Retturn if common availability is found
             for timeblock in intersected_timeblocks:
                 if timeblock.duration >= self.duration:
-                    return
-            logger.info(f'{self.name}: check_availabilities: No common availability found between currently responded participants, cancelling event')
-            self.unavailable = True
+                    return None
+
+            # Mark participant as unanswered if their last timeblock isn't on the same date as the last entry
+            for participant in self.participants:
+                if participant.answered:
+                    if participant.availability[-1].start_time.date() < latest_date:
+                        participant.answered = False
+            return latest_date
 
         # Return the number of participants who have responded
         def number_of_responded(self) -> int:
@@ -428,13 +438,17 @@ def main():
             await self.update_responded_message()
 
         # Create or edit the responded message to show who still needs to respond to the availability request
-        async def update_responded_message(self) -> None:
+        async def update_responded_message(self, latest_date = None) -> None:
             if self.created:
                 return
             if not self.responded_message:
                 try:
                     mentions = self.get_names_string(unanswered_only=True, mention=True)
-                    self.responded_message = await self.text_channel.send(content=f'Waiting for a response from:\n{mentions}')
+                    message_content = ''
+                    if latest_date:
+                        message_content = f'**Latest input availability date: {latest_date.month}/{latest_date.day}**\n'
+                    message_content += f'Waiting for a response from:\n{mentions}'
+                    self.responded_message = await self.text_channel.send(content=message_content)
                 except Exception as e:
                     logger.exception(f'{self.name}: Error sending responded message: {e}')
                 return
@@ -446,7 +460,11 @@ def main():
                 return
             try:
                 mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
-                await self.responded_message.edit(content=f'Waiting for a response from:\n{mentions}')
+                message_content = ''
+                if latest_date:
+                    message_content = f'**Latest input availability date: {latest_date.month}/{latest_date.day}**\n'
+                message_content += f'Waiting for a response from: \n{mentions}'
+                await self.responded_message.edit(content=message_content)
             except Exception as e:
                 logger.exception(f'{self.name}: Error getting mentions string or editing responded message: {e}')
 
@@ -1485,7 +1503,8 @@ def main():
             # Skip the rest of update() for this event if we are waiting for answers
             if not event.has_everyone_answered():
                 if event.number_of_responded() > 1:
-                    event.check_availabilities()
+                    latest_date = event.check_availabilities()
+                    await event.update_responded_message(latest_date)
                 continue
 
             if event.created:
