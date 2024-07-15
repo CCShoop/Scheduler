@@ -127,8 +127,9 @@ def main():
             image_url: str = '',
             participants: list = None,
             duration = timedelta(minutes=30),
-            start_time: datetime = None,
-            availability_message= None,
+            multi_event: bool = False,
+            start_times: list = None,
+            availability_message = None,
             avail_buttons = None,
             responded_message = None,
             event_buttons_message = None,
@@ -140,7 +141,7 @@ def main():
             ready_to_create: bool = False,
             created: bool = False,
             started: bool = False,
-            scheduled_event = None,
+            scheduled_events: list = None,
             changed: bool = False,
             unavailable: bool = False,
             timeout_counter: int = EVENT_TIMEOUT
@@ -151,7 +152,13 @@ def main():
             self.text_channel = text_channel
             self.availability_message = availability_message 
             self.responded_message = responded_message
-            self.voice_channel = voice_channel
+            if voice_channel:
+                self.voice_channel = voice_channel
+            else:
+                try:
+                    self.voice_channel = self.guild.voice_channels[0]
+                except:
+                    self.voice_channel = None
             self.privacy_level = PrivacyLevel.guild_only
             self.participants = participants
             self.image_url = image_url
@@ -166,12 +173,19 @@ def main():
             self.ready_to_create = ready_to_create
             self.created = created
             self.started = started
-            self.scheduled_event: ScheduledEvent = scheduled_event
+            if scheduled_events:
+                self.scheduled_events: list = scheduled_events
+            else:
+                self.scheduled_events = []
             self.changed = changed
-            self.start_time: datetime = start_time
+            if start_times:
+                self.start_times: list = start_times
+            else:
+                self.start_times = []
             self.duration = duration
             self.mins_until_start: int = 0
             self.unavailable = unavailable
+            self.multi_event = multi_event
             self.timeout_counter: int = timeout_counter
 
         # Return all timeblocks that intersect each other
@@ -187,6 +201,9 @@ def main():
 
         # Compare availabilities of all subscribed participants
         def compare_availabilities(self) -> None:
+            if self.created or self.ready_to_create or self.changed:
+                return
+            self.changed = True
             subbed_participants = []
             for participant in self.participants:
                 if participant.subscribed:
@@ -201,13 +218,17 @@ def main():
                     all_participants_available = False
                     break
 
+            dates_scheduled = []
+            cur_date = current_time.date()
             if all_participants_available:
-                self.start_time = current_time
-                self.ready_to_create = True
+                self.start_times.append(current_time)
                 self.five_minute_warning_flag = True
-                return
+                self.ready_to_create = True
+                if not self.multi_event:
+                    return
+                dates_scheduled.append(cur_date)
 
-            # Otherwise, find the earliest common availability
+            # Find the earliest common availability
             available_timeblocks = []
             for participant in subbed_participants:
                 available_timeblocks.append(participant.availability)
@@ -216,18 +237,23 @@ def main():
                 intersected_timeblocks = self.intersect_time_blocks(intersected_timeblocks, timeblocks)
 
             for timeblock in intersected_timeblocks:
-                if timeblock.duration >= self.duration:
-                    self.start_time = timeblock.start_time
+                date_scheduled = False
+                tb_date = timeblock.start_time.date()
+                for date in dates_scheduled:
+                    if tb_date.month == date.month and tb_date.day == date.day and tb_date.year == date.year:
+                        logger.info(f'{self.name}: already has event scheduled for date: {tb_date.month}/{tb_date.day}: {timeblock.start_time.strftime("%H:%M")}')
+                        date_scheduled = True
+                        break
+                if timeblock.duration >= self.duration and not date_scheduled:
+                    logger.info(f'{self.name}: start time for {tb_date.month}/{tb_date.day}: {timeblock.start_time.strftime("%H:%M")}')
+                    self.start_times.append(timeblock.start_time)
                     self.ready_to_create = True
-                    return
-            logger.info(f'{self.name}: compare_availabilities: No common availability found between all participants, cancelling event')
+                    dates_scheduled.append(tb_date)
+            if not self.ready_to_create:
+                logger.info(f'{self.name}: compare_availabilities: No common availability found between all participants, cancelling event')
 
         # Check before everyone has responded to see if two people have answered and are not available
         def check_availabilities(self):
-            # Make sure it's been at least one update cycle since the last response
-            if self.changed:
-                return None
-            lacks_availability = True
             subbed_participants = []
             for participant in self.participants:
                 if participant.subscribed and participant.answered:
@@ -236,11 +262,14 @@ def main():
             current_time = datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=START_TIME_DELAY)
 
             # Find common availability
-            latest_date = current_time.date()
             available_timeblocks = []
             for participant in subbed_participants:
                 available_timeblocks.append(participant.availability)
+            if not available_timeblocks:
+                return None
+
             # Get the latest timeblock date
+            latest_date = current_time.date()
             for availability in available_timeblocks:
                 for timeblock in availability:
                     latest_date = max(timeblock.start_time.date(), latest_date)
@@ -248,18 +277,11 @@ def main():
             for timeblocks in available_timeblocks[1:]:
                 intersected_timeblocks = self.intersect_time_blocks(intersected_timeblocks, timeblocks)
 
-            # Retturn if common availability is found
-            for timeblock in intersected_timeblocks:
-                if timeblock.duration >= self.duration:
-                    return None
-
             # Mark participant as unanswered if their last timeblock isn't on the same date as the last entry
             for participant in self.participants:
                 if participant.answered:
                     if participant.availability[-1].start_time.date() < latest_date:
                         participant.answered = False
-            if self.has_everyone_answered():
-                return None
             return latest_date
 
         # Return the number of participants who have responded
@@ -270,24 +292,36 @@ def main():
                     responded += 1
             return responded
 
-        # Make the guild scheduled event object, set an image if there is a url
-        async def make_scheduled_event(self) -> None:
-            self.scheduled_event = await self.guild.create_scheduled_event(name=self.name, description='Bot-generated event', start_time=self.start_time, entity_type=self.entity_type, channel=self.voice_channel, privacy_level=self.privacy_level)
+        # Prep next scheduled event
+        async def prep_next_scheduled_event(self) -> None:
+            self.scheduled_events = self.scheduled_events[1:]
+            self.start_times = self.start_times[1:]
+            self.five_minute_warning_flag = False
+            if self.scheduled_events:
+                message_content = self.get_event_buttons_message_string()
+                self.event_buttons = EventButtons(self)
+                self.event_buttons_message = await self.text_channel.send(content=message_content, view=self.event_buttons)
+
+        # Make the guild scheduled event objects, set an image if there is a url
+        async def make_scheduled_events(self) -> None:
+            for start_time in self.start_times:
+                scheduled_event = await self.guild.create_scheduled_event(name=self.name, description='Bot-generated event', start_time=start_time, entity_type=self.entity_type, channel=self.voice_channel, privacy_level=self.privacy_level)
+                if self.image_url:
+                    try:
+                        response = requests.get(self.image_url)
+                        if response.status_code == 200:
+                            await scheduled_event.edit(image=response.content)
+                            logger.info(f'{self.name}: Processed image')
+                        else:
+                            self.image_url = ''
+                            logger.warn(f'{self.name}: Failed to get image')
+                    except Exception as e:
+                        self.image_url = ''
+                        logger.exception(f'{self.name}: Failed to process image: {e}')
+                self.scheduled_events.append(scheduled_event)
+                logger.info(f'{self.name}: Created event starting {start_time.strftime("%m/%d/%Y: %H:%M")} ET')
             self.ready_to_create = False
             self.created = True
-            if self.image_url:
-                try:
-                    response = requests.get(self.image_url)
-                    if response.status_code == 200:
-                        await self.scheduled_event.edit(image=response.content)
-                        logger.info(f'{self.name}: Processed image')
-                    else:
-                        self.image_url = ''
-                        logger.warn(f'{self.name}: Failed to get image')
-                except Exception as e:
-                    self.image_url = ''
-                    logger.exception(f'{self.name}: Failed to process image: {e}')
-            logger.info(f'{self.name}: Created event starting {self.start_time.strftime("%m/%d/%Y: %H:%M")} ET')
 
         # Get a string of participant mentions/names
         def get_names_string(self, subscribed_only: bool = False, unsubscribed_only: bool = False, unanswered_only: bool = False, mention: bool = False) -> str:
@@ -348,7 +382,7 @@ def main():
                     return participant
             return None
 
-        # Shares participants with other event
+        # Whether or not this event shares participants with the other event
         def shares_participants(self, event) -> bool:
             other_participants = []
             for self_participant in self.participants:
@@ -357,7 +391,7 @@ def main():
                         return True
             return False
 
-        # Shared participants with other event
+        # Get a list of shared participants with the other event
         def shared_participants(self, event) -> list:
             other_participants = []
             for self_participant in self.participants:
@@ -385,11 +419,12 @@ def main():
             if unsubbed:
                 unsubbed = f'**Unsubscribed:** {unsubbed}'
             response = ''
-            time_until_start: timedelta = self.start_time - datetime.now().astimezone()
+            time_until_start: timedelta = self.start_times[0] - datetime.now().astimezone()
             self.mins_until_start = int(time_until_start.total_seconds()//60) + 1
             self.event_buttons_msg_content_pt1 = f'{self.get_names_string(subscribed_only=True, mention=True)}'
             self.event_buttons_msg_content_pt1 += f'\n**Event name:** {self.name}'
             self.event_buttons_msg_content_pt1 += f'\n**Duration:** {self.get_duration_minutes()} minutes'
+            self.event_buttons_msg_content_pt1 += f'\n**Multi-event:** {self.multi_event}'
             self.event_buttons_msg_content_pt1 += f'\n**Scheduled:** {self.get_start_time_string()}'
             self.event_buttons_msg_content_pt2 = f'\n**Starts in:** {mins_to_hrs_mins_string(self.mins_until_start)}'
             self.event_buttons_msg_content_pt4 = f'\n{unsubbed}'
@@ -402,12 +437,14 @@ def main():
 
         # Get start time string
         def get_start_time_string(self) -> str:
-            return f'{self.start_time.strftime("%m/%d at %H:%M")} ET'
+            return f'{self.start_times[0].strftime("%m/%d at %H:%M")} ET'
 
         # All participants have responded
-        def has_everyone_answered(self) -> bool:
+        def has_everyone_answered(self, latest_date=None) -> bool:
+            if not latest_date:
+                latest_date = datetime.now().astimezone().date()
             for participant in self.participants:
-                if participant.subscribed and not participant.answered:
+                if (participant.subscribed and not participant.answered) or participant.availability[-1].start_time.date() < latest_date:
                     return False
             return True
 
@@ -418,6 +455,7 @@ def main():
                 await interaction.response.send_message(f'Event scheduling started for {self.name}.', ephemeral=True)
                 response =  f'**Event name:** {self.name}'
                 response += f'\n**Duration:** {self.get_duration_minutes()} minutes'
+                response += f'\n**Multi-event:** {self.multi_event}'
                 response += f'\n\nSelect **Respond** to enter your availability.'
                 response += f'\n**Full** will mark you as available from now until midnight tonight.'
                 response += f'\n**Use Existing** will attempt to grab your availability from another event.'
@@ -429,6 +467,7 @@ def main():
                 await interaction.followup.send(f'Event rescheduling started for {self.name}.', ephemeral=True)
                 response =  f'**Event name:** {self.name}'
                 response += f'\n**Duration:** {self.get_duration_minutes()} minutes'
+                response += f'\n**Multi-event:** {self.multi_event}'
                 response += f'\n\nSelect **Respond** to enter your new availability.'
                 response += f'\n**Full** will mark you as available from now until midnight tonight.'
                 response += f'\n**Use Existing** will attempt to grab your availability from another event.'
@@ -438,38 +477,37 @@ def main():
                 participant.set_no_availability()
                 participant.answered = False
                 self.availability_message = await self.text_channel.send(content=response, view=self.avail_buttons)
-            await self.update_responded_message()
+            latest_date = self.check_availabilities()
+            await self.update_responded_message(latest_date)
 
         # Create or edit the responded message to show who still needs to respond to the availability request
         async def update_responded_message(self, latest_date = None) -> None:
             if self.created:
                 return
+            message_content = ''
+            if latest_date:
+                message_content = f'**Input up to latest availability date: {latest_date.month}/{latest_date.day}**\n'
+            mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
+            message_content += f'Waiting for a response from: \n{mentions}'
+            # Send new message
             if not self.responded_message:
                 try:
-                    mentions = self.get_names_string(unanswered_only=True, mention=True)
-                    message_content = ''
-                    if latest_date:
-                        message_content = f'**Latest input availability date: {latest_date.month}/{latest_date.day}**\n'
-                    message_content += f'Waiting for a response from:\n{mentions}'
                     self.responded_message = await self.text_channel.send(content=message_content)
                 except Exception as e:
                     logger.exception(f'{self.name}: Error sending responded message: {e}')
                 return
-            if self.has_everyone_answered():
+            # Edit existing message
+            if not self.has_everyone_answered(latest_date):
                 try:
-                    await self.responded_message.edit(content=f'Everyone has responded.')
+                    await self.responded_message.edit(content=message_content)
                 except Exception as e:
-                    logger.exception(f'{self.name}: Error editing responded message with "everyone has responded": {e}')
+                    logger.exception(f'{self.name}: Error getting mentions string or editing responded message: {e}')
                 return
+            # Everyone has responded
             try:
-                mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
-                message_content = ''
-                if latest_date:
-                    message_content = f'**Latest input availability date: {latest_date.month}/{latest_date.day}**\n'
-                message_content += f'Waiting for a response from: \n{mentions}'
-                await self.responded_message.edit(content=message_content)
+                await self.responded_message.edit(content=f'Everyone has responded.')
             except Exception as e:
-                logger.exception(f'{self.name}: Error getting mentions string or editing responded message: {e}')
+                logger.exception(f'{self.name}: Error editing responded message with "everyone has responded": {e}')
 
         @classmethod
         async def from_dict(cls, data):
@@ -570,14 +608,17 @@ def main():
             logger.info(f'{event_name}: started: {event_started}')
 
             # Scheduled event
-            event_scheduled_event = None
-            for guild_scheduled_event in event_guild.scheduled_events:
-                if guild_scheduled_event.id == data["scheduled_event_id"]:
-                    event_scheduled_event = guild_scheduled_event
-                    logger.info(f'{event_name}: found guild scheduled event: {event_scheduled_event.id}')
-                    break
-            if not event_scheduled_event:
-                logger.info(f'{event_name}: no guild scheduled event found')
+            event_scheduled_events = []
+            try:
+                scheduled_event_ids = data["scheduled_event_ids"]
+                for scheduled_event_id in scheduled_event_ids:
+                    for guild_scheduled_event in event_guild.scheduled_events:
+                        if guild_scheduled_event.id == scheduled_event_id:
+                            event_scheduled_events.append(guild_scheduled_event)
+                            logger.info(f'{event_name}: found guild scheduled event: {guild_scheduled_event.id}')
+                            break
+            except Exception as e:
+                logger.info(f'{event_name}: error getting guild scheduled events: {e}')
 
             # Changed
             event_changed = data["changed"]
@@ -585,11 +626,12 @@ def main():
 
             # Start time
             try:
-                event_start_time = datetime.fromisoformat(data["start_time"])
-                logger.info(f'{event_name}: start time found: {event_start_time.strftime("%A, %m/%d/%Y %H%M")}')
+                event_start_times = [datetime.fromisoformat(start_time) for start_time in data["start_times"]]
+                for event_start_time in event_start_times:
+                    logger.info(f'{event_name}: start time found: {event_start_time.strftime("%A, %m/%d/%Y %H%M")}')
             except Exception as e:
-                event_start_time = None
-                logger.info(f'{event_name}: no start time found: {e}')
+                event_start_time = []
+                logger.info(f'{event_name}: no start times found: {e}')
 
             # Duration
             event_duration = timedelta(minutes=data["duration"])
@@ -601,6 +643,13 @@ def main():
             # Unavailable
             event_unavailable = data["unavailable"]
             logger.info(f'{event_name}: unavailable: {event_unavailable}')
+
+            # Multi-event
+            try:
+                event_multi_event = data["multi_event"]
+            except:
+                event_multi_event = False
+            logger.info(f'{event_name}: multi_event: {event_multi_event}')
 
             # Timeout counter
             try:
@@ -628,11 +677,12 @@ def main():
                 ready_to_create = event_ready_to_create,
                 created = event_created,
                 started = event_started,
-                scheduled_event = event_scheduled_event,
+                scheduled_events = event_scheduled_events,
                 changed = event_changed,
-                start_time = event_start_time,
+                start_times = event_start_times,
                 duration = event_duration,
                 unavailable = event_unavailable,
+                multi_event = event_multi_event,
                 timeout_counter = event_timeout_counter
             )
 
@@ -649,14 +699,6 @@ def main():
                 event_buttons_message_id = self.event_buttons_message.id
             except:
                 event_buttons_message_id = 0
-            try:
-                scheduled_event_id = self.scheduled_event.id
-            except:
-                scheduled_event_id = 0
-            try:
-                start_time = self.start_time.isoformat()
-            except:
-                start_time = ''
             return {
                 'name': self.name,
                 'guild_id': self.guild.id,
@@ -674,11 +716,12 @@ def main():
                 'ready_to_create': self.ready_to_create,
                 'created': self.created,
                 'started': self.started,
-                'scheduled_event_id': scheduled_event_id,
+                'scheduled_event_ids': [scheduled_event.id for scheduled_event in self.scheduled_events],
                 'changed': self.changed,
-                'start_time': start_time,
+                'start_times': [start_time.isoformat() for start_time in self.start_times],
                 'duration': self.get_duration_minutes(),
                 'unavailable': self.unavailable,
+                'multi_event': self.multi_event,
                 'timeout_counter': self.timeout_counter
             }
 
@@ -715,10 +758,11 @@ def main():
                 response = f'**__Availability received for {self.event}!__**\n' + participant.get_availability_string()
                 await interaction.response.send_message(response, ephemeral=True)
                 self.event.changed = True
+                cur_date = datetime.now().astimezone().date()
                 for other_participant in self.event.participants:
                     if other_participant != participant and other_participant.full_availability_flag:
                         for timeblock in participant.availability:
-                            if timeblock.start_time.date_is_today and other_participant.availability[0].end_time < timeblock.end_time:
+                            if timeblock.start_time.date() == cur_date and other_participant.availability[0].end_time < timeblock.end_time:
                                 other_participant.availability[0].end_time = timeblock.end_time
                 await self.event.update_responded_message()
                 for timeblock in participant.availability:
@@ -739,10 +783,10 @@ def main():
             super().__init__(timeout=None)
             self.event = event
             self.respond_label = "Respond"
-            self.full_label = "Full"
-            self.reuse_label = "Use Existing"
-            self.unsub_label = "Unsubscribe"
-            self.cancel_label = "Cancel"
+            self.full_label = "Full Availability (Today)"
+            self.reuse_label = "Use Existing Availability"
+            self.unsub_label = "Unsubscribe from Event"
+            self.cancel_label = "Cancel Scheduling"
             self.respond_button = self.add_respond_button()
             self.full_button = self.add_full_button()
             self.reuse_button = self.add_reuse_button()
@@ -775,10 +819,11 @@ def main():
                     logger.info(f'{self.event}: {participant} selected full availability button')
                     # Get last availability time that starts today
                     end_time: datetime = None
+                    cur_date = datetime.now().astimezone().date()
                     for other_participant in self.event.participants:
                         if other_participant != participant and other_participant.answered:
                             for timeblock in other_participant.availability:
-                                if timeblock.start_time.date_is_today and not timeblock.end_time.date_is_today:
+                                if timeblock.start_time.date() == cur_date and not timeblock.end_time.date() == cur_date:
                                     if not end_time:
                                         end_time = timeblock.end_time
                                     elif end_time < timeblock.end_time:
@@ -819,8 +864,6 @@ def main():
                 logger.info(f'{self.event}: \tFound existing availability for {interaction.user.name}')
                 if len(found_availabilities) == 1:
                     participant.availability = found_availabilities[0].avail
-                    for timeblock in participant.availability:
-                        logger.debug(f'\t{timeblock}')
                     participant.answered = True
                     response = f'**__Availability for {self.event}:__**\n'
                     response += participant.get_availability_string()
@@ -914,10 +957,10 @@ def main():
             async def start_button_callback(interaction: Interaction):
                 logger.info(f'{self.event}: {interaction.user} started by button press')
                 try:
-                    await self.event.scheduled_event.start(reason=f'Start button pressed by {interaction.user.name}.')
+                    await self.event.scheduled_events[0].start(reason=f'Start button pressed by {interaction.user.name}.')
                 except Exception as e:
-                    logger.error(f'{self.event}: \tFailed to start event')
-                self.event.start_time = datetime.now().astimezone().replace(second=0, microsecond=0)
+                    logger.exception(f'{self.event}: Failed to start event: {e}')
+                self.event.start_times[0] = datetime.now().astimezone().replace(second=0, microsecond=0)
                 self.event.add_user_as_participant(interaction.user)
                 self.event.event_buttons_msg_content_pt2 = f'\n**Started at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
                 self.event.started = True
@@ -932,14 +975,16 @@ def main():
                 prev_event = None
                 for other_event in client.events:
                     if other_event != self.event and (other_event.voice_channel == self.event.voice_channel or other_event.shares_participants(self.event)):
-                        if other_event.start_time < (self.event.start_time + self.event.duration + buffer_time):
-                            other_event.start_time = (self.event.start_time + self.event.duration + buffer_time)
+                        for other_event_start_time in other_event.start_times:
+                            if other_event_start_time < (self.event.start_times[0] + self.event.duration + buffer_time):
+                                other_event_start_time = (self.event.start_times[0] + self.event.duration + buffer_time)
                         other_events.append(other_event)
                 # Offset the events from each other to prevent stack smashing
                 for other_event in other_events:
                     if prev_event:
-                        if other_event.start_time < (prev_event.start_time + prev_event.duration + buffer_time):
-                            other_event.start_time = (prev_event.start_time + prev_event.duration + buffer_time)
+                        for other_event_start_time in other_event.start_times:
+                            if other_event_start_time < (prev_event.start_times[0] + prev_event.duration + buffer_time):
+                                other_event_start_time = (prev_event.start_times[0] + prev_event.duration + buffer_time)
                     prev_event = other_event
                 # Interaction response
                 try:
@@ -966,20 +1011,24 @@ def main():
             async def end_button_callback(interaction: Interaction):
                 logger.info(f'{self.event}: {interaction.user} ended by button press')
                 try:
-                    await self.event.scheduled_event.delete(reason=f'End button pressed by {interaction.user.name}.')
-                    self.event.scheduled_event = None
-                    self.event.created = False
-                    end_time: datetime = datetime.now().astimezone()
-                    self.event.duration = end_time - self.event.start_time
-                    msg_pt1_partition1 = self.event.event_buttons_msg_content_pt1.partition('**Duration:** ')
-                    msg_pt1_partition2 = msg_pt1_partition1[2].partition(' minutes')
-                    self.event.event_buttons_msg_content_pt1 = f'{msg_pt1_partition1[0]}{msg_pt1_partition1[1]}{self.event.get_duration_minutes()}{msg_pt1_partition2[1]}{msg_pt1_partition2[2]}'
-                    self.event.event_buttons_msg_content_pt3 = f'\n**Ended at:** {end_time.strftime("%H:%M")} ET'
+                    await self.event.scheduled_events[0].delete(reason=f'End button pressed by {interaction.user.name}.')
+                except Exception as e:
+                    logger.error(f'Error in event control end button callback while ending scheduled event: {e}')
+                end_time: datetime = datetime.now().astimezone().replace(second=0, microsecond=0)
+                duration = end_time - self.event.start_times[0]
+                try:
+                    await self.event.prep_next_scheduled_event()
+                except Exception as e:
+                    logger.error(f'Error in event control end button callback while prepping next scheduled event: {e}')
+                msg_pt1_partition1 = self.event.event_buttons_msg_content_pt1.partition('**Duration:** ')
+                msg_pt1_partition2 = msg_pt1_partition1[2].partition(' minutes')
+                self.event.event_buttons_msg_content_pt1 = f'{msg_pt1_partition1[0]}{msg_pt1_partition1[1]}{duration.minutes}{msg_pt1_partition2[1]}{msg_pt1_partition2[2]}'
+                self.event.event_buttons_msg_content_pt3 = f'\n**Ended at:** {end_time.strftime("%H:%M")} ET'
+                try:
                     await self.event.event_buttons_message.edit(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt3} {self.event.event_buttons_msg_content_pt4}', view=self.event.event_buttons)
                 except Exception as e:
-                    logger.error(f'Error ending event or manipulating event control message: {e}')
-                logger.info(f'{self.event}: removed from memory')
-                client.events.remove(self.event)
+                    logger.error(f'Error in event control end button callback while editing event buttons message: {e}')
+                logger.info(f'{self.event}: Ended event')
                 self.end_button.style = ButtonStyle.blurple
                 self.end_button.disabled = True
                 self.reschedule_button.disabled = True
@@ -999,7 +1048,6 @@ def main():
                         await event.event_buttons_message.edit(view=event.event_buttons)
                     except Exception as e:
                         logger.error(f'{self.event}: Failed to re-enable start button for {event}: {e}')
-                self.event = None
                 persist.write(client.get_events_dict())
             self.end_button.callback = end_button_callback
             self.add_item(self.end_button)
@@ -1010,31 +1058,29 @@ def main():
                 logger.info(f'{self.event}: {interaction.user} rescheduled by button press')
                 await interaction.response.defer(ephemeral=True)
                 self.event.add_user_as_participant(interaction.user)
-                new_event = Event(name=self.event.name, voice_channel=self.event.voice_channel, participants=self.event.participants, guild=self.event.guild, text_channel=interaction.channel, image_url=self.event.image_url, duration=self.event.duration)
                 # Re-add availability for the period of time of the event to everyone else for all events they're in
-                event_timeblock = TimeBlock(self.event.start_time, (self.event.start_time + self.event.duration))
+                event_timeblock = TimeBlock(self.event.start_times[0], (self.event.start_times[0] + self.event.duration))
                 cur_event_participant_ids = [participant.member.id for participant in self.event.participants]
                 for event in client.events:
                     for participant in event.participants:
                         if participant.member.id in cur_event_participant_ids and participant.member.id != interaction.user.id:
                             participant.availability.append(event_timeblock)
                 try:
-                    await self.event.scheduled_event.delete(reason=f'Reschedule button pressed by {interaction.user.name}.')
-                    self.event.scheduled_event = None
-                    self.event.created = False
-                    self.event.event_buttons_msg_content_pt2 = f'\n**Rescheduled at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
-                    self.start_button.style = ButtonStyle.blurple
-                    self.start_button.disabled = True
-                    self.end_button.style = ButtonStyle.blurple
-                    self.end_button.disabled = True
-                    self.reschedule_button.disabled = True
-                    self.cancel_button.disabled = True
+                    await self.event.scheduled_events[0].delete(reason=f'Reschedule button pressed by {interaction.user.name}.')
+                except Exception as e:
+                    logger.error(f'Error cancelling guild event to reschedule: {e}')
+                self.created = False
+                self.event.event_buttons_msg_content_pt2 = f'\n**Rescheduled at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
+                self.start_button.style = ButtonStyle.blurple
+                self.start_button.disabled = True
+                self.end_button.style = ButtonStyle.blurple
+                self.end_button.disabled = True
+                self.reschedule_button.disabled = True
+                self.cancel_button.disabled = True
+                try:
                     await self.event.event_buttons_message.edit(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt4}', view=self.event.event_buttons)
                 except Exception as e:
-                    logger.exception(f'Error cancelling guild event to reschedule: {e}')
-                client.events.remove(self.event)
-                self.event = new_event
-                client.events.append(self.event)
+                    logger.error(f'Error editing event buttons message during reschedule: {e}')
                 try:
                     participant = self.event.get_participant(interaction.user.name)
                     participant.set_no_availability()
@@ -1042,7 +1088,7 @@ def main():
                         p.confirm_answered(duration=self.event.duration)
                     await self.event.request_availability(interaction, reschedule=True)
                 except Exception as e:
-                    logger.exception(f'Error with RESCHEDULE button requesting availability: {e}')
+                    logger.error(f'Error with RESCHEDULE button requesting availability: {e}')
                 persist.write(client.get_events_dict())
             self.reschedule_button.callback = reschedule_button_callback
             self.add_item(self.reschedule_button)
@@ -1051,24 +1097,22 @@ def main():
         def add_cancel_button(self) -> None:
             async def cancel_button_callback(interaction: Interaction):
                 try:
-                    self.event.event_buttons_msg_content_pt2 = f'\n**Cancelled by:** {interaction.user.name} at {datetime.now().astimezone().strftime("%H:%M")} ET'
-                    await self.event.event_buttons_message.edit(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt4}', view=self.event.event_buttons)
-                    await self.event.text_channel.send(f'{self.event.get_names_string(subscribed_only=True, mention=True)}\n{interaction.user.name} cancelled {self.event}.')
-                    if self.event.created:
-                        await self.event.scheduled_event.delete(reason=f'Cancel button pressed by {interaction.user.name}.')
-                        self.event.scheduled_event = None
-                        self.event.created = False
+                    await self.event.event_buttons_message.delete()
                 except Exception as e:
-                    logger.exception(f'Error in cancel button callback: {e}')
-                await self.event.event_buttons_message.delete()
-                logger.info(f'{self.event}: {interaction.user} cancelled by button press and removed from memory')
-                client.events.remove(self.event)
-                self.event = None
-                self.cancel_button.style = ButtonStyle.gray
-                self.start_button.disabled = True
-                self.end_button.disabled = True
-                self.reschedule_button.disabled = True
-                self.cancel_button.disabled = True
+                    logger.error(f'Error in cancel button callback while deleting event buttons message: {e}')
+                try:
+                    await self.event.text_channel.send(f'{self.event.get_names_string(subscribed_only=True, mention=True)}\n{interaction.user.name} cancelled {self.event}.')
+                except Exception as e:
+                    logger.error(f'Error in cancel button callback while sending text channel message: {e}')
+                try:
+                    await self.event.scheduled_events[0].delete(reason=f'Cancel button pressed by {interaction.user.name}.')
+                except Exception as e:
+                    logger.error(f'Error in cancel button callback while deleting scheduled event: {e}')
+                try:
+                    await self.event.prep_next_scheduled_event()
+                except Exception as e:
+                    logger.error(f'Error in cancel button callback while prepping next scheduled event: {e}')
+                logger.info(f'{self.event}: {interaction.user} cancelled by button press')
                 persist.write(client.get_events_dict())
             self.cancel_button.callback = cancel_button_callback
             self.add_item(self.cancel_button)
@@ -1089,15 +1133,27 @@ def main():
             selected_guild_event_id = int(self.values[0])
             selected_guild_event: ScheduledEvent = self.guild.get_scheduled_event(selected_guild_event_id)
             if selected_guild_event:
-                if selected_guild_event.name in [event.name for event in client.events]:
-                    logger.info(f'\tGuild event had the same name as an existing event object')
-                    await interaction.response.send_message(f'I already have an event with this name!', ephemeral=True)
-                    return
                 await interaction.response.defer(ephemeral=True)
-                participants = get_participants_from_interaction(interaction)
-                event = Event(name=selected_guild_event.name, voice_channel=selected_guild_event.location, participants=participants, guild=self.guild, text_channel=interaction.channel, start_time=selected_guild_event.start_time.astimezone())
-                client.events.append(event)
-                event.created = True
+                existingEvent = False
+                # Event exists, adding guild event to that event
+                for it_event in client.events:
+                    if selected_guild_event.name == it_event.name and selected_guild_event.location == it_event.voice_channel:
+                        existingEvent = True
+                        it_event.created = True
+                        it_event.text_channel = interaction.channel
+                        event = it_event
+                        break
+                # Event does not exist
+                if not existingEvent:
+                    participants = get_participants_from_interaction(interaction)
+                    start_times = [selected_guild_event.start_time.astimezone()]
+                    event = Event(name=selected_guild_event.name, voice_channel=selected_guild_event.location, participants=participants, guild=self.guild, text_channel=interaction.channel, start_times=start_times)
+                    event.created = True
+                    client.events.append(event)
+                for guild_event in self.guild.scheduled_events:
+                    if guild_event.name == selected_guild_event.name and guild_event.location == selected_guild_event.location:
+                        event.start_times.append(guild_event.start_time.astimezone())
+                        event.scheduled_events.append(guild_event)
                 response = event.get_event_buttons_message_string()
                 event.event_buttons = EventButtons(event)
                 event.event_buttons_message = await event.text_channel.send(content=response, view=event.event_buttons)
@@ -1172,23 +1228,19 @@ def main():
                 roles = roles.split(',')
                 roles = [role.strip() for role in roles]
                 roles = [utils.find(lambda r: r.name.lower() == role.lower(), interaction.guild.roles) for role in roles]
-                logger.debug(f'Roles: {roles}')
             except Exception as e:
                 raise Exception(f'Failed to parse role(s): {e}')
             for member in interaction.channel.members:
                 if member.bot or member.name == interaction.user.name:
                     continue
-                logger.debug(f'Member roles: {member.roles}')
                 found_role = False
                 for role in roles:
                     if role in member.roles:
                         found_role = True
                         break
                 if include_exclude == INCLUDE and found_role:
-                    logger.debug(f'Added member {member.name}')
                     participants.append(Participant(member=member))
                 elif include_exclude == EXCLUDE and not found_role:
-                    logger.debug(f'Added member {member.name}')
                     participants.append(Participant(member=member))
             return participants
 
@@ -1228,11 +1280,12 @@ def main():
         for event in client.events:
             if event.created:
                 new_events.append(event)
-        new_events.sort(key=lambda event: event.start_time)
+        new_events.sort(key=lambda event: event.start_times[0])
         for event in client.events:
             if not event.created:
                 new_events.append(event)
         client.events = new_events
+        persist.write(client.get_events_dict())
 
     # Decrement event timeout counters and remove events that hit 0
     async def clear_timed_out_events() -> None:
@@ -1250,9 +1303,10 @@ def main():
                 else:
                     for participant in event.participants:
                         async with participant.msg_lock:
-                            participant.member.send(notification_message)
+                            await participant.member.send(notification_message)
                 logger.info(f'{event.name} has timed out and has been cancelled.')
         client.events = new_events
+        persist.write(client.get_events_dict())
 
 
     @client.event
@@ -1275,7 +1329,8 @@ def main():
                     if event.created:
                         try:
                             image_bytes = await message.attachments[0].read()
-                            await event.scheduled_event.edit(image=image_bytes)
+                            for scheduled_event in event.scheduled_events:
+                                await scheduled_event.edit(image=image_bytes)
                             await message.channel.send(f'Added your image to {event.name}.')
                             logger.info(f'{event}: {message.author.name} added an image')
                         except Exception as e:
@@ -1330,9 +1385,10 @@ def main():
 
         # Make event
         duration = timedelta(minutes=duration)
-        event = Event(name=event_name, voice_channel=voice_channel, participants=participants, guild=interaction.guild, text_channel=interaction.channel, image_url=image_url, duration=duration, start_time=start_time_obj)
+        start_times = [start_time_obj]
+        event = Event(name=event_name, voice_channel=voice_channel, participants=participants, guild=interaction.guild, text_channel=interaction.channel, image_url=image_url, duration=duration, start_times=start_times)
         client.events.append(event)
-        await event.make_scheduled_event()
+        await event.make_scheduled_events()
         response = event.get_event_buttons_message_string()
 
         try:
@@ -1351,7 +1407,8 @@ def main():
     @app_commands.describe(usernames='Comma separated usernames of users to include/exclude.')
     @app_commands.describe(roles='Comma separated roles of users to include/exclude.')
     @app_commands.describe(duration="Event duration in minutes (30 minutes default).")
-    async def schedule_command(interaction: Interaction, event_name: str, voice_channel: VoiceChannel, image_url: str = None, include_exclude: INCLUDE_EXCLUDE = INCLUDE, usernames: str = None, roles: str = None, duration: int = 30):
+    @app_commands.describe(multi_event='Create an event on each date that everyone is available.')
+    async def schedule_command(interaction: Interaction, event_name: str, voice_channel: VoiceChannel, image_url: str = None, include_exclude: INCLUDE_EXCLUDE = INCLUDE, usernames: str = None, roles: str = None, duration: int = 30, multi_event: bool = False):
         logger.info(f'{event_name}: Received event schedule request from {interaction.user.name}')
         if not interaction.guild.voice_channels:
             raise Exception(f'The server must have at least one voice channel to schedule an event.')
@@ -1371,7 +1428,7 @@ def main():
         # Make event object
         try:
             duration = timedelta(minutes=duration)
-            event = Event(name=event_name, voice_channel=voice_channel, participants=participants, guild=interaction.guild, text_channel=interaction.channel, image_url=image_url, duration=duration)
+            event = Event(name=event_name, voice_channel=voice_channel, participants=participants, guild=interaction.guild, text_channel=interaction.channel, image_url=image_url, duration=duration, multi_event=multi_event)
             mentions = '\nWaiting for a response from:\n' + event.get_names_string(subscribed_only=True, mention=True)
             client.events.append(event)
         except Exception as e:
@@ -1402,7 +1459,8 @@ def main():
             if not event.created:
                 for participant in event.participants:
                     participant.confirm_answered()
-                await event.update_responded_message()
+                latest_date = event.check_availabilities()
+                await event.update_responded_message(latest_date)
             # Remove this event from each participant's other availabilities
             else:
                 for participant in event.participants:
@@ -1411,7 +1469,7 @@ def main():
                             continue
                         for other_participant in other_event.participants:
                             if other_participant.member.id == participant.member.id:
-                                other_participant.remove_availability_for_event(event_start_time=event.start_time, event_duration=event.duration)
+                                other_participant.remove_availability_for_event(event_start_time=event.start_times[0], event_duration=event.duration)
                         await other_event.update_responded_message()
 
         for event in client.events.copy():
@@ -1445,7 +1503,7 @@ def main():
                     else:
                         for participant in event.participants:
                             async with participant.msg_lock:
-                                participant.member.send(notification_message)
+                                await participant.member.send(notification_message)
                     logger.info(f'{event}: Participant(s) lacked (common) availability, removed event from memory')
                     client.events.remove(event)
                     del event
@@ -1458,21 +1516,21 @@ def main():
             if event.created and not event.started:
                 # Countdown
                 try:
-                    if datetime.now().astimezone() < event.start_time:
-                        time_until_start: timedelta = event.start_time - datetime.now().astimezone()
+                    if datetime.now().astimezone() < event.start_times[0]:
+                        time_until_start: timedelta = event.start_times[0] - datetime.now().astimezone()
                         event.mins_until_start = int(time_until_start.total_seconds()//60) + 1
-                    elif datetime.now().astimezone().replace(second=0, microsecond=0) == event.start_time:
+                    elif datetime.now().astimezone().replace(second=0, microsecond=0) == event.start_times[0]:
                         event.mins_until_start = 0
                     else:
-                        time_until_start: timedelta = datetime.now().astimezone() - event.start_time
+                        time_until_start: timedelta = datetime.now().astimezone() - event.start_times[0]
                         event.mins_until_start = int(time_until_start.total_seconds()//60) + 1
                     # Event start time is in the past
-                    if event.start_time < datetime.now().astimezone().replace(second=0, microsecond=0):
+                    if event.start_times[0] < datetime.now().astimezone().replace(second=0, microsecond=0):
                         event.event_buttons_msg_content_pt2 = f'\n**Overdue by:**'
                         hrs_mins_overdue_start_string = mins_to_hrs_mins_string(event.mins_until_start)
                         response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {hrs_mins_overdue_start_string} {event.event_buttons_msg_content_pt4}'
                     # It is event start time
-                    elif event.start_time == datetime.now().astimezone().replace(second=0, microsecond=0):
+                    elif event.start_times[0] == datetime.now().astimezone().replace(second=0, microsecond=0):
                         event.event_buttons_msg_content_pt2 = f'\n**Starting now**'
                         response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {event.event_buttons_msg_content_pt4}'
                     # Event start time is in the future
@@ -1487,7 +1545,7 @@ def main():
 
                 # Send 5 minute warning
                 try:
-                    if datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=5) == event.start_time and event.scheduled_event.status == EventStatus.scheduled and not event.started:
+                    if datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=5) == event.start_times[0] and event.scheduled_events[0].status == EventStatus.scheduled and not event.started:
                         if not event.five_minute_warning_flag:
                             event.five_minute_warning_flag = True
                             if event.text_channel:
@@ -1504,29 +1562,19 @@ def main():
                     logger.error(f'{event}: Error sending 5 minute warning: {e}')
                 continue
 
-            # Skip the rest of update() for this event if we are waiting for answers
-            if not event.has_everyone_answered():
-                if event.number_of_responded() > 1:
-                    try:
-                        latest_date = event.check_availabilities()
-                        await event.update_responded_message(latest_date)
-                    except Exception as e:
-                        logger.error(f'{event}: Error checking availabilities before everyone responded: {e}')
-                continue
-
             if event.created:
                 continue
 
-            # Check availabilities to see if there is availability
-            # if not, ensure everyone has responded to the lastest date
-            try:
-                latest_date = event.check_availabilities()
-                if latest_date:
+            # Skip the rest of update() for this event if we are waiting for answers
+            if event.number_of_responded() > 1:
+                try:
+                    latest_date = event.check_availabilities()
                     await event.update_responded_message(latest_date)
-                    continue
-            except Exception as e:
-                logger.error(f'{event}: Error checking availabilities before comparing: {e}')
+                except Exception as e:
+                    logger.error(f'{event}: Error checking availabilities before everyone responded: {e}')
+            if not event.has_everyone_answered():
                 continue
+
             # Delete availability request message
             try:
                 await event.availability_message.delete()
@@ -1556,10 +1604,11 @@ def main():
                 continue
             # Create the event if it is ready to create
             else:
-                # If start time is in the past, reset so it can recompare availabilities
-                if event.start_time <= datetime.now().astimezone():
-                    logger.warning(f'{event}: Tried to create event in the past! Resetting to recompare availabilities.')
-                    event.start_time = None
+                # If start time is in the past, start it after the preset delay
+                cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
+                if event.start_times[0] <= cur_time:
+                    logger.warning(f'{event}: Tried to create event in the past! Moving to {START_TIME_DELAY} minutes from now.')
+                    event.start_times[0] = cur_time + timedelta(minutes=START_TIME_DELAY)
                     event.ready_to_create = False
                     continue
 
@@ -1570,16 +1619,16 @@ def main():
                         if not prev_event:
                             prev_event = other_event
                             continue
-                        if (prev_event.start_time + prev_event.duration + event.duration) > other_event.start_time:
+                        if (prev_event.start_times[0] + prev_event.duration + event.duration) > other_event.start_times[0]:
                             prev_event = other_event
                             continue
-                        if event.start_time < (prev_event.start_time + prev_event.duration):
-                            event.start_time = (prev_event.start_time + prev_event.duration)
+                        if event.start_times[0] < (prev_event.start_times[0] + prev_event.duration):
+                            event.start_times[0] = (prev_event.start_times[0] + prev_event.duration)
                         break
 
                 # Create event
                 try:
-                    await event.make_scheduled_event()
+                    await event.make_scheduled_events()
                 except Exception as e:
                     logger.error(f'{event}: Error creating scheduled event: {e}')
                     continue
@@ -1587,7 +1636,7 @@ def main():
                 # Go through created events and remove availability during the event time of all shared participants
                 for other_event in client.events:
                     for participant in other_event.participants:
-                        participant.remove_availability_for_event(event_start_time=event.start_time, event_duration=event.duration)
+                        participant.remove_availability_for_event(event_start_time=event.start_times[0], event_duration=event.duration)
 
                 # Calculate time until start
                 try:
