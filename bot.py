@@ -1048,14 +1048,15 @@ def main():
                 except Exception as e:
                     logger.error(f'Error in event control end button callback while ending scheduled event: {e}')
                 end_time: datetime = datetime.now().astimezone().replace(second=0, microsecond=0)
-                duration = end_time - self.event.start_times[0]
+                duration: timedelta = end_time - self.event.start_times[0]
+                duration_minutes: int = duration.total_seconds()//60
                 try:
                     await self.event.prep_next_scheduled_event()
                 except Exception as e:
                     logger.error(f'Error in event control end button callback while prepping next scheduled event: {e}')
                 msg_pt1_partition1 = self.event.event_buttons_msg_content_pt1.partition('**Duration:** ')
                 msg_pt1_partition2 = msg_pt1_partition1[2].partition(' minutes')
-                self.event.event_buttons_msg_content_pt1 = f'{msg_pt1_partition1[0]}{msg_pt1_partition1[1]}{duration.minutes}{msg_pt1_partition2[1]}{msg_pt1_partition2[2]}'
+                self.event.event_buttons_msg_content_pt1 = f'{msg_pt1_partition1[0]}{msg_pt1_partition1[1]}{get_time_str_from_minutes(duration_minutes)}{msg_pt1_partition2[1]}{msg_pt1_partition2[2]}'
                 self.event.event_buttons_msg_content_pt3 = f'\n**Ended at:** {end_time.strftime("%H:%M")} ET'
                 try:
                     await self.event.event_buttons_message.edit(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt3} {self.event.event_buttons_msg_content_pt4}', view=self.event.event_buttons)
@@ -1513,7 +1514,7 @@ def main():
                             continue
                         for other_participant in other_event.participants:
                             if other_participant.member.id == participant.member.id:
-                                other_participant.remove_availability_for_event(event_start_time=event.start_times[0], event_duration=event.duration)
+                                other_participant.remove_availability_for_event(event_start_times=event.start_times, event_duration=event.duration)
                         await other_event.update_responded_message()
 
         for event in client.events.copy():
@@ -1680,7 +1681,7 @@ def main():
                 # Go through created events and remove availability during the event time of all shared participants
                 for other_event in client.events:
                     for participant in other_event.participants:
-                        participant.remove_availability_for_event(event_start_time=event.start_times[0], event_duration=event.duration)
+                        participant.remove_availability_for_event(event_start_times=event.start_times, event_duration=event.duration)
 
                 # Calculate time until start
                 try:

@@ -292,28 +292,32 @@ class Participant:
         self.availability = merged_availability
 
     # Remove the participant's availability for an event with its start time and duration
-    def remove_availability_for_event(self, event_start_time: datetime, event_duration: timedelta) -> None:
+    def remove_availability_for_event(self, event_start_times: list, event_duration: timedelta) -> None:
         if not self.availability:
             return
-        event_end_time = event_start_time + event_duration
         new_availability = []
-        for timeblock in self.availability:
-            # Timeblock does not overlap with event
-            if timeblock.end_time <= event_start_time or event_end_time <= timeblock.start_time:
-                new_availability.append(timeblock)
-            # Timeblock overlaps with event
+        changed = False
+        for event_start_time in event_start_times:
+            changed = True
+            event_end_time = event_start_time + event_duration
+            for timeblock in self.availability:
+                # Timeblock does not overlap with event
+                if timeblock.end_time <= event_start_time or event_end_time <= timeblock.start_time:
+                    new_availability.append(timeblock)
+                # Timeblock overlaps with event
+                else:
+                    # Timeblock starts before event
+                    if timeblock.start_time < event_start_time:
+                        new_availability.append(TimeBlock(timeblock.start_time, event_start_time))
+                    # Timeblock ends after event
+                    if event_end_time < timeblock.end_time:
+                        new_availability.append(TimeBlock(event_end_time, timeblock.end_time))
+        if changed:
+            self.availability = new_availability
+            if self.availability:
+                self.clean_availability()
             else:
-                # Timeblock starts before event
-                if timeblock.start_time < event_start_time:
-                    new_availability.append(TimeBlock(timeblock.start_time, event_start_time))
-                # Timeblock ends after event
-                if event_end_time < timeblock.end_time:
-                    new_availability.append(TimeBlock(event_end_time, timeblock.end_time))
-        self.availability = new_availability
-        if self.availability:
-            self.clean_availability()
-        else:
-            self.full_availability_flag = False
+                self.full_availability_flag = False
 
     # Confirm the participant's availability is still valid
     def confirm_answered(self, duration: timedelta = timedelta(minutes=30)) -> None:
