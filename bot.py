@@ -993,7 +993,10 @@ def main():
                     await self.event.scheduled_events[0].start(reason=f'Start button pressed by {interaction.user.name}.')
                 except Exception as e:
                     logger.exception(f'{self.event}: Failed to start event: {e}')
-                self.event.start_times[0] = datetime.now().astimezone().replace(second=0, microsecond=0)
+                try:
+                    self.event.start_times[0] = datetime.now().astimezone().replace(second=0, microsecond=0)
+                except:
+                    self.event.start_times.append(datetime.now().astimezone().replace(second=0, microsecond=0))
                 self.event.add_user_as_participant(interaction.user)
                 self.event.event_buttons_msg_content_pt2 = f'\n**Started at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
                 self.event.started = True
