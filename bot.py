@@ -97,7 +97,8 @@ def main():
                                 event.avail_buttons = AvailabilityButtons(event)
                                 await event.availability_message.edit(view=event.avail_buttons)
                             if event.responded_message:
-                                await event.update_responded_message()
+                                latest_date = event.check_availabilities()
+                                await event.update_responded_message(latest_date)
                             if event.event_buttons_message:
                                 event.event_buttons = EventButtons(event)
                                 await event.event_buttons_message.edit(view=event.event_buttons)
@@ -192,9 +193,9 @@ def main():
             self.multi_event = multi_event
             self.timeout_counter: int = timeout_counter
             self.avail_msg_content_pt1  = f'**Event name:** {self.name}'
-            self.avail_msg_content_pt1 += f'\n**Duration:** {get_time_str_from_minutes(self.get_duration_minutes())}'
+            self.avail_msg_content_pt1 += f'\n**Duration:** '
             self.avail_msg_content_pt2  = f'\n**Multi-event:** {self.multi_event}'
-            self.avail_msg_content_pt2 += f'\n**Times out in:** {get_time_str_from_minutes(self.get_timeout_minutes())}'
+            self.avail_msg_content_pt2 += f'\n**Times out in:** '
             self.avail_msg_content_pt3  = f'\n\nSelect **Respond** to enter your availability.'
             self.avail_msg_content_pt3 += f'\n**Full** will mark you as available from now until midnight tonight.'
             self.avail_msg_content_pt3 += f'\n**Use Existing** will attempt to grab your availability from another event.'
@@ -293,7 +294,10 @@ def main():
             # Mark participant as unanswered if their last timeblock isn't on the same date as the last entry
             for participant in self.participants:
                 if participant.answered:
-                    if participant.availability[-1].start_time.date() < latest_date:
+                    try:
+                        if participant.availability[-1].start_time.date() < latest_date:
+                            participant.answered = False
+                    except:
                         participant.answered = False
             return latest_date
 
@@ -488,8 +492,7 @@ def main():
                 participant.answered = False
             response = self.get_availability_request_string()
             self.availability_message = await self.text_channel.send(content=response, view=self.avail_buttons)
-            latest_date = self.check_availabilities()
-            await self.update_responded_message(latest_date)
+            await self.update_responded_message()
 
         # Update the availability message to show duration changes and timeout countdown
         async def update_availability_message(self) -> None:
@@ -797,7 +800,8 @@ def main():
                         for timeblock in participant.availability:
                             if timeblock.start_time.date() == cur_date and other_participant.availability[0].end_time < timeblock.end_time:
                                 other_participant.availability[0].end_time = timeblock.end_time
-                await self.event.update_responded_message()
+                latest_date = self.event.check_availabilities()
+                await self.event.update_responded_message(latest_date)
                 for timeblock in participant.availability:
                     logger.info(f'\t{timeblock}')
             except Exception as e:
@@ -877,7 +881,8 @@ def main():
                     if participant.subscribed:
                         participant.answered = False
                     await interaction.response.send_message(f'Your availability has been cleared.', ephemeral=True)
-                await self.event.update_responded_message()
+                latest_date = self.event.check_availabilities()
+                await self.event.update_responded_message(latest_date)
                 persist.write(client.get_events_dict())
             button.callback = full_button_callback
             self.add_item(button)
@@ -901,7 +906,8 @@ def main():
                     response = f'**__Availability for {self.event}:__**\n'
                     response += participant.get_availability_string()
                     await interaction.response.send_message(response, ephemeral=True)
-                    await self.event.update_responded_message()
+                    latest_date = self.event.check_availabilities()
+                    await self.event.update_responded_message(latest_date)
                     persist.write(client.get_events_dict())
                 else:
                     await interaction.response.send_message(f'Select another event to grab your availability from.', view=ExistingAvailabilitiesSelectView(found_availabilities, participant), ephemeral=True)
@@ -926,7 +932,8 @@ def main():
                     participant.subscribed = True
                     participant.answered = False
                     await interaction.response.send_message(f'You have been resubscribed to {self.event}.', ephemeral=True)
-                await self.event.update_responded_message()
+                latest_date = self.event.check_availabilities()
+                await self.event.update_responded_message(latest_date)
                 persist.write(client.get_events_dict())
             button.callback = unsub_button_callback
             self.add_item(button)
@@ -953,7 +960,8 @@ def main():
                     self.event.unavailable = False
                     await interaction.response.send_message(f'{self.event} will not be cancelled.', ephemeral=True)
                     logger.info(f'{self.event}: {interaction.user.name} deselected cancel')
-                await self.event.update_responded_message()
+                latest_date = self.event.check_availabilities()
+                await self.event.update_responded_message(latest_date)
                 persist.write(client.get_events_dict())
             button.callback = cancel_button_callback
             self.add_item(button)
