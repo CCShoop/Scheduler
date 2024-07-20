@@ -1357,6 +1357,14 @@ def main():
                         async with participant.msg_lock:
                             await participant.member.send(notification_message)
                 logger.info(f'{event.name} has timed out and has been cancelled.')
+                try:
+                    await event.availability_message.delete()
+                except Exception as e:
+                    logger.info(f'{event}: Couldn\'t delete availability_message: {e}')
+                try:
+                    await event.responded_message.delete()
+                except Exception as e:
+                    logger.info(f'{event}: Couldn\'t delete responded_message: {e}')
         client.events = new_events
         persist.write(client.get_events_dict())
 
