@@ -717,13 +717,11 @@ class Event:
     def to_dict(self) -> dict:
         try:
             availability_message_id = self.availability_message.id
-        except Exception as e:
-            logger.info(f'No availability message: {e}')
+        except:
             availability_message_id = 0
         try:
             responded_message_id = self.responded_message.id
-        except Exception as e:
-            logger.info(f'No responded message: {e}')
+        except:
             responded_message_id = 0
         try:
             participants = [participant.to_dict() for participant in self.participants]
@@ -732,8 +730,7 @@ class Event:
             participants = []
         try:
             event_buttons_message_id = self.event_buttons_message.id
-        except Exception as e:
-            logger.info(f'No event buttons message: {e}')
+        except:
             event_buttons_message_id = 0
         try:
             scheduled_event_ids = [scheduled_event.id for scheduled_event in self.scheduled_events]
@@ -1354,10 +1351,11 @@ def sort_events() -> None:
     for event in client.events:
         if event.created:
             new_events.append(event)
-    try:
-        new_events.sort(key=lambda event: event.start_times[0])
-    except Exception as e:
-        logger.error(f'Failed to sort events by start time: {e}')
+    if new_events:
+        try:
+            new_events.sort(key=lambda event: event.start_times[0])
+        except Exception as e:
+            logger.error(f'Failed to sort events by start time: {e}')
     for event in client.events:
         if not event.created:
             new_events.append(event)
