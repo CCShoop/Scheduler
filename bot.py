@@ -1345,19 +1345,29 @@ def location_has_active_event(location: VoiceChannel) -> bool:
     return False
 
 
+# Return first start time of event for sorting
+def first_start_time(event):
+    time = None
+    try:
+        time = event.start_times[0]
+    except Exception as e:
+        logger.error(f'Failed to access first start time: {e}')
+    return time
+
+
 # Sort created events and then append uncreated events
 def sort_events() -> None:
     new_events = []
     for event in client.events:
-        if event.created:
+        if event.created and event.start_times:
             new_events.append(event)
     if new_events:
         try:
-            new_events.sort(key=lambda event: event.start_times[0])
+            new_events.sort(key=first_start_time)
         except Exception as e:
-            logger.error(f'Failed to sort events by start time: {e}')
+            logger.error(f'Failed to sort created events: {e}')
     for event in client.events:
-        if not event.created:
+        if not event.created or not event.start_times:
             new_events.append(event)
     client.events = new_events
     persist.write(client.get_events_dict())
