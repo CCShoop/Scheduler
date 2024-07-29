@@ -2,6 +2,7 @@
 
 import os
 import logging
+import asyncio
 import requests
 from typing import Literal
 from dotenv import load_dotenv
@@ -15,6 +16,7 @@ from discord.ext import tasks
 
 from persistence import Persistence
 from participant import Participant, TimeBlock
+from server import Server
 
 # .env
 load_dotenv()
@@ -80,7 +82,30 @@ class SchedulerClient(Client):
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
         self.loaded_json = False
+        self.server_is_running = False
+        self.server = Server()
+        self.server.callback = self.schedule_from_dict
         self.events = []
+
+    async def start_server(self):
+        self.server_is_running = True
+        asyncio.create_task(self.server.start_server())
+
+    async def schedule_from_dict(self, data: dict) -> None:
+        guild = self.get_guild(data["guildId"])
+        textChannel = guild.get_channel(data["textChannelId"])
+        voiceChannel = guild.get_channel(data["voiceChannelId"])
+        await schedule(eventName=data["name"],
+                       user=None,
+                       guild=guild,
+                       textChannel=textChannel,
+                       voiceChannel=voiceChannel,
+                       imageUrl=data["imageUrl"],
+                       includeExclude=data["includeExclude"],
+                       usernames=data["usernames"],
+                       roles=data["roles"],
+                       duration=data["duration"],
+                       multiEvent=data["multiEvent"])
 
     # Load all events from the data file
     async def retrieve_events(self) -> None:
@@ -295,12 +320,12 @@ class Event:
 
         # Mark participant as unanswered if their last timeblock isn't on the same date as the last entry
         for participant in self.participants:
-            if participant.answered:
+            if participant.answered and not participant.unavailable:
                 try:
                     if participant.availability[-1].start_time.date() < latest_date:
                         participant.answered = False
                 except Exception as e:
-                    logger.warn(f'Failed to access last availability block: {e}')
+                    logger.warning(f'Failed to access last availability block: {e}')
                     participant.answered = False
         return latest_date
 
@@ -334,7 +359,7 @@ class Event:
                         logger.info(f'{self.name}: Processed image')
                     else:
                         self.image_url = ''
-                        logger.warn(f'{self.name}: Failed to get image')
+                        logger.warning(f'{self.name}: Failed to get image')
                 except Exception as e:
                     self.image_url = ''
                     logger.exception(f'{self.name}: Failed to process image: {e}')
@@ -482,16 +507,13 @@ class Event:
         return True
 
     # Request availability from all participants
-    async def request_availability(self, interaction: Interaction, reschedule: bool = False) -> None:
+    async def request_availability(self, reschedule: bool = False, rescheduler: Participant = None) -> None:
         self.avail_buttons = AvailabilityButtons(event=self)
         if not reschedule:
-            await interaction.response.send_message(f'Event scheduling started for {self.name}.', ephemeral=True)
             self.avail_msg_content_pt3 += '\n\nThe event will be either created or cancelled within a minute after the last person responds.️'
         else:
-            await interaction.followup.send(f'Event rescheduling started for {self.name}.', ephemeral=True)
-            participant = self.get_participant(interaction.user.name)
-            participant.set_no_availability()
-            participant.answered = False
+            rescheduler.set_no_availability()
+            rescheduler.answered = False
         response = self.get_availability_request_string()
         self.availability_message = await self.text_channel.send(content=response, view=self.avail_buttons)
         await self.update_responded_message()
@@ -674,7 +696,7 @@ class Event:
         try:
             event_multi_event = data["multi_event"]
         except Exception as e:
-            logger.warn(f'Failed to read multi_event data: {e}')
+            logger.warning(f'Failed to read multi_event data: {e}')
             event_multi_event = False
         logger.info(f'{event_name}: multi_event: {event_multi_event}')
 
@@ -682,7 +704,7 @@ class Event:
         try:
             event_timeout_counter = data["timeout_counter"]
         except Exception as e:
-            logger.warn(f'Failed to read timeout counter data: {e}')
+            logger.warning(f'Failed to read timeout counter data: {e}')
             event_timeout_counter = EVENT_TIMEOUT
         logger.info(f'{event_name}: timeout_counter: {event_timeout_counter}')
 
@@ -726,7 +748,7 @@ class Event:
         try:
             participants = [participant.to_dict() for participant in self.participants]
         except Exception as e:
-            logger.warn(f'Failed getting participants dict list: {e}')
+            logger.warning(f'Failed getting participants dict list: {e}')
             participants = []
         try:
             event_buttons_message_id = self.event_buttons_message.id
@@ -735,12 +757,12 @@ class Event:
         try:
             scheduled_event_ids = [scheduled_event.id for scheduled_event in self.scheduled_events]
         except Exception as e:
-            logger.warn(f'Failed getting scheduled event ids: {e}')
+            logger.warning(f'Failed getting scheduled event ids: {e}')
             scheduled_event_ids = []
         try:
             start_times = [start_time.isoformat() for start_time in self.start_times]
         except Exception as e:
-            logger.warn(f'Failed getting start times: {e}')
+            logger.warning(f'Failed getting start times: {e}')
             start_times = []
         return {
             'name': self.name,
@@ -1019,7 +1041,7 @@ class EventButtons(View):
             try:
                 self.event.start_times[0] = datetime.now().astimezone().replace(second=0, microsecond=0)
             except Exception as e:
-                logger.warn(f'{self.event}: Error getting start time at button press: {e}')
+                logger.warning(f'{self.event}: Error getting start time at button press: {e}')
                 self.event.start_times.append(datetime.now().astimezone().replace(second=0, microsecond=0))
             self.event.add_user_as_participant(interaction.user)
             self.event.event_buttons_msg_content_pt2 = f'\n**Started at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
@@ -1148,7 +1170,8 @@ class EventButtons(View):
                 participant.set_no_availability()
                 for p in self.event.participants:
                     p.confirm_answered(duration=self.event.duration)
-                await self.event.request_availability(interaction, reschedule=True)
+                await self.event.request_availability(reschedule=True, rescheduler=participant)
+                await interaction.followup.send(f"Event rescheduling started for {self.name}.", ephemeral=True)
             except Exception as e:
                 logger.error(f'Error with RESCHEDULE button requesting availability: {e}')
             persist.write(client.get_events_dict())
@@ -1282,26 +1305,47 @@ class ExistingAvailabilitiesSelectView(View):
         self.add_item(ExistingAvailabilitiesSelect(event_avails, participant))
 
 
+# Wrapper
+def get_participants_from_interaction(interaction: Interaction,
+                                      include_exclude: INCLUDE_EXCLUDE = None,
+                                      usernames: str = None,
+                                      roles: str = None) -> list:
+    return get_participants_from_channel(guild=interaction.guild,
+                                         channel=interaction.channel,
+                                         user=interaction.user,
+                                         include_exclude=include_exclude,
+                                         usernames=usernames,
+                                         roles=roles)
+
 # Put participants into a list
-def get_participants_from_interaction(interaction: Interaction, include_exclude: INCLUDE_EXCLUDE = None, usernames: str = None, roles: str = None) -> list:
+def get_participants_from_channel(guild: Guild,
+                                  channel,
+                                  user: User = None,
+                                  include_exclude: INCLUDE_EXCLUDE = None,
+                                  usernames: str = None,
+                                  roles: str = None):
     participants = []
     # Add the scheduler/creator as a participant
-    for member in interaction.channel.members:
-        if member.name == interaction.user.name:
-            participants.append(Participant(member=member))
-            break
+    if user is not None:
+        for member in channel.members:
+            if member.name == user.name:
+                participants.append(Participant(member=member))
+                break
 
     # Add users meeting role criteria
     if roles and roles != '':
         try:
             roles = roles.split(',')
             roles = [role.strip() for role in roles]
-            roles = [utils.find(lambda r: r.name.lower() == role.lower(), interaction.guild.roles) for role in roles]
+            roles = [utils.find(lambda r: r.name.lower() == role.lower(), guild.roles) for role in roles]
         except Exception as e:
             raise Exception(f'Failed to parse role(s): {e}')
-        for member in interaction.channel.members:
-            if member.bot or member.name == interaction.user.name:
+        for member in channel.members:
+            if member.bot:
                 continue
+            if user is not None:
+                if member.name == user.name:
+                    continue
             found_role = False
             for role in roles:
                 if role in member.roles:
@@ -1320,9 +1364,12 @@ def get_participants_from_interaction(interaction: Interaction, include_exclude:
             usernames = [username.strip() for username in usernames]
         except Exception as e:
             raise Exception(f'Failed to parse username(s): {e}')
-        for member in interaction.channel.members:
-            if member.bot or member.name == interaction.user.name:
+        for member in channel.members:
+            if member.bot:
                 continue
+            if user is not None:
+                if member.name == user.name:
+                    continue
             if include_exclude == INCLUDE and (member.name in usernames or str(member.id) in usernames):
                 participants.append(Participant(member=member))
             elif include_exclude == EXCLUDE and member.name not in usernames and str(member.id) not in usernames:
@@ -1330,9 +1377,12 @@ def get_participants_from_interaction(interaction: Interaction, include_exclude:
         return participants
 
     # Add all users in the channel
-    for member in interaction.channel.members:
-        if member.bot or member.name == interaction.user.name:
+    for member in channel.members:
+        if member.bot:
             continue
+        if user is not None:
+            if member.name == user.name:
+                continue
         participants.append(Participant(member=member))
     return participants
 
@@ -1408,14 +1458,16 @@ async def clear_timed_out_events() -> None:
 async def on_ready():
     logger.info(f'{client.user} has connected to Discord!')
     await client.retrieve_events()
+    if not client.server_is_running:
+        await client.start_server()
     if not update.is_running():
         update.start()
     logger.info(f'{client.user} is ready!')
 
 
 @client.event
-async def on_message(message):
-    if message.author.bot or message.guild:
+async def on_message(message: Message):
+    if message.guild or message.author.bot:
         return
     # Event image
     if message.attachments and message.content:
@@ -1431,7 +1483,7 @@ async def on_message(message):
                         logger.info(f'{event}: {message.author.name} added an image')
                     except Exception as e:
                         await message.channel.send(f'Failed to add your image to {event.name}.\nError: {e}', ephemeral=True)
-                        logger.warn(f'{event}: Error adding image from {message.author.name}: {e}')
+                        logger.warning(f'{event}: Error adding image from {message.author.name}: {e}')
                 else:
                     event.image_url = message.attachments[0].url
                     await message.channel.send('Attached image url to event object. Will try setting it when the event is made.')
@@ -1509,39 +1561,93 @@ async def create_command(interaction: Interaction, event_name: str, voice_channe
 @app_commands.describe(roles='Comma separated roles of users to include/exclude.')
 @app_commands.describe(duration="Event duration in minutes (30 minutes default).")
 @app_commands.describe(multi_event='Create an event on each date that everyone is available.')
-async def schedule_command(interaction: Interaction, event_name: str, voice_channel: VoiceChannel, image_url: str = None, include_exclude: INCLUDE_EXCLUDE = INCLUDE, usernames: str = None, roles: str = None, duration: int = 30, multi_event: bool = False):
+async def schedule_command(interaction: Interaction,
+                           event_name: str,
+                           voice_channel: VoiceChannel,
+                           image_url: str = None,
+                           include_exclude: INCLUDE_EXCLUDE = INCLUDE,
+                           usernames: str = None,
+                           roles: str = None,
+                           duration: int = 30,
+                           multi_event: bool = False):
     logger.info(f'{event_name}: Received event schedule request from {interaction.user.name}')
-    if not interaction.guild.voice_channels:
-        raise Exception('The server must have at least one voice channel to schedule an event.')
+    content, ephemeral = await schedule(eventName=event_name,
+                                        user=interaction.user,
+                                        guild=interaction.guild,
+                                        textChannel=interaction.channel,
+                                        voiceChannel=voice_channel,
+                                        imageUrl=image_url,
+                                        includeExclude=include_exclude,
+                                        usernames=usernames,
+                                        roles=roles,
+                                        duration=duration,
+                                        multiEvent=multi_event)
+    await interaction.response.send_message(content=content, ephemeral=ephemeral)
 
-    if event_name in [event.name for event in client.events]:
-        await interaction.response.send_message(f'Sorry, I already have an event called {event_name}. Please choose a different name.', ephemeral=True)
-        return
+async def schedule(eventName: str,
+                   user: User,
+                   guild: Guild,
+                   textChannel,
+                   voiceChannel: VoiceChannel,
+                   imageUrl: str = None,
+                   includeExclude: INCLUDE_EXCLUDE = INCLUDE,
+                   usernames: str = None,
+                   roles: str = None,
+                   duration: int = 30,
+                   multiEvent: bool = False):
+    if not guild.voice_channels:
+        content = "The server must have at least one voice channel to schedule an event."
+        ephemeral = True
+        return content, ephemeral
+
+    if eventName in [event.name for event in client.events]:
+        if user is not None:
+            logger.warning(f"{user.name} tried to make an event with an existing name")
+        content = f"Sorry, I already have an event called {eventName}. Please choose a different name."
+        ephemeral = True
+        return content, ephemeral
 
     # Generate participants list
     try:
-        participants = get_participants_from_interaction(interaction, include_exclude, usernames, roles)
+        participants = get_participants_from_channel(guild=guild,
+                                                     channel=textChannel,
+                                                     user=user,
+                                                     include_exclude=includeExclude,
+                                                     usernames=usernames,
+                                                     roles=roles)
     except Exception as e:
-        await interaction.response.send_message(f'Failed to generate participants list: {e}')
-        logger.exception(f'Error getting participants: {e}')
-        return
+        logger.error(f"Error getting participants: {e}")
+        content = f"Failed to generate participants list: {e}"
+        ephemeral = True
+        return content, ephemeral
 
     # Make event object
     try:
         duration = timedelta(minutes=duration)
-        event = Event(name=event_name, voice_channel=voice_channel, participants=participants, guild=interaction.guild, text_channel=interaction.channel, image_url=image_url, duration=duration, multi_event=multi_event)
+        event = Event(name=eventName,
+                      voice_channel=voiceChannel,
+                      participants=participants,
+                      guild=guild,
+                      text_channel=textChannel,
+                      image_url=imageUrl,
+                      duration=duration,
+                      multi_event=multiEvent)
         client.events.append(event)
     except Exception as e:
-        await interaction.response.send_message(f'Failed to make event object: {e}')
-        logger.exception(f'Error making event object: {e}')
-        return
+        logger.error(f'Error making event object: {e}')
+        content = f"Failed to make event object: {e}"
+        ephemeral = True
+        return content, ephemeral
 
     # Request availability and make participant response tracker message
     try:
-        await event.request_availability(interaction)
+        await event.request_availability()
     except Exception as e:
-        logger.exception(f'Error sending responded message or requesting availability: {e}')
+        logger.exception(f'Error requesting availability: {e}')
     persist.write(client.get_events_dict())
+    content = f"Event scheduling started for {eventName}."
+    ephemeral = True
+    return content, ephemeral
 
 
 @client.tree.command(name='attach', description='Create an event message for an existing guild event.')
@@ -1610,6 +1716,7 @@ async def update():
                 logger.info(f'{event}: Participant(s) lacked (common) availability, removed event from memory')
                 client.events.remove(event)
                 del event
+                persist.write(client.get_events_dict())
             except Exception as e:
                 logger.error(f'Error invalidating and deleting event: {e}')
                 continue
