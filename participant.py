@@ -1,5 +1,5 @@
 import re
-from discord import Guild, Member, NotFound, HTTPException
+from discord import Guild, Member
 from asyncio import Lock
 from datetime import datetime, timedelta
 from calendar import isleap
@@ -13,8 +13,8 @@ class TimeBlock():
     @classmethod
     def from_dict(cls, data: dict):
         return cls(
-            start_time = datetime.fromisoformat(data["start_time"]),
-            end_time = datetime.fromisoformat(data["end_time"])
+            start_time=datetime.fromisoformat(data["start_time"]),
+            end_time=datetime.fromisoformat(data["end_time"])
         )
 
     def to_dict(self) -> dict:
@@ -28,13 +28,13 @@ class TimeBlock():
 
 class Participant:
     def __init__(self,
-        member: Member,
-        availability: list = None,
-        answered: bool = False,
-        subscribed: bool = True,
-        unavailable: bool = False,
-        full_availability_flag: bool = False
-    ) -> None:
+                 member: Member,
+                 availability: list = None,
+                 answered: bool = False,
+                 subscribed: bool = True,
+                 unavailable: bool = False,
+                 full_availability_flag: bool = False
+                 ) -> None:
         self.member = member
         self.availability = availability if availability else []
         self.answered = answered
@@ -58,7 +58,7 @@ class Participant:
         return response
 
     # Set the participant as available until midnight today
-    def set_full_availability(self, month = None, day = None, year = None, end_time = None) -> None:
+    def set_full_availability(self, month=None, day=None, year=None, end_time=None) -> None:
         try:
             cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
             if not month:
@@ -139,9 +139,9 @@ class Participant:
             raise Exception(f'Invalid day provided by user: {day}')
         if month == 5 and day > 31:
             raise Exception(f'Invalid day provided by user: {day}')
-        if month == 6 and day > 31:
+        if month == 6 and day > 30:
             raise Exception(f'Invalid day provided by user: {day}')
-        if month == 7 and day > 30:
+        if month == 7 and day > 31:
             raise Exception(f'Invalid day provided by user: {day}')
         if month == 8 and day > 31:
             raise Exception(f'Invalid day provided by user: {day}')
@@ -194,7 +194,6 @@ class Participant:
         timeblock_strings = avail_string.split(',')
 
         # Parse each timeblock
-        timeblocks = []
         for timeblock in timeblock_strings.copy():
             # Stripping
             timeblock = timeblock.replace(' ', '')
@@ -203,14 +202,14 @@ class Participant:
             timeblock = timeblock.replace(':', '')
             timeblock = timeblock.replace(';', '')
             if '--' in timeblock:
-                raise Exception(f'Invalid time provided by user: cannot double hyphen (--)')
+                raise Exception("Invalid time provided by user: cannot double hyphen (--)")
             start_time, part, end_time = timeblock.partition('-')
 
             # Start/end time keywords
             if 'now' in start_time or 'cur' in start_time or 'curr' in start_time or 'current' in start_time:
                 start_time = datetime.now().astimezone().replace(second=0, microsecond=0).strftime("%H%M")
             if 'now' in end_time or 'cur' in end_time or 'curr' in end_time or 'current' in end_time:
-                raise Exception(f'Invalid end time provided by user: cannot use current time as end time')
+                raise Exception("Invalid end time provided by user: cannot use current time as end time")
 
             # 12-hour time parsing pt. 2
             if 'pm' in start_time:
@@ -335,12 +334,12 @@ class Participant:
     @classmethod
     def from_dict(cls, guild: Guild, data: dict):
         return cls(
-            member = guild.get_member(data['member_id']),
-            answered = data['answered'],
-            subscribed = data['subscribed'],
-            unavailable = data['unavailable'],
-            full_availability_flag = data['full_availability_flag'],
-            availability = [TimeBlock.from_dict(timeblock_data) for timeblock_data in data['availability']]
+            member=guild.get_member(data['member_id']),
+            answered=data['answered'],
+            subscribed=data['subscribed'],
+            unavailable=data['unavailable'],
+            full_availability_flag=data['full_availability_flag'],
+            availability=[TimeBlock.from_dict(timeblock_data) for timeblock_data in data['availability']]
         )
 
     def to_dict(self) -> dict:
