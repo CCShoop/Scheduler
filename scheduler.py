@@ -1274,16 +1274,19 @@ class ExistingAvailabilitiesSelect(Select):
     # Select an availability to attach
     async def callback(self, interaction: Interaction):
         logger.info(f'{interaction.user.name} selected an event to get their availability from')
+        event = None
         for event_avail in self.event_avails:
             if event_avail.event.name == self.values[0]:
                 if event_avail.event.created:
                     await interaction.response.send_message(content=f'{event_avail.event.name} has already been created.', ephemeral=True)
                     return
                 self.participant.availability = event_avail.avail
+                event = event_avail.event
                 break
         if self.participant.availability:
             self.participant.answered = True
-            await event_avail.event.update_responded_message()
+            latest_date = event.check_availabilities()
+            await event.update_responded_message(latest_date)
             response = '**__Success! Your availability:__**'
             for timeblock in self.participant.availability:
                 response += f'\n{timeblock}'
