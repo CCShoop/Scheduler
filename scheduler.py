@@ -983,21 +983,15 @@ class AvailabilityButtons(View):
             self.event.ready_to_create = False
             participant = self.event.get_participant(interaction.user.name)
             if not participant.unavailable:
-                participant.set_no_availability()
                 participant.unavailable = True
-                participant.answered = True
                 self.event.unavailable = True
                 await interaction.response.send_message(f'{self.event} will be cancelled shortly unless you click the **Cancel** button again.', ephemeral=True)
                 logger.info(f'{self.event}: {interaction.user.name} selected cancel')
             else:
                 participant.unavailable = False
-                if participant.subscribed:
-                    participant.answered = False
                 self.event.unavailable = False
                 await interaction.response.send_message(f'{self.event} will not be cancelled.', ephemeral=True)
                 logger.info(f'{self.event}: {interaction.user.name} deselected cancel')
-            latest_date = self.event.check_availabilities()
-            await self.event.update_responded_message(latest_date)
             persist.write(client.get_events_dict())
         button.callback = cancel_button_callback
         self.add_item(button)
