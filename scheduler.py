@@ -1133,6 +1133,9 @@ class EventButtons(View):
                     logger.error(f'{self.event}: Failed to re-enable start button for {event}: {e}')
             if not self.event.start_times:
                 client.events.remove(self.event)
+                logger.info(f"{self.event}: last event ended, removed from memory")
+            else:
+                logger.info(f"{self.event}: next event starts at {self.event.start_times[0]}")
             persist.write(client.get_events_dict())
         self.end_button.callback = end_button_callback
         self.add_item(self.end_button)
