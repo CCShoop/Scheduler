@@ -502,7 +502,12 @@ class Event:
         if not latest_date:
             latest_date = datetime.now().astimezone().date()
         for participant in self.participants:
-            if (participant.subscribed and not participant.answered) or participant.availability[-1].start_time.date() < latest_date:
+            if participant.subscribed and not participant.answered:
+                return False
+            if participant.availability:
+                if participant.availability[-1].start_time.date() < latest_date:
+                    return False
+            else:
                 return False
         return True
 
@@ -1126,6 +1131,8 @@ class EventButtons(View):
                     await event.event_buttons_message.edit(view=event.event_buttons)
                 except Exception as e:
                     logger.error(f'{self.event}: Failed to re-enable start button for {event}: {e}')
+            if not self.event.start_times:
+                client.events.remove(self.event)
             persist.write(client.get_events_dict())
         self.end_button.callback = end_button_callback
         self.add_item(self.end_button)
@@ -1136,13 +1143,6 @@ class EventButtons(View):
             logger.info(f'{self.event}: {interaction.user} rescheduled by button press')
             await interaction.response.defer(ephemeral=True)
             self.event.add_user_as_participant(interaction.user)
-            # Re-add availability for the period of time of the event to everyone else for all events they're in
-            event_timeblock = TimeBlock(self.event.start_times[0], (self.event.start_times[0] + self.event.duration))
-            cur_event_participant_ids = [participant.member.id for participant in self.event.participants]
-            for event in client.events:
-                for participant in event.participants:
-                    if participant.member.id in cur_event_participant_ids and participant.member.id != interaction.user.id:
-                        participant.availability.append(event_timeblock)
             try:
                 await self.event.scheduled_events[0].delete(reason=f'Reschedule button pressed by {interaction.user.name}.')
             except Exception as e:
