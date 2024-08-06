@@ -518,7 +518,6 @@ class Event:
             self.avail_msg_content_pt3 += '\n\nThe event will be either created or cancelled within a minute after the last person responds.️'
         else:
             rescheduler.set_no_availability()
-            rescheduler.answered = False
         response = self.get_availability_request_string()
         self.availability_message = await self.text_channel.send(content=response, view=self.avail_buttons)
         await self.update_responded_message()
@@ -1168,7 +1167,7 @@ class EventButtons(View):
                 for p in self.event.participants:
                     p.confirm_answered(duration=self.event.duration)
                 await self.event.request_availability(reschedule=True, rescheduler=participant)
-                await interaction.followup.send(f"Event rescheduling started for {self.name}.", ephemeral=True)
+                await interaction.followup.send(f"Event rescheduling started for {self.event.name}.", ephemeral=True)
             except Exception as e:
                 logger.error(f'Error with RESCHEDULE button requesting availability: {e}')
             persist.write(client.get_events_dict())
@@ -1693,9 +1692,18 @@ async def update():
                 try:
                     if event.availability_message:
                         await event.availability_message.delete()
+                except NotFound as e:
+                    event.availability_message = None
+                    logger.warn(f"{event}: Availability message not found: {e}")
                 except Exception as e:
-                    logger.error(f'Error disabling availability buttons: {e}')
-                await event.responded_message.delete()
+                    logger.error(f"{event}: Error deleting availability message: {e}")
+                try:
+                    await event.responded_message.delete()
+                except NotFound as e:
+                    event.responded_message = None
+                    logger.warn(f"{event}: Responded message not found: {e}")
+                except Exception as e:
+                    logger.error(f"{event}: Error while deleting responded message: {e}")
                 unavailable_names = []
                 for participant in event.participants:
                     if participant.unavailable:

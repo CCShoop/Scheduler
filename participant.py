@@ -82,6 +82,7 @@ class Participant:
     def set_no_availability(self) -> None:
         self.availability.clear()
         self.answered = False
+        self.full_availability_flag = False
 
     # Complex availability input from the Availability Modal
     def set_specific_availability(self, avail_string: str, date_string: str) -> None:
