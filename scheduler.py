@@ -7,7 +7,7 @@ import requests
 from typing import Literal
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
-from discord import (app_commands, Interaction, Intents, Client,
+from discord import (app_commands, Interaction, Intents, Client, Embed, Color,
                      ButtonStyle, EventStatus, EntityType, TextChannel,
                      VoiceChannel, Message, SelectOption, ScheduledEvent,
                      Guild, PrivacyLevel, User, utils, NotFound, HTTPException)
@@ -368,6 +368,18 @@ class Event:
         self.ready_to_create = False
         self.created = True
         self.changed = False
+
+    # Get a string explaining the current event status
+    def get_scheduling_status(self) -> str:
+        if self.started:
+            return "Started event"
+        if self.created:
+            return "Created event"
+        if self.ready_to_create:
+            return "Preparing to create event"
+        if self.changed:
+            return "Processing availability"
+        return "Awaiting availability"
 
     # Get a string of participant mentions/names
     def get_names_string(self, subscribed_only: bool = False, unsubscribed_only: bool = False, unanswered_only: bool = False, mention: bool = False) -> str:
@@ -886,7 +898,6 @@ class AvailabilityButtons(View):
         button = Button(label=self.full_label, style=ButtonStyle.blurple)
 
         async def full_button_callback(interaction: Interaction):
-            self.event.changed = True
             self.event.ready_to_create = False
             participant = self.event.get_participant(interaction.user.name)
             if not participant.full_availability_flag:
@@ -1148,28 +1159,30 @@ class EventButtons(View):
             try:
                 await self.event.scheduled_events[0].delete(reason=f'Reschedule button pressed by {interaction.user.name}.')
             except Exception as e:
-                logger.error(f'Error cancelling guild event to reschedule: {e}')
-            self.created = False
-            self.event.event_buttons_msg_content_pt2 = f'\n**Rescheduled at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
-            self.start_button.style = ButtonStyle.blurple
-            self.start_button.disabled = True
-            self.end_button.style = ButtonStyle.blurple
-            self.end_button.disabled = True
-            self.reschedule_button.disabled = True
-            self.cancel_button.disabled = True
+                logger.error(f"{self.event}: Error cancelling guild event to reschedule: {e}")
             try:
-                await self.event.event_buttons_message.edit(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt4}', view=self.event.event_buttons)
+                self.event.scheduled_events.remove(self.event.scheduled_events[0])
             except Exception as e:
-                logger.error(f'Error editing event buttons message during reschedule: {e}')
+                logger.error(f"{self.event}: Error removing guild event from list: {e}")
+            try:
+                self.event.start_times.remove(self.event.start_times[0])
+            except Exception as e:
+                logger.error(f"{self.event}: Error removing start time from list: {e}")
+            self.event.created = False
+            self.event.event_buttons_msg_content_pt2 = f'\n**Rescheduled at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
+            try:
+                await self.event.event_buttons_message.edit(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt4}', view=None)
+            except Exception as e:
+                logger.error(f"{self.event}: Error editing event buttons message during reschedule: {e}")
+            self.event.event_buttons_message = None
             try:
                 participant = self.event.get_participant(interaction.user.name)
-                participant.set_no_availability()
                 for p in self.event.participants:
                     p.confirm_answered(duration=self.event.duration)
                 await self.event.request_availability(reschedule=True, rescheduler=participant)
                 await interaction.followup.send(f"Event rescheduling started for {self.event.name}.", ephemeral=True)
             except Exception as e:
-                logger.error(f'Error with RESCHEDULE button requesting availability: {e}')
+                logger.error(f"{self.event}: Error with RESCHEDULE button requesting availability: {e}")
             persist.write(client.get_events_dict())
         self.reschedule_button.callback = reschedule_button_callback
         self.add_item(self.reschedule_button)
@@ -1416,7 +1429,7 @@ def sort_events() -> None:
         except Exception as e:
             logger.error(f'Failed to sort created events: {e}')
     for event in client.events:
-        if not event.created or not event.start_times:
+        if not event.created and not event.start_times:
             new_events.append(event)
     client.events = new_events
     persist.write(client.get_events_dict())
@@ -1443,12 +1456,18 @@ async def clear_timed_out_events() -> None:
             logger.info(f'{event.name} has timed out and has been cancelled.')
             try:
                 await event.availability_message.delete()
+            except NotFound:
+                logger.warn(f"{event}: Availability message not found")
             except Exception as e:
-                logger.info(f'{event}: Couldn\'t delete availability_message: {e}')
+                logger.error(f"{event}: Couldn't delete availability_message: {e}")
+            event.availability_message = None
             try:
                 await event.responded_message.delete()
+            except NotFound:
+                logger.warn(f"{event}: Responded message not found")
             except Exception as e:
-                logger.info(f'{event}: Couldn\'t delete responded_message: {e}')
+                logger.error(f"{event}: Couldn't delete responded_message: {e}")
+            event.responded_message = None
     client.events = new_events
     persist.write(client.get_events_dict())
 
@@ -1466,10 +1485,8 @@ async def on_ready():
 
 @client.event
 async def on_message(message: Message):
-    if message.guild or message.author.bot:
-        return
     # Event image
-    if message.attachments and message.content:
+    if not message.guild and message.attachments and message.content:
         msg_content = message.content.lower()
         for event in client.events:
             if event.name.lower() in msg_content:
@@ -1489,11 +1506,21 @@ async def on_message(message: Message):
                 return
         await message.channel.send(f'Could not find event {msg_content}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}', ephemeral=True)
         return
+
     # Owner syncs commands
-    if 'sync' in message.content and message.author.id == OWNER_ID:
+    if message.author.id == OWNER_ID and 'scheduler: sync' in message.content:
         await client.tree.sync()
         logger.info(f'User {message.author.name} synced commands')
-        await message.channel.send('Synced')
+        await message.channel.send(content='Synced')
+
+    # Owner requests to see all events
+    if message.author.id == OWNER_ID and 'scheduler: list all' in message.content:
+        logger.info(f"User {message.author.name} listed all events")
+        embed = Embed(title="All events", color=Color.blue())
+        for event in client.events:
+            eventStatus = event.get_scheduling_status()
+            embed.add_field(name=event.name, value=eventStatus, inline=True)
+        await message.channel.send(embed=embed)
 
 
 @client.tree.command(name='create', description='Create an event.')
@@ -1655,6 +1682,24 @@ async def attach_command(interaction: Interaction):
     await interaction.response.send_message('Select an existing guild event from the dropdown menu.', view=ExistingGuildEventsSelectView(interaction.guild), ephemeral=True)
 
 
+@client.tree.command(name='listevents', description='List all events in this server.')
+async def listevents_command(interaction: Interaction):
+    logger.info(f"Received list events command request from {interaction.user.name}")
+    foundEvents = False
+    content = ""
+    embed = Embed(title=f"All events in {interaction.guild.name}", color=Color.blue())
+    for event in client.events:
+        if event.guild == interaction.guild:
+            foundEvents = True
+            eventStatus = event.get_scheduling_status()
+            embed.add_field(name=event.name, value=eventStatus, inline=True)
+    if foundEvents:
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    else:
+        content = "No events found for this server."
+        await interaction.response.send_message(content=content, ephemeral=True)
+
+
 @tasks.loop(seconds=30)
 async def update():
     sort_events()
@@ -1690,20 +1735,19 @@ async def update():
         if event.unavailable:
             try:
                 try:
-                    if event.availability_message:
-                        await event.availability_message.delete()
+                    await event.availability_message.delete()
                 except NotFound as e:
-                    event.availability_message = None
-                    logger.warn(f"{event}: Availability message not found: {e}")
+                    logger.warn(f"{event}: Unavailable delete: Availability message not found: {e}")
                 except Exception as e:
-                    logger.error(f"{event}: Error deleting availability message: {e}")
+                    logger.error(f"{event}: Unavailable delete: Error deleting availability message: {e}")
+                event.availability_message = None
                 try:
                     await event.responded_message.delete()
-                except NotFound as e:
-                    event.responded_message = None
-                    logger.warn(f"{event}: Responded message not found: {e}")
+                except NotFound:
+                    logger.warn(f"{event}: Unavailable delete: Responded message not found")
                 except Exception as e:
-                    logger.error(f"{event}: Error while deleting responded message: {e}")
+                    logger.error(f"{event}: Unavailable delete: Error while deleting responded message: {e}")
+                event.responded_message = None
                 unavailable_names = []
                 for participant in event.participants:
                     if participant.unavailable:
@@ -1860,8 +1904,13 @@ async def update():
             # Calculate time until start
             try:
                 response = event.get_event_buttons_message_string()
-                if event.responded_message:
+                try:
                     await event.responded_message.delete()
+                except NotFound:
+                    logger.warn("Creation delete: Responded message not found")
+                except Exception as e:
+                    logger.error(f"Creation delete: Failed to delete responded message: {e}")
+                event.responded_message = None
                 event.event_buttons = EventButtons(event)
                 event.event_buttons_message = await event.text_channel.send(content=response, view=event.event_buttons)
             except Exception as e:
