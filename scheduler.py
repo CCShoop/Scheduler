@@ -485,26 +485,26 @@ class Event:
             unsubbed = f"\n**Unsubscribed:** {unsubbed}"
 
         # List subscribed people and list unsubscribed people
-        self.event_buttons_msg_content_pt1  = f"**Event name:** {self.name}\n"
-        self.event_buttons_msg_content_pt1 += f"**Scheduled:** {self.get_start_time_string(0)}\n"
-        self.event_buttons_msg_content_pt1 += f"**Duration:** {duration}\n"
-        self.event_buttons_msg_content_pt1 += f"**Multi-event:** {self.multi_event}\n"
+        self.event_buttons_msg_content_pt1  = f"**Event name:** {self.name}"
+        self.event_buttons_msg_content_pt1 += f"\n**Scheduled:** {self.get_start_time_string(0)}"
+        self.event_buttons_msg_content_pt1 += f"\n**Duration:** {duration}"
+        self.event_buttons_msg_content_pt1 += f"\n**Multi-event:** {self.multi_event}"
         # Event has not started
         if end_time is None and not self.started:
             if self.mins_until_start > 0:
-                self.event_buttons_msg_content_pt2 = f"**Starts in:** {get_time_str_from_minutes(self.mins_until_start)}\n"
+                self.event_buttons_msg_content_pt2 = f"\n**Starts in:** {get_time_str_from_minutes(self.mins_until_start)}"
             elif self.mins_until_start == 0:
-                self.event_buttons_msg_content_pt2 = "**Starting now**\n"
+                self.event_buttons_msg_content_pt2 = "\n**Starting now**"
             else:
-                self.event_buttons_msg_content_pt2 = f"**Overdue by:** {get_time_str_from_minutes(self.mins_until_start)}\n"
+                self.event_buttons_msg_content_pt2 = f"\n**Overdue by:** {get_time_str_from_minutes(self.mins_until_start)}"
         # Event is in progress
         elif end_time is None and self.started:
-            self.event_buttons_msg_content_pt2 = f"**Started:** {self.get_start_time_string(0)}\n"
+            self.event_buttons_msg_content_pt2 = f"\n**Started:** {self.get_start_time_string(0)}"
         # Event has ended
         else:
-            self.event_buttons_msg_content_pt2 = f'**Ended:** {end_time.strftime("%m/%d at %H:%M")} ET\n'
-        self.event_buttons_msg_content_pt3 = f"{self.get_names_string(subscribed_only=True, mention=True)}\n"
-        self.event_buttons_msg_content_pt4 = f"{unsubbed}"
+            self.event_buttons_msg_content_pt2 = f'\n**Ended:** {end_time.strftime("%m/%d at %H:%M")} ET'
+        self.event_buttons_msg_content_pt3 = f"\n{self.get_names_string(subscribed_only=True, mention=True)}"
+        self.event_buttons_msg_content_pt4 = f"\n{unsubbed}"
         response = f"{self.event_buttons_msg_content_pt1} {self.event_buttons_msg_content_pt2} {self.event_buttons_msg_content_pt3} {self.event_buttons_msg_content_pt4}"
         return response
 
