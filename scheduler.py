@@ -54,6 +54,8 @@ EVENT_TIMEOUT: int = (2 * 60 * 24 * 3)
 
 # Get time string from minutes
 def get_time_str_from_minutes(minutes: int) -> str:
+    if minutes < 0:
+        minutes *= -1
     output = ''
     weeks = int(minutes // 60 // 24 // 7)
     if weeks != 0:
@@ -66,7 +68,7 @@ def get_time_str_from_minutes(minutes: int) -> str:
         output += f'{hours} hours ' if hours != 1 else '1 hour '
     mins = int(minutes % 60)
     if mins != 0:
-        output += f'{mins} mins ' if mins != 1 else '1 min '
+        output += f'{mins} minutes ' if mins != 1 else '1 minute '
     return output
 
 
@@ -455,7 +457,7 @@ class Event:
             for other_participant in event.participants:
                 if self_participant.member.id == other_participant.member.id:
                     other_participants.append(other_participant)
-                    logger.info(f'Found shared participant {self_participant.member.name} in {self.name} and {event.name}')
+                    logger.info(f"Found shared participant {self_participant.member.name} in {self.name} and {event.name}")
         return other_participants
 
     # Get availability for participant from another event
@@ -470,35 +472,53 @@ class Event:
         return event_availabilities
 
     # Set event_buttons_msg_content parts and get response message
-    def get_event_buttons_message_string(self) -> str:
-        # List subscribed people and list unsubscribed people
+    def get_event_buttons_message_string(self, end_time: datetime = None) -> str:
+        if end_time is None:
+            duration = f"{get_time_str_from_minutes(self.get_duration_minutes())}"
+            time_until_start: timedelta = self.start_times[0] - datetime.now().astimezone()
+            self.mins_until_start = (time_until_start.total_seconds() // 60) + 1
+        else:
+            real_duration: timedelta = end_time - self.start_times[0]
+            duration = f"{get_time_str_from_minutes(real_duration.total_seconds() // 60)}"
         unsubbed = self.get_names_string(unsubscribed_only=True)
-        if unsubbed:
-            unsubbed = f'**Unsubscribed:** {unsubbed}'
-        response = ''
-        time_until_start: timedelta = self.start_times[0] - datetime.now().astimezone()
-        self.mins_until_start = int(time_until_start.total_seconds() // 60) + 1
-        self.event_buttons_msg_content_pt1 = f'{self.get_names_string(subscribed_only=True, mention=True)}'
-        self.event_buttons_msg_content_pt1 += f'\n**Event name:** {self.name}'
-        self.event_buttons_msg_content_pt1 += f'\n**Duration:** {self.get_duration_minutes()} minutes'
-        self.event_buttons_msg_content_pt1 += f'\n**Multi-event:** {self.multi_event}'
-        self.event_buttons_msg_content_pt1 += f'\n**Scheduled:** {self.get_start_time_string()}'
-        self.event_buttons_msg_content_pt2 = f'\n**Starts in:** {get_time_str_from_minutes(self.mins_until_start)}'
-        self.event_buttons_msg_content_pt4 = f'\n{unsubbed}'
-        response = f'{self.event_buttons_msg_content_pt1} {self.event_buttons_msg_content_pt2} {self.event_buttons_msg_content_pt4}'
+        if unsubbed != "":
+            unsubbed = f"\n**Unsubscribed:** {unsubbed}"
+
+        # List subscribed people and list unsubscribed people
+        self.event_buttons_msg_content_pt1  = f"**Event name:** {self.name}\n"
+        self.event_buttons_msg_content_pt1 += f"**Scheduled:** {self.get_start_time_string(0)}\n"
+        self.event_buttons_msg_content_pt1 += f"**Duration:** {duration}\n"
+        self.event_buttons_msg_content_pt1 += f"**Multi-event:** {self.multi_event}\n"
+        # Event has not started
+        if end_time is None and not self.started:
+            if self.mins_until_start > 0:
+                self.event_buttons_msg_content_pt2 = f"**Starts in:** {get_time_str_from_minutes(self.mins_until_start)}\n"
+            elif self.mins_until_start == 0:
+                self.event_buttons_msg_content_pt2 = "**Starting now**\n"
+            else:
+                self.event_buttons_msg_content_pt2 = f"**Overdue by:** {get_time_str_from_minutes(self.mins_until_start)}\n"
+        # Event is in progress
+        elif end_time is None and self.started:
+            self.event_buttons_msg_content_pt2 = f"**Started:** {self.get_start_time_string(0)}\n"
+        # Event has ended
+        else:
+            self.event_buttons_msg_content_pt2 = f'**Ended:** {end_time.strftime("%m/%d at %H:%M")} ET\n'
+        self.event_buttons_msg_content_pt3 = f"{self.get_names_string(subscribed_only=True, mention=True)}\n"
+        self.event_buttons_msg_content_pt4 = f"{unsubbed}"
+        response = f"{self.event_buttons_msg_content_pt1} {self.event_buttons_msg_content_pt2} {self.event_buttons_msg_content_pt3} {self.event_buttons_msg_content_pt4}"
         return response
 
     # Get duration value in minutes
     def get_duration_minutes(self) -> int:
-        return int(self.duration.total_seconds() // 60)
+        return self.duration.total_seconds() // 60
 
     # Get timeout value in minutes
     def get_timeout_minutes(self) -> float:
         return self.timeout_counter / 2
 
     # Get start time string
-    def get_start_time_string(self) -> str:
-        return f'{self.start_times[0].strftime("%m/%d at %H:%M")} ET'
+    def get_start_time_string(self, index: int = 0) -> str:
+        return f'{self.start_times[index].strftime("%m/%d at %H:%M")} ET'
 
     # Get availability request string
     def get_availability_request_string(self) -> str:
@@ -1102,30 +1122,24 @@ class EventButtons(View):
 
         async def end_button_callback(interaction: Interaction):
             logger.info(f'{self.event}: {interaction.user} ended by button press')
+            # Delete scheduled event
             try:
                 await self.event.scheduled_events[0].delete(reason=f'End button pressed by {interaction.user.name}.')
             except Exception as e:
                 logger.error(f'Error in event control end button callback while ending scheduled event: {e}')
+            # Update event buttons message
             end_time: datetime = datetime.now().astimezone().replace(second=0, microsecond=0)
-            duration: timedelta = end_time - self.event.start_times[0]
-            duration_minutes: int = duration.total_seconds() // 60
+            content = self.event.get_event_buttons_message_string(end_time)
+            try:
+                await self.event.event_buttons_message.edit(content=content, view=None)
+            except Exception as e:
+                logger.error(f'Error in event control end button callback while editing event buttons message: {e}')
+            # Remove start_time and scheduled event from lists
             try:
                 await self.event.prep_next_scheduled_event()
             except Exception as e:
                 logger.error(f'Error in event control end button callback while prepping next scheduled event: {e}')
-            msg_pt1_partition1 = self.event.event_buttons_msg_content_pt1.partition('**Duration:** ')
-            msg_pt1_partition2 = msg_pt1_partition1[2].partition(' minutes')
-            self.event.event_buttons_msg_content_pt1 = f'{msg_pt1_partition1[0]}{msg_pt1_partition1[1]}{get_time_str_from_minutes(duration_minutes)}{msg_pt1_partition2[1]}{msg_pt1_partition2[2]}'
-            self.event.event_buttons_msg_content_pt3 = f'\n**Ended at:** {end_time.strftime("%H:%M")} ET'
-            try:
-                await self.event.event_buttons_message.edit(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt3} {self.event.event_buttons_msg_content_pt4}', view=self.event.event_buttons)
-            except Exception as e:
-                logger.error(f'Error in event control end button callback while editing event buttons message: {e}')
             logger.info(f'{self.event}: Ended event')
-            self.end_button.style = ButtonStyle.blurple
-            self.end_button.disabled = True
-            self.reschedule_button.disabled = True
-            self.cancel_button.disabled = True
             # Interaction response, remove buttons
             try:
                 await interaction.response.edit_message(view=None)
@@ -1135,10 +1149,10 @@ class EventButtons(View):
             for event in client.events:
                 if event == self.event or not event.created or event.voice_channel != self.event.voice_channel:
                     continue
-                event.event_buttons.start_button.disabled = False
                 try:
-                    logger.info(f'{self.event}: Re-enabled start button for event with same location: {event.name}')
+                    event.event_buttons.start_button.disabled = False
                     await event.event_buttons_message.edit(view=event.event_buttons)
+                    logger.info(f'{self.event}: Re-enabled start button for event with same location: {event.name}')
                 except Exception as e:
                     logger.error(f'{self.event}: Failed to re-enable start button for {event}: {e}')
             if not self.event.start_times:
