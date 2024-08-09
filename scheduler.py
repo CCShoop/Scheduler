@@ -467,7 +467,7 @@ class Event:
             if other_event != self:
                 for other_participant in other_event.participants:
                     if other_participant.member.id == participant.member.id and other_participant.answered:
-                        event_avail = EventAvailability(other_event, other_participant.availability)
+                        event_avail = EventAvailability(other_event, other_participant.availability, other_participant.full_availability_flag)
                         event_availabilities.append(event_avail)
         return event_availabilities
 
@@ -938,7 +938,8 @@ class AvailabilityButtons(View):
                     logger.info(f'{self.event}: \t{timeblock}')
                 participant.full_availability_flag = True
                 participant.answered = True
-                response = participant.get_availability_string()
+                response = f"**Availability for {self.event.name}:**\n"
+                response += participant.get_availability_string()
                 await interaction.response.send_message(response, ephemeral=True)
             else:
                 logger.info(f'{self.event}: {participant} deselected full availability')
@@ -1284,9 +1285,10 @@ class ExistingGuildEventsSelectView(View):
 
 # Class for ease of tying availabilities to events for the Select dropdown
 class EventAvailability:
-    def __init__(self, event: Event, avail: list):
+    def __init__(self, event: Event, avail: list, full_flag: bool):
         self.event = event
         self.avail = avail
+        self.full_flag = full_flag
 
 
 # Dropdown to select previous availability options
@@ -1303,24 +1305,20 @@ class ExistingAvailabilitiesSelect(Select):
     # Select an availability to attach
     async def callback(self, interaction: Interaction):
         logger.info(f'{interaction.user.name} selected an event to get their availability from')
-        event = None
+        response = "**__Failed to get your availability.__**"
         for event_avail in self.event_avails:
             if event_avail.event.name == self.values[0]:
                 if event_avail.event.created:
                     await interaction.response.send_message(content=f'{event_avail.event.name} has already been created.', ephemeral=True)
                     return
                 self.participant.availability = event_avail.avail
-                event = event_avail.event
+                self.participant.full_availability_flag = event_avail.full_flag
+                self.participant.answered = True
+                latest_date = event_avail.event.check_availabilities()
+                await event_avail.event.update_responded_message(latest_date)
+                response = f"**__Availability for {event_avail.event.name}:__**\n"
+                response += self.participant.get_availability_string()
                 break
-        if self.participant.availability:
-            self.participant.answered = True
-            latest_date = event.check_availabilities()
-            await event.update_responded_message(latest_date)
-            response = '**__Success! Your availability:__**'
-            for timeblock in self.participant.availability:
-                response += f'\n{timeblock}'
-        else:
-            response = '**__Failed to get your availability.__**'
         await interaction.response.send_message(content=response, ephemeral=True)
 
 
