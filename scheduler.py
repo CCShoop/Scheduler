@@ -120,13 +120,12 @@ class SchedulerClient(Client):
                         event = await Event.from_dict(event_data)
                         if not event:
                             raise Exception('Failed to create event object')
-                        if event.availability_message:
+                        if event.availability_message is not None:
                             event.avail_buttons = AvailabilityButtons(event)
                             await event.availability_message.edit(view=event.avail_buttons)
-                        if event.responded_message:
-                            latest_date = event.check_availabilities()
-                            await event.update_responded_message(latest_date)
-                        if event.event_buttons_message:
+                        if event.responded_message is not None:
+                            await event.update_responded_message()
+                        if event.event_buttons_message is not None:
                             event.event_buttons = EventButtons(event)
                             await event.event_buttons_message.edit(view=event.event_buttons)
                         self.events.append(event)
@@ -564,9 +563,10 @@ class Event:
             logger.exception(f'{self.name}: Failed to edit availability message in update: {e}')
 
     # Create or edit the responded message to show who still needs to respond to the availability request
-    async def update_responded_message(self, latest_date=None) -> None:
+    async def update_responded_message(self) -> None:
         if self.created:
             return
+        latest_date = self.check_availabilities() if self.number_of_responded() > 1 else None
         message_content = ''
         cur_date = datetime.now().astimezone().date()
         if latest_date and latest_date != cur_date:
@@ -866,8 +866,7 @@ class AvailabilityModal(Modal):
                     for timeblock in participant.availability:
                         if timeblock.start_time.date() == cur_date and other_participant.availability[0].end_time < timeblock.end_time:
                             other_participant.availability[0].end_time = timeblock.end_time
-            latest_date = self.event.check_availabilities()
-            await self.event.update_responded_message(latest_date)
+            await self.event.update_responded_message()
             for timeblock in participant.availability:
                 logger.info(f'\t{timeblock}')
         except Exception as e:
@@ -950,8 +949,7 @@ class AvailabilityButtons(View):
                 if participant.subscribed:
                     participant.answered = False
                 await interaction.response.send_message('Your availability has been cleared.', ephemeral=True)
-            latest_date = self.event.check_availabilities()
-            await self.event.update_responded_message(latest_date)
+            await self.event.update_responded_message()
             persist.write(client.get_events_dict())
         button.callback = full_button_callback
         self.add_item(button)
@@ -976,8 +974,7 @@ class AvailabilityButtons(View):
                 response = f'**__Availability for {self.event}:__**\n'
                 response += participant.get_availability_string()
                 await interaction.response.send_message(response, ephemeral=True)
-                latest_date = self.event.check_availabilities()
-                await self.event.update_responded_message(latest_date)
+                await self.event.update_responded_message()
                 persist.write(client.get_events_dict())
             else:
                 await interaction.response.send_message('Select another event to grab your availability from.', view=ExistingAvailabilitiesSelectView(found_availabilities, participant), ephemeral=True)
@@ -1001,10 +998,10 @@ class AvailabilityButtons(View):
             else:
                 logger.info(f'{self.event}: {interaction.user.name} resubscribed')
                 participant.subscribed = True
-                participant.answered = False
+                if not participant.availability:
+                    participant.answered = False
                 await interaction.response.send_message(f'You have been resubscribed to {self.event}.', ephemeral=True)
-            latest_date = self.event.check_availabilities()
-            await self.event.update_responded_message(latest_date)
+            await self.event.update_responded_message()
             persist.write(client.get_events_dict())
         button.callback = unsub_button_callback
         self.add_item(button)
@@ -1314,8 +1311,7 @@ class ExistingAvailabilitiesSelect(Select):
                 self.participant.availability = event_avail.avail
                 self.participant.full_availability_flag = event_avail.full_flag
                 self.participant.answered = True
-                latest_date = event_avail.event.check_availabilities()
-                await event_avail.event.update_responded_message(latest_date)
+                await event_avail.event.update_responded_message()
                 response = f"**__Availability for {event_avail.event.name}:__**\n"
                 response += self.participant.get_availability_string()
                 break
@@ -1724,18 +1720,16 @@ async def update():
             await event.update_availability_message()
             for participant in event.participants:
                 participant.confirm_answered()
-            latest_date = event.check_availabilities()
-            await event.update_responded_message(latest_date)
+            await event.update_responded_message()
         # Remove this event from each participant's other availabilities
         else:
             for participant in event.participants:
                 for other_event in client.events:
-                    if other_event == event or other_event.created:
-                        continue
-                    for other_participant in other_event.participants:
-                        if other_participant.member.id == participant.member.id:
-                            other_participant.remove_availability_for_event(event_start_times=event.start_times, event_duration=event.duration)
-                    await other_event.update_responded_message()
+                    if other_event != event and not other_event.created:
+                        for other_participant in other_event.participants:
+                            if other_participant.member.id == participant.member.id:
+                                other_participant.remove_availability_for_event(event_start_times=event.start_times, event_duration=event.duration)
+                                break
 
     for event in client.events.copy():
         # Reset to ensure at least 30 seconds to finish answering
@@ -1836,17 +1830,8 @@ async def update():
                 logger.error(f'{event}: Error sending 5 minute warning: {e}')
             continue
 
-        if event.created:
-            continue
-
-        # Skip the rest of update() for this event if we are waiting for answers
-        if event.number_of_responded() > 1:
-            try:
-                latest_date = event.check_availabilities()
-                await event.update_responded_message(latest_date)
-            except Exception as e:
-                logger.error(f'{event}: Error checking availabilities before everyone responded: {e}')
-        if not event.has_everyone_answered():
+        # Skip the rest of update() for this event if it is created or if we are waiting for answers
+        if event.created or not event.has_everyone_answered():
             continue
 
         # Delete availability request message
