@@ -1,6 +1,7 @@
 '''Written by Cael Shoop.'''
 
 import os
+import time
 import logging
 import asyncio
 import requests
@@ -134,6 +135,8 @@ class SchedulerClient(Client):
                         logger.info(f'{event}: event loaded and added to client event list')
                     except Exception as e:
                         logger.error(f'Could not add event to client event list: {e}')
+                    # Stop rate limiting when launching bot
+                    time.sleep(1)
             else:
                 logger.info('No json data found')
 
