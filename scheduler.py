@@ -626,7 +626,11 @@ class Event:
         # Participants
         event_participants = [Participant.from_dict(event_guild, participant) for participant in data["participants"]]
         for participant in event_participants.copy():
-            if not participant:
+            try:
+                if participant is None:
+                    event_participants.remove(participant)
+            except Exception as e:
+                logger.warning(f"Exception while adding participant: {e}")
                 event_participants.remove(participant)
         if event_participants:
             logger.info(f'{event_name}: found participant(s): {", ".join([p.member.name for p in event_participants])}')
