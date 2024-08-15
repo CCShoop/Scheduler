@@ -69,6 +69,8 @@ def get_time_str_from_minutes(minutes: int) -> str:
     mins = int(minutes % 60)
     if mins != 0:
         output += f'{mins} minutes ' if mins != 1 else '1 minute '
+    if mins == 0 and hours == 0 and days == 0 and weeks == 0:
+        output = '0 minutes'
     return output
 
 
@@ -501,7 +503,7 @@ class Event:
             self.event_buttons_msg_content_pt2 = f"\n**Started:** {self.get_start_time_string(0)}"
         # Event has ended
         else:
-            self.event_buttons_msg_content_pt2 = f'\n**Ended:** {end_time.strftime("%m/%d at %H:%M")} ET'
+            self.event_buttons_msg_content_pt2 = f'\n**Ended:** {end_time.strftime("%A, %m/%d at %H:%M")} ET'
         self.event_buttons_msg_content_pt3 = f"\n{self.get_names_string(subscribed_only=True, mention=True)}"
         self.event_buttons_msg_content_pt4 = f"\n{unsubbed}"
         response = f"{self.event_buttons_msg_content_pt1} {self.event_buttons_msg_content_pt2} {self.event_buttons_msg_content_pt3} {self.event_buttons_msg_content_pt4}"
@@ -517,7 +519,7 @@ class Event:
 
     # Get start time string
     def get_start_time_string(self, index: int = 0) -> str:
-        return f'{self.start_times[index].strftime("%m/%d at %H:%M")} ET'
+        return f'{self.start_times[index].strftime("%A, %m/%d at %H:%M")} ET'
 
     # Get availability request string
     def get_availability_request_string(self) -> str:
