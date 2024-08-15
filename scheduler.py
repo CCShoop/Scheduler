@@ -1538,7 +1538,7 @@ async def on_message(message: Message):
 @client.tree.command(name='create', description='Create an event.')
 @app_commands.describe(event_name='Name for the event.')
 @app_commands.describe(voice_channel='Voice channel for the event.')
-@app_commands.describe(start_time='Start time (in Eastern Time) for the event.')
+@app_commands.describe(start_time='Start time (in Eastern Time or ISO format) for the event.')
 @app_commands.describe(image_url='URL to an image for the event.')
 @app_commands.describe(include_exclude='Whether to include or exclude users with the designated role.')
 @app_commands.describe(usernames='Comma separated usernames of users to include/exclude.')
@@ -1554,16 +1554,22 @@ async def create_command(interaction: Interaction, event_name: str, voice_channe
         return
 
     # Parse start time
-    start_time = start_time.strip()
-    start_time = start_time.replace(':', '')
-    if len(start_time) == 3:
-        start_time = '0' + start_time
-    elif len(start_time) != 4:
-        await interaction.response.send_message('Invalid start time format. Examples: "1630" or "00:30"')
-    hour = int(start_time[:2])
-    minute = int(start_time[2:])
-    start_time_obj = datetime.now().astimezone().replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if start_time_obj <= datetime.now().astimezone().replace(second=0, microsecond=0):
+    try:
+        start_time_obj = datetime.fromisoformat(start_time)
+    except Exception as e:
+        logger.info(f"Start time was not in iso format: {e}")
+        start_time = start_time.strip()
+        start_time = start_time.replace(':', '')
+        if len(start_time) == 1 or len(start_time) == 2:
+            start_time = start_time + '00'
+        if len(start_time) == 3:
+            start_time = '0' + start_time
+        elif len(start_time) != 4:
+            await interaction.response.send_message('Invalid start time format. Examples: "1630" or "00:30"')
+        hour = int(start_time[:2])
+        minute = int(start_time[2:])
+        start_time_obj = datetime.now().astimezone().replace(hour=hour, minute=minute, second=0, microsecond=0)
+    while start_time_obj <= datetime.now().astimezone().replace(second=0, microsecond=0):
         start_time_obj += timedelta(days=1)
 
     participants = get_participants_from_interaction(interaction, include_exclude, usernames, roles)
