@@ -572,6 +572,11 @@ class Event:
         if self.created:
             return
         latest_date = self.check_availabilities() if self.number_of_responded() > 1 else None
+        if self.number_of_responded() == 1:
+            for participant in self.participants:
+                if participant.answered:
+                    latest_date = participant.availability[-1].start_time.date()
+                    break
         message_content = ''
         cur_date = datetime.now().astimezone().date()
         if latest_date and latest_date != cur_date:
