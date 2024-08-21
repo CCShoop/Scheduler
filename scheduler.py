@@ -1544,6 +1544,34 @@ async def on_message(message: Message):
             embed.add_field(name=event.name, value=eventStatus, inline=True)
         await message.channel.send(embed=embed)
 
+    # Owner unsubscribes another user
+    if message.author.id == OWNER_ID and 'scheduler: unsubscribe' in message.content:
+        foundEvent = False
+        for event in client.events:
+            if event.name in message.content.split('from')[1].strip():
+                foundEvent = True
+                try:
+                    id = message.content.split('unsubscribe')[1].split('from')[0].strip()
+                    id = int(id)
+                    found = False
+                    for participant in event.participants:
+                        if participant.member.id == id:
+                            found = True
+                            participant.subscribed = False
+                            if participant.member.nick:
+                                await message.channel.send(f"Unsubscribed {participant.member.nick}")
+                            else:
+                                await message.channel.send(f"Unsubscribed {participant.member.name}")
+                            break
+                    if not found:
+                        await message.channel.send(f"{event.name}: participant {participant.name} not found")
+                except Exception as e:
+                    await message.channel.send("Invalid ID provided")
+                    logger.warn(f"Invalid unsubscribe other user format from owner: {e}")
+                break
+        if not foundEvent:
+            await message.content.channel.send("No event found")
+
 
 @client.tree.command(name='create', description='Create an event.')
 @app_commands.describe(event_name='Name for the event.')
