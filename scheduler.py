@@ -540,6 +540,8 @@ class Event:
         for participant in self.participants:
             if participant.subscribed and not participant.answered:
                 return False
+            if not participant.subscribed:
+                continue
             if participant.availability:
                 if participant.availability[-1].start_time.date() < latest_date:
                     return False
