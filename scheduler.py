@@ -1564,6 +1564,7 @@ async def on_message(message: Message):
                                 await message.channel.send(f"Unsubscribed {participant.member.nick}")
                             else:
                                 await message.channel.send(f"Unsubscribed {participant.member.name}")
+                            await event.update_responded_message()
                             break
                     if not found:
                         await message.channel.send(f"{event.name}: participant {participant.name} not found")
