@@ -1396,7 +1396,7 @@ def get_participants_from_channel(guild: Guild,
     # Add users meeting username criteria
     if type(usernames) is str:
         usernames = usernames.split(',')
-    if type(usernames) is not list:
+    if usernames and type(usernames) is not list:
         raise Exception(f'Received incompatible usernames variable type: {type(usernames)}')
     if usernames and usernames != '':
         try:
@@ -1659,17 +1659,23 @@ async def schedule_command(interaction: Interaction,
                            duration: int = 30,
                            multi_event: bool = False):
     logger.info(f'{event_name}: Received event schedule request from {interaction.user.name}')
-    content, ephemeral = await schedule(eventName=event_name,
-                                        user=interaction.user,
-                                        guild=interaction.guild,
-                                        textChannel=interaction.channel,
-                                        voiceChannel=voice_channel,
-                                        imageUrl=image_url,
-                                        includeExclude=include_exclude,
-                                        usernames=usernames,
-                                        roles=roles,
-                                        duration=duration,
-                                        multiEvent=multi_event)
+    content = ""
+    ephemeral = True
+    try: 
+        content, ephemeral = await schedule(eventName=event_name,
+                                            user=interaction.user,
+                                            guild=interaction.guild,
+                                            textChannel=interaction.channel,
+                                            voiceChannel=voice_channel,
+                                            imageUrl=image_url,
+                                            includeExclude=include_exclude,
+                                            usernames=usernames,
+                                            roles=roles,
+                                            duration=duration,
+                                            multiEvent=multi_event)
+    except Exception as e:
+        content = f"Failed to schedule event: {e}"
+        logger.error(content)
     await interaction.response.send_message(content=content, ephemeral=ephemeral)
 
 async def schedule(eventName: str,
