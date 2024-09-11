@@ -1394,9 +1394,12 @@ def get_participants_from_channel(guild: Guild,
         return participants
 
     # Add users meeting username criteria
+    if type(usernames) is str:
+        usernames = usernames.split(',')
+    if type(usernames) is not list:
+        raise Exception(f'Received incompatible usernames variable type: {type(usernames)}')
     if usernames and usernames != '':
         try:
-            usernames = usernames.split(',')
             usernames = [username.strip() for username in usernames]
         except Exception as e:
             raise Exception(f'Failed to parse username(s): {e}')
