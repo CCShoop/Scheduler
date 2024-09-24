@@ -1878,14 +1878,19 @@ async def update():
                         event.five_minute_warning_flag = True
                         if event.text_channel:
                             try:
-                                await event.text_channel.send(f'{event.get_names_string(subscribed_only=True, mention=True)}\n**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
+                                message = f'{event.get_names_string(subscribed_only=True, mention=True)}'
+                                message += f'\n**5 minute warning!** {event.name} is scheduled to start in 5 minutes.'
+                                message += f'\n{event.event_buttons_message.mention}'
+                                await event.text_channel.send(message)
                             except Exception as e:
                                 logger.error(f'Error sending 5 minute nudge: {e}')
                                 continue
                         else:
                             for participant in event.participants:
                                 async with participant.msg_lock:
-                                    await participant.member.send(f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.')
+                                    message = f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.'
+                                    message += f'\n{event.text_channel.mention}'
+                                    await participant.member.send(message)
             except Exception as e:
                 logger.error(f'{event}: Error sending 5 minute warning: {e}')
             continue
