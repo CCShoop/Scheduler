@@ -136,7 +136,7 @@ class SchedulerClient(Client):
                     except Exception as e:
                         logger.error(f'Could not add event to client event list: {e}')
                     # Stop rate limiting when launching bot
-                    time.sleep(1)
+                    time.sleep(3)
             else:
                 logger.info('No json data found')
 
@@ -162,6 +162,7 @@ class Event:
                  guild: Guild,
                  text_channel: TextChannel,
                  image_url: str = '',
+                 scheduler=None,
                  participants: list = None,
                  duration=timedelta(minutes=30),
                  multi_event: bool = False,
@@ -198,6 +199,7 @@ class Event:
                 logger.error(f'Failed to get voice channel: {e}')
                 self.voice_channel = None
         self.privacy_level = PrivacyLevel.guild_only
+        self.scheduler = scheduler
         self.participants = participants
         self.image_url = image_url
         self.avail_buttons: AvailabilityButtons = avail_buttons
@@ -227,6 +229,11 @@ class Event:
         self.timeout_counter: int = timeout_counter
         self.avail_msg_content_pt1 = f'**Event name:** {self.name}'
         self.avail_msg_content_pt1 += '\n**Duration:** '
+        if self.scheduler:
+            if self.scheduler.nick:
+                self.avail_msg_content_pt1 += f'\n**Scheduled by:** {self.scheduler.nick}'
+            else:
+                self.avail_msg_content_pt1 += f'\n**Scheduled by:** {self.scheduler.name}'
         self.avail_msg_content_pt2 = f'\n**Multi-event:** {self.multi_event}'
         self.avail_msg_content_pt2 += '\n**Times out in:** '
         self.avail_msg_content_pt3 = '\n\nSelect **Respond** to enter your availability.'
@@ -635,6 +642,13 @@ class Event:
         else:
             raise Exception(f'Could not find voice channel for {event_name}, disregarding event')
 
+        # Scheduler
+        event_scheduler = event_guild.get_member(data['scheduler_id'])
+        if event_scheduler:
+            logger.info(f'{event_name}: found scheduler with id {event_scheduler.id}')
+        else:
+            logger.warning(f'{event_name}: failed to find scheduler')
+
         # Participants
         event_participants = [Participant.from_dict(event_guild, participant) for participant in data["participants"]]
         for participant in event_participants.copy():
@@ -768,6 +782,7 @@ class Event:
             avail_buttons=event_avail_buttons,
             responded_message=event_responded_message,
             voice_channel=event_voice_channel,
+            scheduler=event_scheduler,
             participants=event_participants,
             image_url=event_image_url,
             event_buttons_message=event_event_buttons_message,
@@ -823,6 +838,7 @@ class Event:
             'availability_message_id': availability_message_id,
             'responded_message_id': responded_message_id,
             'voice_channel_id': self.voice_channel.id,
+            'scheduler_id': self.scheduler.id,
             'participants': participants,
             'image_url': self.image_url,
             'event_buttons_message_id': event_buttons_message_id,
@@ -1197,6 +1213,7 @@ class EventButtons(View):
             except Exception as e:
                 logger.error(f"{self.event}: Error removing start time from list: {e}")
             self.event.created = False
+            self.event.five_minute_warning_flag = False
             self.event.event_buttons_msg_content_pt2 = f'\n**Rescheduled at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
             try:
                 await self.event.event_buttons_message.edit(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt4}', view=None)
@@ -1321,15 +1338,12 @@ class ExistingAvailabilitiesSelect(Select):
         response = "**__Failed to get your availability.__**"
         for event_avail in self.event_avails:
             if event_avail.event.name == self.values[0]:
-                if event_avail.event.created:
-                    await interaction.response.send_message(content=f'{event_avail.event.name} has already been created.', ephemeral=True)
-                    return
                 self.participant.availability = event_avail.avail
                 self.participant.full_availability_flag = event_avail.full_flag
                 self.participant.answered = True
-                await event_avail.event.update_responded_message()
                 response = f"**__Availability for {event_avail.event.name}:__**\n"
                 response += self.participant.get_availability_string()
+                await event_avail.event.update_responded_message()
                 break
         await interaction.response.send_message(content=response, ephemeral=True)
 
@@ -1616,6 +1630,7 @@ async def create_command(interaction: Interaction, event_name: str, voice_channe
     while start_time_obj <= datetime.now().astimezone().replace(second=0, microsecond=0):
         start_time_obj += timedelta(days=1)
 
+    scheduler = interaction.guild.get_member(interaction.user.id)
     participants = get_participants_from_interaction(interaction, include_exclude, usernames, roles)
     for participant in participants:
         participant.answered = True
@@ -1623,7 +1638,15 @@ async def create_command(interaction: Interaction, event_name: str, voice_channe
     # Make event
     duration = timedelta(minutes=duration)
     start_times = [start_time_obj]
-    event = Event(name=event_name, voice_channel=voice_channel, participants=participants, guild=interaction.guild, text_channel=interaction.channel, image_url=image_url, duration=duration, start_times=start_times)
+    event = Event(name=event_name,
+                  voice_channel=voice_channel,
+                  scheduler=scheduler;
+                  participants=participants,
+                  guild=interaction.guild,
+                  text_channel=interaction.channel,
+                  image_url=image_url,
+                  duration=duration,
+                  start_times=start_times)
     client.events.append(event)
     await event.make_scheduled_events()
 
@@ -1703,6 +1726,7 @@ async def schedule(eventName: str,
 
     # Generate participants list
     try:
+        scheduler = guild.get_member(user.id)
         participants = get_participants_from_channel(guild=guild,
                                                      channel=textChannel,
                                                      user=user,
@@ -1720,6 +1744,7 @@ async def schedule(eventName: str,
         duration = timedelta(minutes=duration)
         event = Event(name=eventName,
                       voice_channel=voiceChannel,
+                      scheduler=scheduler,
                       participants=participants,
                       guild=guild,
                       text_channel=textChannel,
