@@ -1413,6 +1413,9 @@ def get_participants_from_channel(guild: Guild,
     if usernames and type(usernames) is not list:
         raise Exception(f'Received incompatible usernames variable type: {type(usernames)}')
     if usernames and usernames != '':
+        logger.debug("Received unsubscribed user names/ids")
+        for username in usernames:
+            logger.debug(f"\t{username}")
         try:
             usernames = [username.strip() for username in usernames]
         except Exception as e:
@@ -1727,6 +1730,7 @@ async def schedule(eventName: str,
     # Generate participants list
     try:
         scheduler = guild.get_member(user.id)
+        logger.debug(f"Received raw unsubscribed user IDs: {usernames}")
         participants = get_participants_from_channel(guild=guild,
                                                      channel=textChannel,
                                                      user=user,
