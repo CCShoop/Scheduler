@@ -213,15 +213,9 @@ class Event:
         self.ready_to_create = ready_to_create
         self.created = created
         self.started = started
-        if scheduled_events:
-            self.scheduled_events: list = scheduled_events
-        else:
-            self.scheduled_events = []
+        self.scheduled_events: list = scheduled_events if scheduled_events is not None else []
         self.changed = changed
-        if start_times:
-            self.start_times: list = start_times
-        else:
-            self.start_times = []
+        self.start_times: list = start_times if start_times is not None else []
         self.duration = duration
         self.mins_until_start: int = 0
         self.unavailable = unavailable
@@ -1290,8 +1284,14 @@ class ExistingGuildEventsSelect(Select):
                 for participant in participants:
                     participant.answered = True
                 start_times = [selected_guild_event.start_time.astimezone()]
-                event = Event(name=selected_guild_event.name, voice_channel=selected_guild_event.location, participants=participants, guild=self.guild, text_channel=interaction.channel, start_times=start_times)
-                event.created = True
+                event = Event(name=selected_guild_event.name,
+                              voice_channel=selected_guild_event.location,
+                              guild=self.guild,
+                              text_channel=interaction.channel,
+                              scheduler=self.guild.get_member(interaction.user.id),
+                              participants=participants,
+                              start_times=start_times,
+                              created=True)
                 client.events.append(event)
             for guild_event in self.guild.scheduled_events:
                 if guild_event.name == selected_guild_event.name and guild_event.location == selected_guild_event.location:
@@ -1301,6 +1301,7 @@ class ExistingGuildEventsSelect(Select):
             event.event_buttons = EventButtons(event)
             event.event_buttons_message = await event.text_channel.send(content=response, view=event.event_buttons)
             await interaction.followup.send('Success!', ephemeral=True)
+            persist.write(client.get_events_dict())
         else:
             await interaction.response.send_message('Error getting guild scheduled event.')
             logger.exception(f'Error getting guild scheduled event selected by {interaction.user.name}')
