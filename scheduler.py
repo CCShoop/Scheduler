@@ -101,10 +101,10 @@ class SchedulerClient(Client):
         textChannel = guild.get_channel(data["textChannelId"])
         voiceChannel = guild.get_channel(data["voiceChannelId"])
         await schedule(eventName=data["name"],
-                       user=None,
                        guild=guild,
                        textChannel=textChannel,
                        voiceChannel=voiceChannel,
+                       schedulerId=0,
                        imageUrl=data["imageUrl"],
                        includeExclude=data["includeExclude"],
                        usernames=data["usernames"],
@@ -800,12 +800,16 @@ class Event:
     def to_dict(self) -> dict:
         try:
             availability_message_id = self.availability_message.id
-        except:
+        except Exception:
             availability_message_id = 0
         try:
             responded_message_id = self.responded_message.id
-        except:
+        except Exception:
             responded_message_id = 0
+        try:
+            scheduler_id = self.scheduler.id
+        except Exception:
+            scheduler_id = 0
         try:
             participants = [participant.to_dict() for participant in self.participants]
         except Exception as e:
@@ -813,7 +817,7 @@ class Event:
             participants = []
         try:
             event_buttons_message_id = self.event_buttons_message.id
-        except:
+        except Exception:
             event_buttons_message_id = 0
         try:
             scheduled_event_ids = [scheduled_event.id for scheduled_event in self.scheduled_events]
@@ -832,7 +836,7 @@ class Event:
             'availability_message_id': availability_message_id,
             'responded_message_id': responded_message_id,
             'voice_channel_id': self.voice_channel.id,
-            'scheduler_id': self.scheduler.id,
+            'scheduler_id': scheduler_id,
             'participants': participants,
             'image_url': self.image_url,
             'event_buttons_message_id': event_buttons_message_id,
@@ -1688,12 +1692,12 @@ async def schedule_command(interaction: Interaction,
     logger.info(f'{event_name}: Received event schedule request from {interaction.user.name}')
     content = ""
     ephemeral = True
-    try: 
+    try:
         content, ephemeral = await schedule(eventName=event_name,
-                                            user=interaction.user,
                                             guild=interaction.guild,
                                             textChannel=interaction.channel,
                                             voiceChannel=voice_channel,
+                                            schedulerId=interaction.user.id,
                                             imageUrl=image_url,
                                             includeExclude=include_exclude,
                                             usernames=usernames,
@@ -1705,11 +1709,12 @@ async def schedule_command(interaction: Interaction,
         logger.error(content)
     await interaction.response.send_message(content=content, ephemeral=ephemeral)
 
+
 async def schedule(eventName: str,
-                   user: User,
                    guild: Guild,
                    textChannel,
                    voiceChannel: VoiceChannel,
+                   schedulerId: int = 0,
                    imageUrl: str = None,
                    includeExclude: INCLUDE_EXCLUDE = INCLUDE,
                    usernames: str = None,
@@ -1721,20 +1726,23 @@ async def schedule(eventName: str,
         ephemeral = True
         return content, ephemeral
 
+    if schedulerId == 0:
+        scheduler = guild.get_member(schedulerId)
+    else:
+        scheduler = guild.members[0]
+
     if eventName in [event.name for event in client.events]:
-        if user is not None:
-            logger.warning(f"{user.name} tried to make an event with an existing name")
+        logger.warning(f"{scheduler.name} tried to make an event with an existing name")
         content = f"Sorry, I already have an event called {eventName}. Please choose a different name."
         ephemeral = True
         return content, ephemeral
 
     # Generate participants list
     try:
-        scheduler = guild.get_member(user.id)
         logger.debug(f"Received raw unsubscribed user IDs: {usernames}")
         participants = get_participants_from_channel(guild=guild,
                                                      channel=textChannel,
-                                                     user=user,
+                                                     user=scheduler,
                                                      include_exclude=includeExclude,
                                                      usernames=usernames,
                                                      roles=roles)
@@ -1744,6 +1752,7 @@ async def schedule(eventName: str,
         ephemeral = True
         return content, ephemeral
 
+    logger.debug(f"SchedulerId: {schedulerId}\nScheduler.name: {scheduler.name}")
     # Make event object
     try:
         duration = timedelta(minutes=duration)
