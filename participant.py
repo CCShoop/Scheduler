@@ -4,6 +4,7 @@ from asyncio import Lock
 from datetime import datetime, timedelta
 from calendar import isleap
 
+
 class TimeBlock():
     def __init__(self, start_time: datetime, end_time: datetime) -> None:
         self.start_time: datetime = start_time
@@ -25,6 +26,7 @@ class TimeBlock():
 
     def __repr__(self):
         return f'{self.start_time.strftime("%A, %m/%d %H:%M")} - {self.end_time.strftime("%A, %m/%d %H:%M")}'
+
 
 class Participant:
     def __init__(self,
@@ -95,28 +97,28 @@ class Participant:
         # Date parsing
         try:
             month, day, year = date_string.split('/')
-        except:
+        except Exception:
             try:
                 month, day = date_string.split('/')
                 year = datetime.now().astimezone().year
-            except:
+            except Exception:
                 try:
                     day = int(date_string)
                     month = datetime.now().astimezone().month
                     year = datetime.now().astimezone().year
-                except:
+                except Exception:
                     raise Exception(f'Invalid date format provided by user: {date_string}')
         try:
             month = int(month)
-        except:
+        except Exception:
             raise Exception(f'Invalid month: {month}')
         try:
             day = int(day)
-        except:
+        except Exception:
             raise Exception(f'Invalid day: {day}')
         try:
             year = int(year)
-        except:
+        except Exception:
             raise Exception(f'Invalid year: {year}')
 
         # Date validity check
