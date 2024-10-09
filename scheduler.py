@@ -1643,7 +1643,7 @@ async def create_command(interaction: Interaction, event_name: str, voice_channe
     start_times = [start_time_obj]
     event = Event(name=event_name,
                   voice_channel=voice_channel,
-                  scheduler=scheduler;
+                  scheduler=scheduler,
                   participants=participants,
                   guild=interaction.guild,
                   text_channel=interaction.channel,
