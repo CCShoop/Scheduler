@@ -1578,16 +1578,16 @@ async def on_message(message: Message):
                         image_bytes = await message.attachments[0].read()
                         for scheduled_event in event.scheduled_events:
                             await scheduled_event.edit(image=image_bytes)
-                        await message.channel.send(f'Added your image to {event.name}.')
+                        await message.channel.send(f'Added your image to {event.name}.', reference=message)
                         logger.info(f'{event}: {message.author.name} added an image')
                     except Exception as e:
-                        await message.channel.send(f'Failed to add your image to {event.name}.\nError: {e}', ephemeral=True)
+                        await message.channel.send(f'Failed to add your image to {event.name}.\nError: {e}', reference=message)
                         logger.warning(f'{event}: Error adding image from {message.author.name}: {e}')
                 else:
                     event.image_url = message.attachments[0].url
-                    await message.channel.send('Attached image url to event object. Will try setting it when the event is made.')
+                    await message.channel.send('Attached image url to event object. Will try setting it when the event is made.', reference=message)
                 return
-        await message.channel.send(f'Could not find event {msg_content}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}', ephemeral=True)
+        await message.channel.send(f'Could not find event {msg_content}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}', reference=message)
         return
 
     # Owner syncs commands
