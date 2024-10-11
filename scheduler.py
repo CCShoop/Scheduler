@@ -104,7 +104,7 @@ class SchedulerClient(Client):
                        guild=guild,
                        textChannel=textChannel,
                        voiceChannel=voiceChannel,
-                       schedulerId=0,
+                       schedulerId=data["notiferId"],
                        imageUrl=data["imageUrl"],
                        includeExclude=data["includeExclude"],
                        usernames=data["usernames"],
@@ -1762,9 +1762,10 @@ async def schedule(eventName: str,
         ephemeral = True
         return content, ephemeral
 
-    if schedulerId == 0:
+    scheduler = None
+    if schedulerId != 0:
         scheduler = guild.get_member(schedulerId)
-    else:
+    if scheduler is None:
         scheduler = guild.members[0]
 
     if eventName in [event.name for event in client.events]:
