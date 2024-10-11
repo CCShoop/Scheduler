@@ -1951,7 +1951,7 @@ async def update():
                             try:
                                 message = f'{event.get_names_string(subscribed_only=True, mention=True)}'
                                 message += f'\n**5 minute warning!** {event.name} is scheduled to start in 5 minutes.'
-                                message += f'\n<#{event.event_buttons_message.id}>'
+                                message += f'\nhttps://discord.com/channels/{event.guild.id}/{event.text_channel.id}/{event.event_buttons_message.id}'
                                 await event.text_channel.send(message)
                             except Exception as e:
                                 logger.error(f'Error sending 5 minute nudge: {e}')
@@ -1960,7 +1960,7 @@ async def update():
                             for participant in event.participants:
                                 async with participant.msg_lock:
                                     message = f'**5 minute warning!** {event.name} is scheduled to start in 5 minutes.'
-                                    message += f'\n<#{event.text_channel.id}>'
+                                    message += f'\nhttps://discord.com/channels/{event.guild.id}/{event.text_channel.id}/{event.text_channel.id}'
                                     await participant.member.send(message)
             except Exception as e:
                 logger.error(f'{event}: Error sending 5 minute warning: {e}')
