@@ -25,7 +25,7 @@ load_dotenv()
 # Logger setup
 logger = logging.getLogger("Event Scheduler")
 logger.setLevel(logging.DEBUG)
-formatter = logging.Formatter(fmt='[%(asctime)s] [%(levelname)s\t] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+formatter = logging.Formatter(fmt='[Scheduler] [%(asctime)s] [%(levelname)s\t] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 
 file_handler = logging.FileHandler('scheduler.log')
 file_handler.setLevel(logging.DEBUG)
@@ -1415,13 +1415,12 @@ def get_participants_from_channel(guild: Guild,
     participants = []
     # Add the scheduler/creator as a participant
     if user is not None:
-        for member in channel.members:
-            if member.name == user.name:
-                participants.append(Participant(member=member))
-                break
+        member = guild.get_member(user.id)
+        participants.append(Participant(member=member))
 
     # Add users meeting role criteria
     if roles and roles != '':
+        logger.info("Parsing roles")
         try:
             roles = roles.split(',')
             roles = [role.strip() for role in roles]
@@ -1446,6 +1445,7 @@ def get_participants_from_channel(guild: Guild,
         return participants
 
     # Add users meeting username criteria
+    logger.info("Adding specific members")
     if type(usernames) is str:
         usernames = usernames.split(',')
     if usernames and type(usernames) is not list:
@@ -1471,6 +1471,7 @@ def get_participants_from_channel(guild: Guild,
         return participants
 
     # Add all users in the channel
+    logger.info("Adding all members in channel")
     for member in channel.members:
         if member.bot:
             continue
@@ -1754,7 +1755,9 @@ async def schedule(eventName: str,
                    roles: str = None,
                    duration: int = 30,
                    multiEvent: bool = False):
+    logger.info(f"{eventName}: Scheduling event...")
     if not guild.voice_channels:
+        logger.info(f"{eventName}: Scheduling cancelled due to no voice channel in guild")
         content = "The server must have at least one voice channel to schedule an event."
         ephemeral = True
         return content, ephemeral
@@ -1765,27 +1768,28 @@ async def schedule(eventName: str,
         scheduler = guild.members[0]
 
     if eventName in [event.name for event in client.events]:
-        logger.warning(f"{scheduler.name} tried to make an event with an existing name")
+        logger.info(f"{eventName}: Scheduling cancelled due to existing name")
         content = f"Sorry, I already have an event called {eventName}. Please choose a different name."
         ephemeral = True
         return content, ephemeral
 
     # Generate participants list
     try:
-        logger.debug(f"Received raw unsubscribed user IDs: {usernames}")
+        logger.debug(f"{eventName}: Received raw unsubscribed user IDs: {usernames}")
         participants = get_participants_from_channel(guild=guild,
                                                      channel=textChannel,
                                                      user=scheduler,
                                                      include_exclude=includeExclude,
                                                      usernames=usernames,
                                                      roles=roles)
+        logger.debug(f"{eventName}: Got participants")
     except Exception as e:
-        logger.error(f"Error getting participants: {e}")
+        logger.error(f"{eventName}: Error getting participants: {e}")
         content = f"Failed to generate participants list: {e}"
         ephemeral = True
         return content, ephemeral
 
-    logger.debug(f"SchedulerId: {schedulerId}\nScheduler.name: {scheduler.name}")
+    logger.debug(f"{eventName}: SchedulerId: {schedulerId}\nScheduler.name: {scheduler.name}")
     # Make event object
     try:
         duration = timedelta(minutes=duration)
@@ -1799,6 +1803,7 @@ async def schedule(eventName: str,
                       duration=duration,
                       multi_event=multiEvent)
         client.events.append(event)
+        logger.info(f"{eventName}: Created and saved event object")
     except Exception as e:
         logger.error(f'Error making event object: {e}')
         content = f"Failed to make event object: {e}"
@@ -1807,6 +1812,7 @@ async def schedule(eventName: str,
 
     # Request availability and make participant response tracker message
     try:
+        logger.info(f"{eventName}: Requesting availability")
         await event.request_availability()
     except Exception as e:
         logger.exception(f'Error requesting availability: {e}')
