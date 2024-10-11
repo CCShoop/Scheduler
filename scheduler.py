@@ -1445,12 +1445,12 @@ def get_participants_from_channel(guild: Guild,
         return participants
 
     # Add users meeting username criteria
-    logger.info("Adding specific members")
     if type(usernames) is str:
         usernames = usernames.split(',')
     if usernames and type(usernames) is not list:
         raise Exception(f'Received incompatible usernames variable type: {type(usernames)}')
     if usernames and usernames != '':
+        logger.info("Adding specific members")
         logger.debug("Received unsubscribed user names/ids")
         for username in usernames:
             logger.debug(f"\t{username}")
@@ -1789,9 +1789,9 @@ async def schedule(eventName: str,
         ephemeral = True
         return content, ephemeral
 
-    logger.debug(f"{eventName}: SchedulerId: {schedulerId}\nScheduler.name: {scheduler.name}")
     # Make event object
     try:
+        logger.debug(f"{eventName}: SchedulerId: {schedulerId}\nScheduler.name: {scheduler.name}")
         duration = timedelta(minutes=duration)
         event = Event(name=eventName,
                       voice_channel=voiceChannel,
