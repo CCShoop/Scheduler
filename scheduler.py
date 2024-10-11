@@ -128,9 +128,9 @@ class SchedulerClient(Client):
                         #     await event.availability_message.edit(view=event.avail_buttons)
                         if event.responded_message is not None:
                             await event.update_responded_message()
-                        # if event.event_buttons_message is not None:
-                        #     event.event_buttons = EventButtons(event)
-                        #     await event.event_buttons_message.edit(view=event.event_buttons)
+                        if event.event_buttons_message is not None and not event.started:
+                            event.event_buttons = EventButtons(event)
+                            await event.event_buttons_message.edit(view=event.event_buttons)
                         self.events.append(event)
                         logger.info(f'{event}: event loaded and added to client event list')
                     except Exception as e:
