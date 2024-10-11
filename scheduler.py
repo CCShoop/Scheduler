@@ -123,13 +123,35 @@ class SchedulerClient(Client):
                         event = await Event.from_dict(event_data)
                         if not event:
                             raise Exception('Failed to create event object')
-                        # if event.availability_message is not None:
-                        #     event.avail_buttons = AvailabilityButtons(event)
-                        #     await event.availability_message.edit(view=event.avail_buttons)
+                        if event.availability_message is not None:
+                            event.avail_buttons = AvailabilityButtons(event)
+                            await event.availability_message.edit(view=event.avail_buttons)
                         if event.responded_message is not None:
                             await event.update_responded_message()
-                        if event.event_buttons_message is not None and not event.started:
+                        if event.event_buttons_message is not None:
                             event.event_buttons = EventButtons(event)
+                            event.event_buttons.start_button.style = ButtonStyle.green
+                            event.event_buttons.start_button.disabled = True
+                            event.event_buttons.end_button.disabled = False
+                            event.event_buttons.reschedule_button.disabled = True
+                            event.event_buttons.cancel_button.disabled = True
+                            # Offset all other events that share this location to start after the end of this event
+                            buffer_time = timedelta(minutes=0)
+                            other_events = []
+                            prev_event = None
+                            for other_event in client.events:
+                                if other_event != self.event and (other_event.voice_channel == self.event.voice_channel or other_event.shares_participants(self.event)):
+                                    for other_event_start_time in other_event.start_times:
+                                        if other_event_start_time < (self.event.start_times[0] + self.event.duration + buffer_time):
+                                            other_event_start_time = (self.event.start_times[0] + self.event.duration + buffer_time)
+                                    other_events.append(other_event)
+                            # Offset the events from each other to prevent stack smashing
+                            for other_event in other_events:
+                                if prev_event:
+                                    for other_event_start_time in other_event.start_times:
+                                        if other_event_start_time < (prev_event.start_times[0] + prev_event.duration + buffer_time):
+                                            other_event_start_time = (prev_event.start_times[0] + prev_event.duration + buffer_time)
+                                prev_event = other_event
                             await event.event_buttons_message.edit(view=event.event_buttons)
                         self.events.append(event)
                         logger.info(f'{event}: event loaded and added to client event list')
