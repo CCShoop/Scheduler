@@ -140,10 +140,10 @@ class SchedulerClient(Client):
                             other_events = []
                             prev_event = None
                             for other_event in client.events:
-                                if other_event != self.event and (other_event.voice_channel == self.event.voice_channel or other_event.shares_participants(self.event)):
+                                if other_event != event and (other_event.voice_channel == event.voice_channel or other_event.shares_participants(event)):
                                     for other_event_start_time in other_event.start_times:
-                                        if other_event_start_time < (self.event.start_times[0] + self.event.duration + buffer_time):
-                                            other_event_start_time = (self.event.start_times[0] + self.event.duration + buffer_time)
+                                        if other_event_start_time < (event.start_times[0] + event.duration + buffer_time):
+                                            other_event_start_time = (event.start_times[0] + event.duration + buffer_time)
                                     other_events.append(other_event)
                             # Offset the events from each other to prevent stack smashing
                             for other_event in other_events:
@@ -152,6 +152,16 @@ class SchedulerClient(Client):
                                         if other_event_start_time < (prev_event.start_times[0] + prev_event.duration + buffer_time):
                                             other_event_start_time = (prev_event.start_times[0] + prev_event.duration + buffer_time)
                                 prev_event = other_event
+                            # Disable start buttons of events scheduled for the same channel
+                            for other_event in client.events:
+                                if other_event == event or not other_event.created or other_event.voice_channel != event.voice_channel:
+                                    continue
+                                other_event.event_buttons.start_button.disabled = True
+                                try:
+                                    await other_event.event_buttons_message.edit(view=other_event.event_buttons)
+                                    logger.info(f'{event}: Disabled start button for event with same location: {other_event.name}')
+                                except Exception as e:
+                                    logger.error(f'{event}: Failed to disable start button for {other_event}: {e}')
                             await event.event_buttons_message.edit(view=event.event_buttons)
                         self.events.append(event)
                         logger.info(f'{event}: event loaded and added to client event list')
