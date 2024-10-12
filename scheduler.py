@@ -97,6 +97,7 @@ class SchedulerClient(Client):
         asyncio.create_task(self.server.start_server())
 
     async def schedule_from_dict(self, data: dict) -> None:
+        logger.info(f"{data['name']}: Schedule from dict triggered")
         guild = self.get_guild(data["guildId"])
         textChannel = guild.get_channel(data["textChannelId"])
         voiceChannel = guild.get_channel(data["voiceChannelId"])
@@ -104,7 +105,7 @@ class SchedulerClient(Client):
                        guild=guild,
                        textChannel=textChannel,
                        voiceChannel=voiceChannel,
-                       schedulerId=data["notiferId"],
+                       schedulerId=data["notifierId"],
                        imageUrl=data["imageUrl"],
                        includeExclude=data["includeExclude"],
                        usernames=data["usernames"],
