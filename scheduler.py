@@ -1417,7 +1417,8 @@ def get_participants_from_channel(guild: Guild,
     # Add the scheduler/creator as a participant
     if user is not None:
         member = guild.get_member(user.id)
-        participants.append(Participant(member=member))
+        if not member.bot:
+            participants.append(Participant(member=member))
 
     # Add users meeting role criteria
     if roles and roles != '':
@@ -1454,7 +1455,7 @@ def get_participants_from_channel(guild: Guild,
         logger.info("Adding specific members")
         logger.debug("Received unsubscribed user names/ids")
         for username in usernames:
-            logger.debug(f"\t{username}")
+            logger.debug(f"\t{username.strip()}")
         try:
             usernames = [username.strip() for username in usernames]
         except Exception as e:
@@ -1477,7 +1478,7 @@ def get_participants_from_channel(guild: Guild,
         if member.bot:
             continue
         if user is not None:
-            if member.name == user.name:
+            if member.id == user.id:
                 continue
         participants.append(Participant(member=member))
     return participants
@@ -1793,7 +1794,8 @@ async def schedule(eventName: str,
 
     # Make event object
     try:
-        logger.debug(f"{eventName}: SchedulerId: {schedulerId}\nScheduler.name: {scheduler.name}")
+        logger.debug(f"{eventName}: SchedulerId: {schedulerId}")
+        logger.debug(f"{eventName}: Scheduler.name: {scheduler.name}")
         duration = timedelta(minutes=duration)
         event = Event(name=eventName,
                       voice_channel=voiceChannel,
