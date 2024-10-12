@@ -259,10 +259,10 @@ class Event:
         self.avail_msg_content_pt1 += '\n**Duration:** '
         if self.scheduler:
             if self.scheduler.nick:
-                self.avail_msg_content_pt1 += f'\n**Scheduled by:** {self.scheduler.nick}'
+                self.avail_msg_content_pt2 = f'\n**Scheduled by:** {self.scheduler.nick}'
             else:
-                self.avail_msg_content_pt1 += f'\n**Scheduled by:** {self.scheduler.name}'
-        self.avail_msg_content_pt2 = f'\n**Multi-event:** {self.multi_event}'
+                self.avail_msg_content_pt2 = f'\n**Scheduled by:** {self.scheduler.name}'
+        self.avail_msg_content_pt2 += f'\n**Multi-event:** {self.multi_event}'
         self.avail_msg_content_pt2 += '\n**Times out in:** '
         self.avail_msg_content_pt3 = '\n\nSelect **Respond** to enter your availability.'
         self.avail_msg_content_pt3 += '\n**Full** will mark you as available from now until midnight tonight.'
