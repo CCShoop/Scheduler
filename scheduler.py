@@ -1596,7 +1596,7 @@ async def on_message(message: Message):
     if message.author.id == OWNER_ID and 'scheduler: sync' in message.content:
         await client.tree.sync()
         logger.info(f'User {message.author.name} synced commands')
-        await message.channel.send(content='Synced')
+        await message.channel.send(content='Synced', reference=message)
 
     # Owner requests to see all events
     if message.author.id == OWNER_ID and 'scheduler: list all' in message.content:
@@ -1605,7 +1605,7 @@ async def on_message(message: Message):
         for event in client.events:
             eventStatus = event.get_scheduling_status()
             embed.add_field(name=event.name, value=eventStatus, inline=True)
-        await message.channel.send(embed=embed)
+        await message.channel.send(embed=embed, reference=message)
 
     # Owner unsubscribes another user
     if message.author.id == OWNER_ID and 'scheduler: unsubscribe' in message.content:
@@ -1622,19 +1622,19 @@ async def on_message(message: Message):
                             found = True
                             participant.subscribed = False
                             if participant.member.nick:
-                                await message.channel.send(f"Unsubscribed {participant.member.nick}")
+                                await message.channel.send(f"Unsubscribed {participant.member.nick}", reference=message)
                             else:
-                                await message.channel.send(f"Unsubscribed {participant.member.name}")
+                                await message.channel.send(f"Unsubscribed {participant.member.name}", reference=message)
                             await event.update_responded_message()
                             break
                     if not found:
-                        await message.channel.send(f"{event.name}: participant {participant.name} not found")
+                        await message.channel.send(f"{event.name}: participant {participant.name} not found", reference=message)
                 except Exception as e:
-                    await message.channel.send("Invalid ID provided")
+                    await message.channel.send("Invalid ID provided", reference=message)
                     logger.warn(f"Invalid unsubscribe other user format from owner: {e}")
                 break
         if not foundEvent:
-            await message.content.channel.send("No event found")
+            await message.content.channel.send("No event found", reference=message)
 
 
 @client.tree.command(name='create', description='Create an event.')
