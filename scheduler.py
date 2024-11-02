@@ -327,7 +327,6 @@ class Event:
                     date_scheduled = True
                     break
             if timeblock.duration >= self.duration and not date_scheduled:
-                logger.info(f'{self.name}: start time for {tb_date.month}/{tb_date.day}: {timeblock.start_time.strftime("%H:%M")}')
                 self.start_times.append(timeblock.start_time)
                 self.ready_to_create = True
                 dates_scheduled.append(tb_date)
@@ -510,7 +509,7 @@ class Event:
             if other_event != self:
                 for other_participant in other_event.participants:
                     if other_participant.member.id == participant.member.id and other_participant.answered:
-                        event_avail = EventAvailability(other_event, other_participant.availability, other_participant.full_availability_flag)
+                        event_avail = EventAvailability(event=other_event, avail=other_participant.availability, full_flag=other_participant.full_availability_flag)
                         event_availabilities.append(event_avail)
         return event_availabilities
 
@@ -620,7 +619,7 @@ class Event:
                     break
         message_content = ''
         cur_date = datetime.now().astimezone().date()
-        if latest_date and latest_date != cur_date:
+        if latest_date and latest_date > cur_date:
             message_content = f'**Input up to latest availability date: {latest_date.month}/{latest_date.day}**\n'
         mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
         message_content += f'Waiting for a response from: \n{mentions}'
@@ -1109,10 +1108,10 @@ class AvailabilityButtons(View):
                 response = f'**__Availability for {self.event}:__**\n'
                 response += participant.get_availability_string()
                 await interaction.response.send_message(response, ephemeral=True)
-                await self.event.update_responded_message()
-                persist.write(client.get_events_dict())
             else:
                 await interaction.response.send_message('Select another event to grab your availability from.', view=ExistingAvailabilitiesSelectView(found_availabilities, participant), ephemeral=True)
+            await self.event.update_responded_message()
+            persist.write(client.get_events_dict())
         button.callback = reuse_button_callback
         self.add_item(button)
         return button
@@ -1150,17 +1149,6 @@ class AvailabilityButtons(View):
             self.event.changed = True
             self.event.ready_to_create = False
             await interaction.response.send_modal(CancelModal(event=self.event, title=f'Cancel {self.event}'))
-            # participant = self.event.get_participant(interaction.user.name)
-            # if not participant.unavailable:
-            #     participant.unavailable = True
-            #     self.event.unavailable = True
-            #     await interaction.response.send_message(f'{self.event} will be cancelled shortly unless you click the **Cancel** button again.', ephemeral=True)
-            #     logger.info(f'{self.event}: {interaction.user.name} selected cancel')
-            # else:
-            #     participant.unavailable = False
-            #     self.event.unavailable = False
-            #     await interaction.response.send_message(f'{self.event} will not be cancelled.', ephemeral=True)
-            #     logger.info(f'{self.event}: {interaction.user.name} deselected cancel')
             persist.write(client.get_events_dict())
         button.callback = cancel_button_callback
         self.add_item(button)
@@ -1428,18 +1416,19 @@ class ExistingAvailabilitiesSelect(Select):
 
     # Select an availability to attach
     async def callback(self, interaction: Interaction):
-        logger.info(f'{interaction.user.name} selected an event to get their availability from')
-        response = "**__Failed to get your availability.__**"
+        logger.info(f'{interaction.user.name} selected availability from {self.values[0]}')
+        response = "**Failed to get your availability.**"
         for event_avail in self.event_avails:
             if event_avail.event.name == self.values[0]:
                 self.participant.availability = event_avail.avail
                 self.participant.full_availability_flag = event_avail.full_flag
                 self.participant.answered = True
+                self.participant.subscribed = True
                 response = f"**__Availability for {event_avail.event.name}:__**\n"
                 response += self.participant.get_availability_string()
                 break
-        await event_avail.event.update_responded_message()
         await interaction.response.send_message(content=response, ephemeral=True)
+        await event_avail.event.update_responded_message()
 
 
 # View to house the previous availability dropdown
@@ -1508,9 +1497,6 @@ def get_participants_from_channel(guild: Guild,
         raise Exception(f'Received incompatible usernames variable type: {type(usernames)}')
     if usernames and usernames != '':
         logger.info("Adding specific members")
-        logger.debug("Received unsubscribed user names/ids")
-        for username in usernames:
-            logger.debug(f"\t{username.strip()}")
         try:
             usernames = [username.strip() for username in usernames]
         except Exception as e:
@@ -1835,14 +1821,12 @@ async def schedule(eventName: str,
 
     # Generate participants list
     try:
-        logger.debug(f"{eventName}: Received raw unsubscribed user IDs: {usernames}")
         participants = get_participants_from_channel(guild=guild,
                                                      channel=textChannel,
                                                      user=scheduler,
                                                      include_exclude=includeExclude,
                                                      usernames=usernames,
                                                      roles=roles)
-        logger.debug(f"{eventName}: Got participants")
     except Exception as e:
         logger.error(f"{eventName}: Error getting participants: {e}")
         content = f"Failed to generate participants list: {e}"
@@ -1851,8 +1835,6 @@ async def schedule(eventName: str,
 
     # Make event object
     try:
-        logger.debug(f"{eventName}: SchedulerId: {schedulerId}")
-        logger.debug(f"{eventName}: Scheduler.name: {scheduler.name}")
         duration = timedelta(minutes=duration)
         event = Event(name=eventName,
                       voice_channel=voiceChannel,
@@ -1918,7 +1900,7 @@ async def update():
         if not event.created:
             await event.update_availability_message()
             for participant in event.participants:
-                participant.confirm_answered()
+                participant.confirm_answered(event.duration)
             await event.update_responded_message()
         # Remove this event from each participant's other availabilities
         else:
