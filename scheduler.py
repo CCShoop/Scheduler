@@ -541,7 +541,7 @@ class Event:
             self.event_buttons_msg_content_pt2 = f"\n**Started:** {self.get_start_time_string(0)}"
         # Event has ended
         else:
-            self.event_buttons_msg_content_pt2 = f'\n**Ended:** {end_time.strftime("%A, %m/%d at %H:%M")} ET'
+            self.event_buttons_msg_content_pt2 = f'\n**Ended:** {end_time.strftime("%a, %m/%d at %H:%M")} ET'
         self.event_buttons_msg_content_pt3 = f"\n{self.get_names_string(subscribed_only=True, mention=True)}"
         self.event_buttons_msg_content_pt4 = f"\n{unsubbed}"
         response = f"{self.event_buttons_msg_content_pt1} {self.event_buttons_msg_content_pt2} {self.event_buttons_msg_content_pt3} {self.event_buttons_msg_content_pt4}"
@@ -557,7 +557,7 @@ class Event:
 
     # Get start time string
     def get_start_time_string(self, index: int = 0) -> str:
-        return f'{self.start_times[index].strftime("%A, %m/%d at %H:%M")} ET'
+        return f'{self.start_times[index].strftime("%a, %m/%d at %H:%M")} ET'
 
     # Get availability request string
     def get_availability_request_string(self) -> str:
@@ -620,23 +620,33 @@ class Event:
             message_content = f'**Input up to latest availability date: {latest_date.month}/{latest_date.day}**\n'
         mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
         message_content += f'Waiting for a response from: \n{mentions}'
+        embed = Embed(title='Availabilities', description='Availability of each person', color=Color.blue())
+        for participant in self.participants:
+            if participant.availability:
+                participantName = participant.member.name
+                if participant.member.nick:
+                    participantName = participant.member.nick
+                availString = ''
+                for timeblock in participant.availability:
+                    availString += f'\n{timeblock}'
+                embed.add_field(name=participantName, value=availString)
         # Send new message
         if not self.responded_message:
             try:
-                self.responded_message = await self.text_channel.send(content=message_content)
+                self.responded_message = await self.text_channel.send(content=message_content, embed=embed)
             except Exception as e:
                 logger.exception(f'{self.name}: Error sending responded message: {e}')
             return
         # Edit existing message
         if not self.has_everyone_answered(latest_date):
             try:
-                await self.responded_message.edit(content=message_content)
+                await self.responded_message.edit(content=message_content, embed=embed)
             except Exception as e:
                 logger.exception(f'{self.name}: Error getting mentions string or editing responded message: {e}')
             return
         # Everyone has responded
         try:
-            await self.responded_message.edit(content='Everyone has responded.')
+            await self.responded_message.edit(content='Everyone has responded.', embed=embed)
         except Exception as e:
             logger.exception(f'{self.name}: Error editing responded message with "everyone has responded": {e}')
 
@@ -770,7 +780,7 @@ class Event:
         try:
             event_start_times = [datetime.fromisoformat(start_time) for start_time in data["start_times"]]
             for event_start_time in event_start_times:
-                logger.info(f'{event_name}: start time found: {event_start_time.strftime("%A, %m/%d/%Y %H%M")}')
+                logger.info(f'{event_name}: start time found: {event_start_time.strftime("%a, %m/%d/%Y %H%M")}')
         except Exception as e:
             event_start_time = []
             logger.info(f'{event_name}: no start times found: {e}')
@@ -1161,7 +1171,7 @@ class EventButtons(View):
                 prev_event = other_event
             # Interaction response
             try:
-                await interaction.response.edit_message(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt4}', view=self.event.event_buttons)
+                await interaction.response.edit_message(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt3} {self.event.event_buttons_msg_content_pt4}', view=self.event.event_buttons)
             except Exception as e:
                 logger.error(f'{self.event}: Error responding to START button interaction: {e}')
             # Disable start buttons of events scheduled for the same channel
@@ -1937,17 +1947,17 @@ async def update():
                 # Event start time is in the past
                 if event.start_times[0] < datetime.now().astimezone().replace(second=0, microsecond=0):
                     event.event_buttons_msg_content_pt2 = '\n**Overdue by:**'
-                    hrs_mins_overdue_start_string = get_time_str_from_minutes(event.mins_until_start)
-                    response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {hrs_mins_overdue_start_string} {event.event_buttons_msg_content_pt4}'
+                    hrs_mins_overdue_start_string = get_time_str_from_minutes(event.mins_until_start - 1)
+                    response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {hrs_mins_overdue_start_string} {event.event_buttons_msg_content_pt3} {event.event_buttons_msg_content_pt4}'
                 # It is event start time
                 elif event.start_times[0] == datetime.now().astimezone().replace(second=0, microsecond=0):
                     event.event_buttons_msg_content_pt2 = '\n**Starting now**'
-                    response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {event.event_buttons_msg_content_pt4}'
+                    response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {event.event_buttons_msg_content_pt3} {event.event_buttons_msg_content_pt4}'
                 # Event start time is in the future
                 else:
                     event.event_buttons_msg_content_pt2 = '\n**Starts in:**'
                     hrs_mins_until_start_string = get_time_str_from_minutes(event.mins_until_start)
-                    response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {hrs_mins_until_start_string} {event.event_buttons_msg_content_pt4}'
+                    response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {hrs_mins_until_start_string} {event.event_buttons_msg_content_pt3} {event.event_buttons_msg_content_pt4}'
                 await event.event_buttons_message.edit(content=response, view=event.event_buttons)
             except Exception as e:
                 logger.error(f'{event}: Error counting down: {e}')
