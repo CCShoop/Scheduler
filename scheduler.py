@@ -379,14 +379,18 @@ class Event:
         return responded
 
     # Prep next scheduled event
-    async def prep_next_scheduled_event(self) -> None:
-        self.scheduled_events = self.scheduled_events[1:]
-        self.start_times = self.start_times[1:]
-        self.five_minute_warning_flag = False
-        if self.scheduled_events:
+    async def prep_next_scheduled_event(self) -> bool:
+        if len(self.scheduled_events) > 1 and len(self.start_times) > 1:
+            self.scheduled_events = self.scheduled_events[1:]
+            self.start_times = self.start_times[1:]
+            self.five_minute_warning_flag = False
             message_content = self.get_event_buttons_message_string()
             self.event_buttons = EventButtons(self)
             self.event_buttons_message = await self.text_channel.send(content=message_content, view=self.event_buttons)
+            persist.write(client.get_events_dict())
+            return True
+        else:
+            return False
 
     # Make the guild scheduled event objects, set an image if there is a url
     async def make_scheduled_events(self) -> None:
@@ -419,7 +423,7 @@ class Event:
         if self.ready_to_create:
             return "Preparing to create event"
         if self.changed:
-            return "Processing availability"
+            return "Availability input cooldown"
         return "Awaiting availability"
 
     # Get a string of participant mentions/names
@@ -649,6 +653,46 @@ class Event:
             await self.responded_message.edit(content='Everyone has responded.', embed=embed)
         except Exception as e:
             logger.exception(f'{self.name}: Error editing responded message with "everyone has responded": {e}')
+
+    async def cancel(self, reason: str = "", canceller: str = "") -> None:
+        content = f'**{self.name} has been cancelled'
+        if canceller == "":
+            content += '.**'
+        else:
+            content += f' by {canceller}.**'
+        if reason != "":
+            content += f'\n**Reason:** "{reason}"'
+        content += f'\n{self.get_names_string(subscribed_only=True, mention=True)}'
+        if self.text_channel:
+            await self.text_channel.send(content)
+        else:
+            for participant in self.participants:
+                async with participant.msg_lock:
+                    await participant.member.send(content)
+        try:
+            if self.availability_message:
+                await self.availability_message.delete()
+                self.availability_message = None
+            if self.responded_message:
+                await self.responded_message.delete()
+                self.responded_message = None
+            if self.event_buttons_message:
+                await self.event_buttons_message.delete()
+                self.event_buttons_message = None
+        except Exception as e:
+            logger.error(f'Error in event cancel while deleting a message: {e}')
+        try:
+            if len(self.scheduled_events) > 0:
+                await self.scheduled_events[0].delete(reason=f'Cancel button pressed by {canceller}.')
+        except Exception as e:
+            logger.error(f'Error in event cancel while deleting scheduled event: {e}')
+        try:
+            anotherEvent = await self.prep_next_scheduled_event()
+        except Exception as e:
+            logger.error(f'Error in event cancel while prepping next scheduled event: {e}')
+        if not anotherEvent:
+            client.events.remove(self)
+        persist.write(client.get_events_dict())
 
     @classmethod
     async def from_dict(cls, data):
@@ -904,6 +948,23 @@ class Event:
         return f'{self.name}'
 
 
+class CancelModal(Modal):
+    def __init__(self, event: Event, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.event = event
+        self.reason = TextInput(label='Reason', placeholder="don't wanna")
+        self.add_item(self.reason)
+
+    async def on_submit(self, interaction: Interaction) -> None:
+        logger.info(f'{self.event}: {interaction.user} cancelled event; {self.reason.value}')
+        await self.event.cancel(self.reason.value)
+        await interaction.response.send_message(content=f"Cancelled {self.event}.", ephemeral=True)
+
+    async def on_error(self, interaction: Interaction, error: Exception) -> None:
+        await interaction.response.send_message(content=f'Error cancelling event: {error}', ephemeral=True)
+        logger.exception(f'{self.event}: Error cancelling event through modal: {error}')
+
+
 class AvailabilityModal(Modal):
     def __init__(self, event, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -1088,17 +1149,18 @@ class AvailabilityButtons(View):
         async def cancel_button_callback(interaction: Interaction):
             self.event.changed = True
             self.event.ready_to_create = False
-            participant = self.event.get_participant(interaction.user.name)
-            if not participant.unavailable:
-                participant.unavailable = True
-                self.event.unavailable = True
-                await interaction.response.send_message(f'{self.event} will be cancelled shortly unless you click the **Cancel** button again.', ephemeral=True)
-                logger.info(f'{self.event}: {interaction.user.name} selected cancel')
-            else:
-                participant.unavailable = False
-                self.event.unavailable = False
-                await interaction.response.send_message(f'{self.event} will not be cancelled.', ephemeral=True)
-                logger.info(f'{self.event}: {interaction.user.name} deselected cancel')
+            await interaction.response.send_modal(CancelModal(event=self.event, title=f'Cancel {self.event}'))
+            # participant = self.event.get_participant(interaction.user.name)
+            # if not participant.unavailable:
+            #     participant.unavailable = True
+            #     self.event.unavailable = True
+            #     await interaction.response.send_message(f'{self.event} will be cancelled shortly unless you click the **Cancel** button again.', ephemeral=True)
+            #     logger.info(f'{self.event}: {interaction.user.name} selected cancel')
+            # else:
+            #     participant.unavailable = False
+            #     self.event.unavailable = False
+            #     await interaction.response.send_message(f'{self.event} will not be cancelled.', ephemeral=True)
+            #     logger.info(f'{self.event}: {interaction.user.name} deselected cancel')
             persist.write(client.get_events_dict())
         button.callback = cancel_button_callback
         self.add_item(button)
@@ -1277,24 +1339,7 @@ class EventButtons(View):
     # Cancel the event
     def add_cancel_button(self) -> None:
         async def cancel_button_callback(interaction: Interaction):
-            try:
-                await self.event.event_buttons_message.delete()
-            except Exception as e:
-                logger.error(f'Error in cancel button callback while deleting event buttons message: {e}')
-            try:
-                await self.event.text_channel.send(f'{self.event.get_names_string(subscribed_only=True, mention=True)}\n{interaction.user.name} cancelled {self.event}.')
-            except Exception as e:
-                logger.error(f'Error in cancel button callback while sending text channel message: {e}')
-            try:
-                await self.event.scheduled_events[0].delete(reason=f'Cancel button pressed by {interaction.user.name}.')
-            except Exception as e:
-                logger.error(f'Error in cancel button callback while deleting scheduled event: {e}')
-            try:
-                await self.event.prep_next_scheduled_event()
-            except Exception as e:
-                logger.error(f'Error in cancel button callback while prepping next scheduled event: {e}')
-            logger.info(f'{self.event}: {interaction.user} cancelled by button press')
-            client.events.remove(self.event)
+            await interaction.response.send_modal(CancelModal(event=self.event, title=f'Cancel {self.event}'))
             persist.write(client.get_events_dict())
         self.cancel_button.callback = cancel_button_callback
         self.add_item(self.cancel_button)
@@ -1392,8 +1437,8 @@ class ExistingAvailabilitiesSelect(Select):
                 self.participant.answered = True
                 response = f"**__Availability for {event_avail.event.name}:__**\n"
                 response += self.participant.get_availability_string()
-                await event_avail.event.update_responded_message()
                 break
+        await event_avail.event.update_responded_message()
         await interaction.response.send_message(content=response, ephemeral=True)
 
 
@@ -1551,6 +1596,7 @@ async def clear_timed_out_events() -> None:
             logger.info(f'{event.name} has timed out and has been cancelled.')
             try:
                 await event.availability_message.delete()
+                event.availability_message = None
             except NotFound:
                 logger.warn(f"{event}: Availability message not found")
             except Exception as e:
@@ -1558,6 +1604,7 @@ async def clear_timed_out_events() -> None:
             event.availability_message = None
             try:
                 await event.responded_message.delete()
+                event.responded_message = None
             except NotFound:
                 logger.warn(f"{event}: Responded message not found")
             except Exception as e:
@@ -1894,6 +1941,7 @@ async def update():
             try:
                 try:
                     await event.availability_message.delete()
+                    event.availability_message = None
                 except NotFound as e:
                     logger.warn(f"{event}: Unavailable delete: Availability message not found: {e}")
                 except Exception as e:
@@ -1901,6 +1949,7 @@ async def update():
                 event.availability_message = None
                 try:
                     await event.responded_message.delete()
+                    event.responded_message = None
                 except NotFound:
                     logger.warn(f"{event}: Unavailable delete: Responded message not found")
                 except Exception as e:
@@ -1992,6 +2041,7 @@ async def update():
         # Delete availability request message
         try:
             await event.availability_message.delete()
+            event.availability_message = None
         except Exception as e:
             logger.error(f'{event}: Error disabling availability buttons: {e}')
         # Compare availabilities
@@ -2005,14 +2055,7 @@ async def update():
         if not event.ready_to_create:
             try:
                 logger.info(f'{event}: No common availability found')
-                if event.text_channel:
-                    await event.text_channel.send(f'No common availability was found. Scheduling for {event.name} has been cancelled.')
-                else:
-                    for participant in event.participants:
-                        async with participant.msg_lock:
-                            await participant.member.send(f'No common availability was found. Scheduling for {event.name} has been cancelled.')
-                client.events.remove(event)
-                del event
+                await event.cancel("No common availability was found.")
             except Exception as e:
                 logger.error(f'{event}: Error messaging participants: {e}')
             continue
@@ -2058,6 +2101,7 @@ async def update():
                 response = event.get_event_buttons_message_string()
                 try:
                     await event.responded_message.delete()
+                    event.responded_message = None
                 except NotFound:
                     logger.warn("Creation delete: Responded message not found")
                 except Exception as e:
