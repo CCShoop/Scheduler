@@ -360,13 +360,8 @@ class Event:
 
         # Mark participant as unanswered if their last timeblock isn't on the same date as the last entry
         for participant in self.participants:
-            if participant.answered and not participant.unavailable:
-                try:
-                    if participant.availability[-1].start_time.date() < latest_date:
-                        participant.answered = False
-                except Exception as e:
-                    logger.warning(f'Failed to access last availability block: {e}')
-                    participant.answered = False
+            if participant.availability and not participant.unavailable:
+                participant.answered = participant.availability[-1].start_time.date() >= latest_date
         return latest_date
 
     # Return the number of participants who have responded

@@ -72,7 +72,8 @@ class Participant:
             start_time = cur_time.replace(month=month, day=day, year=year)
             if not end_time:
                 end_time = cur_time.replace(month=month, day=day, year=year, hour=0, minute=0)
-            end_time += timedelta(days=1)
+            if start_time + timedelta(days=1) < end_time:
+                end_time += timedelta(days=1)
             self.availability.append(TimeBlock(start_time, end_time))
             self.answered = True
             self.full_availability_flag = True
