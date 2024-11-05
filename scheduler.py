@@ -333,37 +333,6 @@ class Event:
         if not self.ready_to_create:
             logger.info(f'{self.name}: compare_availabilities: No common availability found between all participants, cancelling event')
 
-    # Check before everyone has responded to see if two people have answered and are not available
-    def check_availabilities(self):
-        subbed_participants = []
-        for participant in self.participants:
-            if participant.subscribed and participant.answered:
-                subbed_participants.append(participant)
-
-        current_time = datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=START_TIME_DELAY)
-
-        # Find common availability
-        available_timeblocks = []
-        for participant in subbed_participants:
-            available_timeblocks.append(participant.availability)
-        if not available_timeblocks:
-            return None
-
-        # Get the latest timeblock date
-        latest_date = current_time.date()
-        for availability in available_timeblocks:
-            for timeblock in availability:
-                latest_date = max(timeblock.start_time.date(), latest_date)
-        intersected_timeblocks = available_timeblocks[0]
-        for timeblocks in available_timeblocks[1:]:
-            intersected_timeblocks = self.intersect_time_blocks(intersected_timeblocks, timeblocks)
-
-        # Mark participant as unanswered if their last timeblock isn't on the same date as the last entry
-        for participant in self.participants:
-            if participant.availability and not participant.unavailable:
-                participant.answered = participant.availability[-1].start_time.date() >= latest_date
-        return latest_date
-
     # Return the number of participants who have responded
     def number_of_responded(self) -> int:
         responded = 0
@@ -566,20 +535,23 @@ class Event:
         output += self.avail_msg_content_pt3
         return output
 
-    # All participants have responded
-    def has_everyone_answered(self, latest_date=None) -> bool:
-        if not latest_date:
-            latest_date = datetime.now().astimezone().date()
+    # Get latest start_time date response from participants
+    def get_latest_date(self):
+        current_time = datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=START_TIME_DELAY)
+        latest_date = current_time.date()
         for participant in self.participants:
-            if participant.subscribed and not participant.answered:
-                return False
-            if not participant.subscribed:
-                continue
-            if participant.availability:
-                if participant.availability[-1].start_time.date() < latest_date:
+            for timeblock in participant.availability:
+                latest_date = max(timeblock.start_time.date(), latest_date)
+        return latest_date
+
+    # All participants have responded
+    def has_everyone_answered(self) -> bool:
+        latest_date = self.get_latest_date()
+        for participant in self.participants:
+            if participant.subscribed:
+                participant.confirm_answered(duration=self.duration, latest_date=latest_date)
+                if not participant.answered:
                     return False
-            else:
-                return False
         return True
 
     # Request availability from all participants
@@ -606,15 +578,10 @@ class Event:
     async def update_responded_message(self) -> None:
         if self.created:
             return
-        latest_date = self.check_availabilities() if self.number_of_responded() > 1 else None
-        if self.number_of_responded() == 1:
-            for participant in self.participants:
-                if participant.answered:
-                    latest_date = participant.availability[-1].start_time.date()
-                    break
         message_content = ''
         cur_date = datetime.now().astimezone().date()
-        if latest_date and latest_date > cur_date:
+        latest_date = self.get_latest_date()
+        if latest_date > cur_date:
             message_content = f'**Input up to latest availability date: {latest_date.month}/{latest_date.day}**\n'
         mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
         message_content += f'Waiting for a response from: \n{mentions}'
@@ -636,7 +603,7 @@ class Event:
                 logger.exception(f'{self.name}: Error sending responded message: {e}')
             return
         # Edit existing message
-        if not self.has_everyone_answered(latest_date):
+        if not self.has_everyone_answered():
             try:
                 await self.responded_message.edit(content=message_content, embed=embed)
             except Exception as e:
@@ -950,8 +917,11 @@ class CancelModal(Modal):
         self.add_item(self.reason)
 
     async def on_submit(self, interaction: Interaction) -> None:
-        logger.info(f'{self.event}: {interaction.user} cancelled event; {self.reason.value}')
-        await self.event.cancel(self.reason.value)
+        logger.info(f'{self.event}: {interaction.user} cancelled event with reason: {self.reason.value}')
+        canceller = interaction.user.name
+        if interaction.user.nick:
+            canceller = interaction.user.nick
+        await self.event.cancel(reason=self.reason.value, canceller=canceller)
         await interaction.response.send_message(content=f"Cancelled {self.event}.", ephemeral=True)
 
     async def on_error(self, interaction: Interaction, error: Exception) -> None:
@@ -1054,7 +1024,7 @@ class AvailabilityButtons(View):
                 end_time: datetime = None
                 cur_date = datetime.now().astimezone().date()
                 for other_participant in self.event.participants:
-                    if other_participant != participant and other_participant.answered:
+                    if other_participant != participant and other_participant.availability:
                         for timeblock in other_participant.availability:
                             if timeblock.start_time.date() == cur_date and not timeblock.end_time.date() == cur_date:
                                 if not end_time:
@@ -1310,7 +1280,7 @@ class EventButtons(View):
             try:
                 participant = self.event.get_participant(interaction.user.name)
                 for p in self.event.participants:
-                    p.confirm_answered(duration=self.event.duration)
+                    p.confirm_answered(duration=self.event.duration, latest_date=self.event.get_latest_date())
                 await self.event.request_availability(reschedule=True, rescheduler=participant)
                 await interaction.followup.send(f"Event rescheduling started for {self.event.name}.", ephemeral=True)
             except Exception as e:
@@ -1893,9 +1863,14 @@ async def update():
     for event in client.events:
         # If availability expires before the event is created, mark the participant as unanswered
         if not event.created:
+            # Mark participant as unanswered if their last timeblock isn't on the same date as the last entry
+            latest_date = event.get_latest_date()
+            for participant in event.participants:
+                if participant.availability and participant.subscribed and not participant.unavailable:
+                    participant.answered = participant.availability[-1].start_time.date() >= latest_date
             await event.update_availability_message()
             for participant in event.participants:
-                participant.confirm_answered(event.duration)
+                participant.confirm_answered(duration=event.duration, latest_date=latest_date)
             await event.update_responded_message()
         # Remove this event from each participant's other availabilities
         else:
@@ -2032,7 +2007,7 @@ async def update():
         if not event.ready_to_create:
             try:
                 logger.info(f'{event}: No common availability found')
-                await event.cancel("No common availability was found.")
+                await event.cancel(reason="No common availability was found.")
             except Exception as e:
                 logger.error(f'{event}: Error messaging participants: {e}')
             continue

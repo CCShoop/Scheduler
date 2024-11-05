@@ -71,9 +71,7 @@ class Participant:
                 year = cur_time.year
             start_time = cur_time.replace(month=month, day=day, year=year)
             if not end_time:
-                end_time = cur_time.replace(month=month, day=day, year=year, hour=0, minute=0)
-            if start_time + timedelta(days=1) > end_time:
-                end_time += timedelta(days=1)
+                end_time = cur_time.replace(month=month, day=day + 1, year=year, hour=0, minute=0)
             self.availability.append(TimeBlock(start_time, end_time))
             self.answered = True
             self.full_availability_flag = True
@@ -323,7 +321,7 @@ class Participant:
                 self.full_availability_flag = False
 
     # Confirm the participant's availability is still valid
-    def confirm_answered(self, duration: timedelta = timedelta(minutes=30)) -> None:
+    def confirm_answered(self, duration: timedelta = timedelta(minutes=30), latest_date=None) -> None:
         if self.availability:
             new_availability = []
             cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
@@ -331,6 +329,8 @@ class Participant:
                 if cur_time + duration <= tb.end_time:
                     new_availability.append(tb)
             self.availability = new_availability
+        if self.availability and latest_date is not None:
+            self.answered = self.availability[-1].end_time.date() >= latest_date
         if not self.availability:
             self.answered = False
             self.full_availability_flag = False
