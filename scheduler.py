@@ -1230,8 +1230,9 @@ class EventButtons(View):
             except Exception as e:
                 logger.error(f'Error in event control end button callback while editing event buttons message: {e}')
             # Remove start_time and scheduled event from lists
+            future_event = False
             try:
-                await self.event.prep_next_scheduled_event()
+                future_event = await self.event.prep_next_scheduled_event()
             except Exception as e:
                 logger.error(f'Error in event control end button callback while prepping next scheduled event: {e}')
             logger.info(f'{self.event}: Ended event')
@@ -1250,7 +1251,7 @@ class EventButtons(View):
                     logger.info(f'{self.event}: Re-enabled start button for event with same location: {event.name}')
                 except Exception as e:
                     logger.error(f'{self.event}: Failed to re-enable start button for {event}: {e}')
-            if not self.event.start_times:
+            if not future_event:
                 client.events.remove(self.event)
                 logger.info(f"{self.event}: last event ended, removed from memory")
             else:
