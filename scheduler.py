@@ -522,6 +522,10 @@ class Event:
     def get_timeout_minutes(self) -> float:
         return self.timeout_counter / 2
 
+    # Reset timeout counter
+    def reset_timeout_counter(self) -> None:
+        self.timeout_counter = EVENT_TIMEOUT
+
     # Get start time string
     def get_start_time_string(self, index: int = 0) -> str:
         return f'{self.start_times[index].strftime("%a, %m/%d at %H:%M")} ET'
@@ -1256,6 +1260,7 @@ class EventButtons(View):
         async def reschedule_button_callback(interaction: Interaction):
             logger.info(f'{self.event}: {interaction.user} rescheduled by button press')
             await interaction.response.defer(ephemeral=True)
+            self.event.reset_timeout_counter()
             self.event.add_user_as_participant(interaction.user)
             try:
                 await self.event.scheduled_events[0].delete(reason=f'Reschedule button pressed by {interaction.user.name}.')
