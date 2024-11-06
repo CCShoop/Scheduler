@@ -1006,8 +1006,8 @@ class AvailabilityButtons(View):
         async def respond_button_callback(interaction: Interaction):
             try:
                 am_title = f'Availability for {self.event}'
-                if len(am_title) >= 35:
-                    am_title = f"{am_title[:30]}..."
+                if len(am_title) >= 45:
+                    am_title = f"{am_title[:41]}..."
                 await interaction.response.send_modal(AvailabilityModal(event=self.event, title=am_title))
             except Exception as e:
                 logger.exception(f'Error sending availability modal: {e}')
@@ -1119,8 +1119,8 @@ class AvailabilityButtons(View):
             self.event.changed = True
             self.event.ready_to_create = False
             title = f"Cancel {self.event.name}"
-            if len(title) >= 35:
-                title = f"{title[:30]}..."
+            if len(title) >= 45:
+                title = f"{title[:41]}..."
             await interaction.response.send_modal(CancelModal(event=self.event, title=title))
             persist.write(client.get_events_dict())
         button.callback = cancel_button_callback
@@ -1301,7 +1301,10 @@ class EventButtons(View):
     # Cancel the event
     def add_cancel_button(self) -> None:
         async def cancel_button_callback(interaction: Interaction):
-            await interaction.response.send_modal(CancelModal(event=self.event, title=f'Cancel {self.event}'))
+            title = f"Cancel {self.event.name}"
+            if len(title) >= 45:
+                title = f"{title[:41]}..."
+            await interaction.response.send_modal(CancelModal(event=self.event, title=title))
             persist.write(client.get_events_dict())
         self.cancel_button.callback = cancel_button_callback
         self.add_item(self.cancel_button)
