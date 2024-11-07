@@ -197,6 +197,7 @@ class Event:
                  text_channel: TextChannel,
                  image_url: str = '',
                  scheduler=None,
+                 rescheduler=None,
                  participants: list = None,
                  duration=timedelta(minutes=30),
                  multi_event: bool = False,
@@ -234,6 +235,7 @@ class Event:
                 self.voice_channel = None
         self.privacy_level = PrivacyLevel.guild_only
         self.scheduler = scheduler
+        self.rescheduler = rescheduler
         self.participants = participants
         self.image_url = image_url
         self.avail_buttons: AvailabilityButtons = avail_buttons
@@ -257,11 +259,17 @@ class Event:
         self.timeout_counter: int = timeout_counter
         self.avail_msg_content_pt1 = f'**Event name:** {self.name}'
         self.avail_msg_content_pt1 += '\n**Duration:** '
-        if self.scheduler:
+        self.avail_msg_content_pt2 = ''
+        if self.scheduler is not None:
             if self.scheduler.nick:
-                self.avail_msg_content_pt2 = f'\n**Scheduled by:** {self.scheduler.nick}'
+                self.avail_msg_content_pt2 += f'\n**Scheduled by:** {self.scheduler.nick}'
             else:
-                self.avail_msg_content_pt2 = f'\n**Scheduled by:** {self.scheduler.name}'
+                self.avail_msg_content_pt2 += f'\n**Scheduled by:** {self.scheduler.name}'
+        if self.rescheduler is not None:
+            if self.rescheduler.nick:
+                self.avail_msg_content_pt2 += f'\n**Rescheduled by:** {self.rescheduler.nick}'
+            else:
+                self.avail_msg_content_pt2 += f'\n**Rescheduled by:** {self.rescheduler.name}'
         self.avail_msg_content_pt2 += f'\n**Multi-event:** {self.multi_event}'
         self.avail_msg_content_pt2 += '\n**Times out in:** '
         self.avail_msg_content_pt3 = '\n\nSelect **Respond** to enter your availability.'
@@ -559,12 +567,13 @@ class Event:
         return True
 
     # Request availability from all participants
-    async def request_availability(self, reschedule: bool = False, rescheduler: Participant = None) -> None:
+    async def request_availability(self, rescheduler: Participant = None) -> None:
         self.avail_buttons = AvailabilityButtons(event=self)
-        if not reschedule:
+        if rescheduler is None:
             self.avail_msg_content_pt3 += '\n\nThe event will be either created or cancelled within a minute after the last person responds.️'
         else:
             rescheduler.set_no_availability()
+            self.rescheduler = rescheduler.member
         response = self.get_availability_request_string()
         self.availability_message = await self.text_channel.send(content=response, view=self.avail_buttons)
         await self.update_responded_message()
@@ -693,8 +702,9 @@ class Event:
         event_scheduler = event_guild.get_member(data['scheduler_id'])
         if event_scheduler:
             logger.info(f'{event_name}: found scheduler with id {event_scheduler.id}')
-        else:
-            logger.warning(f'{event_name}: failed to find scheduler')
+        event_rescheduler = event_guild.get_member(data['rescheduler_id'])
+        if event_rescheduler:
+            logger.info(f'{event_name}: found rescheduler with id {event_rescheduler.id}')
 
         # Participants
         event_participants = [Participant.from_dict(event_guild, participant) for participant in data["participants"]]
@@ -830,6 +840,7 @@ class Event:
             responded_message=event_responded_message,
             voice_channel=event_voice_channel,
             scheduler=event_scheduler,
+            rescheduler=event_rescheduler,
             participants=event_participants,
             image_url=event_image_url,
             event_buttons_message=event_event_buttons_message,
@@ -864,6 +875,10 @@ class Event:
         except Exception:
             scheduler_id = 0
         try:
+            rescheduler_id = self.rescheduler.id
+        except Exception:
+            rescheduler_id = 0
+        try:
             participants = [participant.to_dict() for participant in self.participants]
         except Exception as e:
             logger.warning(f'Failed getting participants dict list: {e}')
@@ -890,6 +905,7 @@ class Event:
             'responded_message_id': responded_message_id,
             'voice_channel_id': self.voice_channel.id,
             'scheduler_id': scheduler_id,
+            'rescheduler_id': rescheduler_id,
             'participants': participants,
             'image_url': self.image_url,
             'event_buttons_message_id': event_buttons_message_id,
@@ -1291,7 +1307,7 @@ class EventButtons(View):
                 participant = self.event.get_participant(interaction.user.name)
                 for p in self.event.participants:
                     p.confirm_answered(duration=self.event.duration, latest_date=self.event.get_latest_date())
-                await self.event.request_availability(reschedule=True, rescheduler=participant)
+                await self.event.request_availability(rescheduler=participant)
                 await interaction.followup.send(f"Event rescheduling started for {self.event.name}.", ephemeral=True)
             except Exception as e:
                 logger.error(f"{self.event}: Error with RESCHEDULE button requesting availability: {e}")
