@@ -1158,15 +1158,18 @@ class EventButtons(View):
         super().__init__(timeout=None)
         self.start_label = "Start Event"
         self.end_label = "End Event"
+        self.unsubscribe_label = "Unsubscribe"
         self.reschedule_label = "Reschedule Event"
         self.cancel_label = "Cancel Event"
         self.event = event
         self.start_button = Button(label=self.start_label, style=ButtonStyle.blurple)
         self.end_button = Button(label=self.end_label, style=ButtonStyle.blurple)
+        self.unsubscribe_button = Button(label=self.unsubscribe_label, style=ButtonStyle.blurple)
         self.reschedule_button = Button(label=self.reschedule_label, style=ButtonStyle.red)
         self.cancel_button = Button(label=self.cancel_label, style=ButtonStyle.red)
         self.add_start_button()
         self.add_end_button()
+        self.add_unsubscribe_button()
         self.add_reschedule_button()
         self.add_cancel_button()
 
@@ -1232,6 +1235,11 @@ class EventButtons(View):
         self.end_button.disabled = True
 
         async def end_button_callback(interaction: Interaction):
+            member = self.event.guild.get_member(interaction.user.id)
+            if member not in [participant.member for participant in self.event.participants]:
+                logger.info(f"[{self.event}] {member.name} tried to end event but is not a member")
+                await interaction.response.send_message(content="You are not a participant of this event!", ephemeral=True)
+                return
             logger.info(f'[{self.event}] {interaction.user} ended by button press')
             # Delete scheduled event
             try:
@@ -1276,9 +1284,31 @@ class EventButtons(View):
         self.end_button.callback = end_button_callback
         self.add_item(self.end_button)
 
+    # Unsubscribe from the event
+    def add_unsubscribe_button(self) -> None:
+        async def unsubscribe_button_callback(interaction: Interaction):
+            participant = self.event.get_participant(interaction.user.name)
+            if participant.subscribed:
+                logger.info(f'[{self.event}] {interaction.user.name} unsubscribed')
+                participant.subscribed = False
+                await interaction.response.send_message(f'You have been unsubscribed from {self.event}.', ephemeral=True)
+            else:
+                logger.info(f'[{self.event}] {interaction.user.name} resubscribed')
+                participant.subscribed = True
+                await interaction.response.send_message(f'You have been resubscribed to {self.event}.', ephemeral=True)
+            await self.event.event_buttons_message.edit(content=self.event.get_event_buttons_message_string(), view=self)
+            persist.write(client.get_events_dict())
+        self.unsubscribe_button.callback = unsubscribe_button_callback
+        self.add_item(self.unsubscribe_button)
+
     # Reschedule the event
     def add_reschedule_button(self) -> None:
         async def reschedule_button_callback(interaction: Interaction):
+            member = self.event.guild.get_member(interaction.user.id)
+            if member not in [participant.member for participant in self.event.participants]:
+                logger.info(f"[{self.event}] {member.name} tried to reschedule event but is not a member")
+                await interaction.response.send_message(content="You are not a participant of this event!", ephemeral=True)
+                return
             logger.info(f'[{self.event}] {interaction.user} rescheduled by button press')
             await interaction.response.defer(ephemeral=True)
             self.event.reset_timeout_counter()
@@ -1318,6 +1348,11 @@ class EventButtons(View):
     # Cancel the event
     def add_cancel_button(self) -> None:
         async def cancel_button_callback(interaction: Interaction):
+            member = self.event.guild.get_member(interaction.user.id)
+            if member not in [participant.member for participant in self.event.participants]:
+                logger.info(f"[{self.event}] {member.name} tried to cancel event but is not a member")
+                await interaction.response.send_message(content="You are not a participant of this event!", ephemeral=True)
+                return
             title = f"Cancel {self.event.name}"
             if len(title) >= 45:
                 title = f"{title[:41]}..."
