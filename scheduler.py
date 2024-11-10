@@ -355,9 +355,7 @@ class Event:
             self.scheduled_events = self.scheduled_events[1:]
             self.start_times = self.start_times[1:]
             self.five_minute_warning_flag = False
-            message_content = self.get_event_buttons_message_string()
-            self.event_buttons = EventButtons(self)
-            self.event_buttons_message = await self.text_channel.send(content=message_content, view=self.event_buttons)
+            self.update_event_buttons_message()
             persist.write(client.get_events_dict())
             return True
         else:
@@ -578,6 +576,12 @@ class Event:
         self.availability_message = await self.text_channel.send(content=response, view=self.avail_buttons)
         await self.update_responded_message()
 
+    # Update the appropriate message for whatever the state of the event is
+    async def update_messages(self) -> None:
+        self.update_availability_message()
+        self.update_responded_message()
+        self.update_event_buttons_message()
+
     # Update the availability message to show duration changes and timeout countdown
     async def update_availability_message(self) -> None:
         if not self.availability_message:
@@ -627,6 +631,18 @@ class Event:
             await self.responded_message.edit(content='Everyone has responded.', embed=embed)
         except Exception as e:
             logger.exception(f'{self.name}: Error editing responded message with "everyone has responded": {e}')
+
+    # Update the event's event buttons message
+    async def update_event_buttons_message(self) -> None:
+        if not self.created:
+            return
+        if not self.event_buttons:
+            self.event_buttons = EventButtons(self)
+        message = self.get_event_buttons_message_string()
+        if self.event_buttons_message is None:
+            self.event_buttons_message = await self.text_channel.send(content=message, view=self.event_buttons)
+        else:
+            await self.event_buttons_message.edit(content=message, view=self.event_buttons)
 
     async def cancel(self, reason: str = "", canceller: str = "") -> None:
         content = f'**{self.name} has been cancelled'
@@ -1430,9 +1446,7 @@ class ExistingGuildEventsSelect(Select):
                 if guild_event.name == selected_guild_event.name and guild_event.location == selected_guild_event.location:
                     event.start_times.append(guild_event.start_time.astimezone())
                     event.scheduled_events.append(guild_event)
-            response = event.get_event_buttons_message_string()
-            event.event_buttons = EventButtons(event)
-            event.event_buttons_message = await event.text_channel.send(content=response, view=event.event_buttons)
+            event.update_event_buttons_message()
             await interaction.followup.send('Success!', ephemeral=True)
             persist.write(client.get_events_dict())
         else:
@@ -1715,6 +1729,7 @@ async def on_message(message: Message):
                     participant = Participant(member)
                     event.participants.append(participant)
                     await event.update_responded_message()
+                    await event.update_messages()
                     await message.channel.send(f"Subscribed {participant.member.name} to {event}", reference=message)
                     logger.info(f"[{event}] Owner force subscribed {participant.member.name}")
                 else:
@@ -1817,9 +1832,7 @@ async def create_command(interaction: Interaction, event_name: str, voice_channe
     except Exception as e:
         logger.error(f'Error sending interaction response for create command: {e}')
     try:
-        response = event.get_event_buttons_message_string()
-        event.event_buttons = EventButtons(event)
-        event.event_buttons_message = await event.text_channel.send(content=response, view=event.event_buttons)
+        event.update_event_buttons_message()
     except Exception as e:
         logger.error(f'Error making event buttons or sending event buttons message in create command: {e}')
     persist.write(client.get_events_dict())
@@ -2160,7 +2173,6 @@ async def update():
 
             # Calculate time until start
             try:
-                response = event.get_event_buttons_message_string()
                 try:
                     await event.responded_message.delete()
                     event.responded_message = None
@@ -2169,8 +2181,7 @@ async def update():
                 except Exception as e:
                     logger.error(f"Creation delete: Failed to delete responded message: {e}")
                 event.responded_message = None
-                event.event_buttons = EventButtons(event)
-                event.event_buttons_message = await event.text_channel.send(content=response, view=event.event_buttons)
+                event.update_event_buttons_message()
             except Exception as e:
                 logger.error(f'[{event}] Error sending event created notification with buttons: {e}')
                 continue
