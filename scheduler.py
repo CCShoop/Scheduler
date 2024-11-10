@@ -1724,17 +1724,25 @@ async def on_message(message: Message):
                 foundEvent = True
                 id = message.content.split('subscribe')[1].split('to')[0].strip()
                 id = int(id)
-                member = event.guild.get_member(id)
-                if member is not None:
-                    participant = Participant(member)
-                    event.participants.append(participant)
-                    await event.update_responded_message()
-                    await event.update_messages()
-                    await message.channel.send(f"Subscribed {participant.member.name} to {event}", reference=message)
-                    logger.info(f"[{event}] Owner force subscribed {participant.member.name}")
-                else:
-                    await message.channel.send("Invalid ID provided", reference=message)
-                    logger.warning(f"[{event}] Invalid subscribe other user format from owner")
+                existingParticipant = False
+                for participant in event.participants:
+                    if participant.member.id == id:
+                        existingParticipant = True
+                        await message.channel.send(f"{participant.member.name} is already subscribed to {event}", reference=message)
+                        logger.info(f"[{event}] Owner tried to resubscribe existing participant {participant.member.name}")
+                        break
+                if not existingParticipant:
+                    member = event.guild.get_member(id)
+                    if member is not None:
+                        participant = Participant(member)
+                        event.participants.append(participant)
+                        await event.update_responded_message()
+                        await event.update_messages()
+                        await message.channel.send(f"Subscribed {participant.member.name} to {event}", reference=message)
+                        logger.info(f"[{event}] Owner force subscribed {participant.member.name}")
+                    else:
+                        await message.channel.send("Invalid ID provided", reference=message)
+                        logger.info(f"[{event}] Invalid subscribe other user format from owner")
                 break
         if not foundEvent:
             await message.channel.send("Event not found", reference=message)
@@ -1764,7 +1772,7 @@ async def on_message(message: Message):
                         await message.channel.send(f"[{event}] participant {participant.name} not found", reference=message)
                 except Exception as e:
                     await message.channel.send("Invalid ID provided", reference=message)
-                    logger.warning(f"Invalid unsubscribe other user format from owner: {e}")
+                    logger.info(f"Invalid unsubscribe other user format from owner: {e}")
                 break
         if not foundEvent:
             await message.channel.send("Event not found", reference=message)
