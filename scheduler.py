@@ -1706,10 +1706,10 @@ async def on_message(message: Message):
     if message.author.id == OWNER_ID and 'scheduler: subscribe' in message.content:
         foundEvent = False
         for event in client.events:
-            if event.name in message.content.split('from')[1].strip():
+            if event.name in message.content.split('to')[1].strip():
                 foundEvent = True
                 try:
-                    id = message.content.split('subscribe')[1].split('from')[0].strip()
+                    id = message.content.split('subscribe')[1].split('to')[0].strip()
                     id = int(id)
                     found = False
                     for participant in event.participants:
