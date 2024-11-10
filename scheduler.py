@@ -1702,6 +1702,36 @@ async def on_message(message: Message):
             embed.add_field(name=event.name, value=eventStatus, inline=True)
         await message.channel.send(embed=embed, reference=message)
 
+    # Owner subscribes another user
+    if message.author.id == OWNER_ID and 'scheduler: subscribe' in message.content:
+        foundEvent = False
+        for event in client.events:
+            if event.name in message.content.split('from')[1].strip():
+                foundEvent = True
+                try:
+                    id = message.content.split('subscribe')[1].split('from')[0].strip()
+                    id = int(id)
+                    found = False
+                    for participant in event.participants:
+                        if participant.member.id == id:
+                            logger.info(f'[{event}] Subscribed {participant.member.name}')
+                            found = True
+                            participant.subscribed = False
+                            if participant.member.nick:
+                                await message.channel.send(f"Subscribed {participant.member.nick}", reference=message)
+                            else:
+                                await message.channel.send(f"Subscribed {participant.member.name}", reference=message)
+                            await event.update_responded_message()
+                            break
+                    if not found:
+                        await message.channel.send(f"[{event}] participant {participant.name} not found", reference=message)
+                except Exception as e:
+                    await message.channel.send("Invalid ID provided", reference=message)
+                    logger.warn(f"Invalid subscribe other user format from owner: {e}")
+                break
+        if not foundEvent:
+            await message.content.channel.send("No event found", reference=message)
+
     # Owner unsubscribes another user
     if message.author.id == OWNER_ID and 'scheduler: unsubscribe' in message.content:
         foundEvent = False
