@@ -1636,7 +1636,7 @@ async def clear_timed_out_events() -> None:
                 await event.availability_message.delete()
                 event.availability_message = None
             except NotFound:
-                logger.warn(f"[{event}] Availability message not found")
+                logger.warning(f"[{event}] Availability message not found")
             except Exception as e:
                 logger.error(f"[{event}] Couldn't delete availability_message: {e}")
             event.availability_message = None
@@ -1644,7 +1644,7 @@ async def clear_timed_out_events() -> None:
                 await event.responded_message.delete()
                 event.responded_message = None
             except NotFound:
-                logger.warn(f"[{event}] Responded message not found")
+                logger.warning(f"[{event}] Responded message not found")
             except Exception as e:
                 logger.error(f"[{event}] Couldn't delete responded_message: {e}")
             event.responded_message = None
@@ -1748,7 +1748,7 @@ async def on_message(message: Message):
                         await message.channel.send(f"[{event}] participant {participant.name} not found", reference=message)
                 except Exception as e:
                     await message.channel.send("Invalid ID provided", reference=message)
-                    logger.warn(f"Invalid unsubscribe other user format from owner: {e}")
+                    logger.warning(f"Invalid unsubscribe other user format from owner: {e}")
                 break
         if not foundEvent:
             await message.content.channel.send("No event found", reference=message)
@@ -2004,7 +2004,7 @@ async def update():
                     await event.availability_message.delete()
                     event.availability_message = None
                 except NotFound as e:
-                    logger.warn(f"[{event}] Unavailable delete: Availability message not found: {e}")
+                    logger.warning(f"[{event}] Unavailable delete: Availability message not found: {e}")
                 except Exception as e:
                     logger.error(f"[{event}] Unavailable delete: Error deleting availability message: {e}")
                 event.availability_message = None
@@ -2012,7 +2012,7 @@ async def update():
                     await event.responded_message.delete()
                     event.responded_message = None
                 except NotFound:
-                    logger.warn(f"[{event}] Unavailable delete: Responded message not found")
+                    logger.warning(f"[{event}] Unavailable delete: Responded message not found")
                 except Exception as e:
                     logger.error(f"[{event}] Unavailable delete: Error while deleting responded message: {e}")
                 event.responded_message = None
@@ -2164,7 +2164,7 @@ async def update():
                     await event.responded_message.delete()
                     event.responded_message = None
                 except NotFound:
-                    logger.warn("Creation delete: Responded message not found")
+                    logger.warning("Creation delete: Responded message not found")
                 except Exception as e:
                     logger.error(f"Creation delete: Failed to delete responded message: {e}")
                 event.responded_message = None
