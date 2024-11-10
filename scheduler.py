@@ -355,7 +355,7 @@ class Event:
             self.scheduled_events = self.scheduled_events[1:]
             self.start_times = self.start_times[1:]
             self.five_minute_warning_flag = False
-            self.update_event_buttons_message()
+            await self.update_event_buttons_message()
             persist.write(client.get_events_dict())
             return True
         else:
@@ -578,9 +578,9 @@ class Event:
 
     # Update the appropriate message for whatever the state of the event is
     async def update_messages(self) -> None:
-        self.update_availability_message()
-        self.update_responded_message()
-        self.update_event_buttons_message()
+        await self.update_availability_message()
+        await self.update_responded_message()
+        await self.update_event_buttons_message()
 
     # Update the availability message to show duration changes and timeout countdown
     async def update_availability_message(self) -> None:
@@ -1065,7 +1065,7 @@ class AvailabilityButtons(View):
                 member = self.event.guild.get_member(interaction.user.id)
                 participant = Participant(member=member)
                 self.event.participants.append(participant)
-                self.event.update_responded_message()
+                await self.event.update_responded_message()
             participant.subscribed = True
             if not participant.full_availability_flag:
                 logger.info(f'[{self.event}] {participant} selected full availability button')
@@ -1114,7 +1114,7 @@ class AvailabilityButtons(View):
                 member = self.event.guild.get_member(interaction.user.id)
                 participant = Participant(member=member)
                 self.event.participants.append(participant)
-                self.event.update_responded_message()
+                await self.event.update_responded_message()
             found_availabilities = self.event.get_other_availability(participant)
             if not found_availabilities:
                 logger.info(f'[{self.event}] \tNo existing availability found for {interaction.user.name}')
@@ -1446,7 +1446,7 @@ class ExistingGuildEventsSelect(Select):
                 if guild_event.name == selected_guild_event.name and guild_event.location == selected_guild_event.location:
                     event.start_times.append(guild_event.start_time.astimezone())
                     event.scheduled_events.append(guild_event)
-            event.update_event_buttons_message()
+            await event.update_event_buttons_message()
             await interaction.followup.send('Success!', ephemeral=True)
             persist.write(client.get_events_dict())
         else:
@@ -1736,7 +1736,6 @@ async def on_message(message: Message):
                     if member is not None:
                         participant = Participant(member)
                         event.participants.append(participant)
-                        await event.update_responded_message()
                         await event.update_messages()
                         await message.channel.send(f"Subscribed {participant.member.name} to {event}", reference=message)
                         logger.info(f"[{event}] Owner force subscribed {participant.member.name}")
@@ -1840,7 +1839,7 @@ async def create_command(interaction: Interaction, event_name: str, voice_channe
     except Exception as e:
         logger.error(f'Error sending interaction response for create command: {e}')
     try:
-        event.update_event_buttons_message()
+        await event.update_event_buttons_message()
     except Exception as e:
         logger.error(f'Error making event buttons or sending event buttons message in create command: {e}')
     persist.write(client.get_events_dict())
@@ -2189,7 +2188,7 @@ async def update():
                 except Exception as e:
                     logger.error(f"Creation delete: Failed to delete responded message: {e}")
                 event.responded_message = None
-                event.update_event_buttons_message()
+                await event.update_event_buttons_message()
             except Exception as e:
                 logger.error(f'[{event}] Error sending event created notification with buttons: {e}')
                 continue
