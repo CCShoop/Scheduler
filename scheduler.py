@@ -968,9 +968,14 @@ class AvailabilityModal(Modal):
     async def on_submit(self, interaction: Interaction) -> None:
         # Participant availability
         participant = self.event.get_participant(interaction.user.name)
+        if participant is None:
+            member = self.event.guild.get_member(interaction.user.id)
+            participant = Participant(member=member)
+            self.event.participants.append(participant)
+        participant.subscribed = True
         avail_string = f'{self.timeslot1.value}, {self.timeslot2.value}, {self.timeslot3.value} {self.timezone.value}'
         try:
-            logger.info(f'[{self.event}] Received availability from {participant}')
+            logger.info(f'[{self.event}] Received availability from {interaction.user.name}')
             participant.set_specific_availability(avail_string, self.date.value)
             if participant.availability:
                 participant.answered = True
@@ -985,7 +990,6 @@ class AvailabilityModal(Modal):
                     for timeblock in participant.availability:
                         if timeblock.start_time.date() == cur_date and other_participant.availability[0].end_time < timeblock.end_time:
                             other_participant.availability[0].end_time = timeblock.end_time
-            await self.event.update_responded_message()
             for timeblock in participant.availability:
                 logger.info(f'\t{timeblock}')
         except Exception as e:
@@ -994,6 +998,8 @@ class AvailabilityModal(Modal):
             except Exception as e:
                 logger.error(f'[{self.event}] Failed sending interaction response: {e}')
             logger.exception(f'[{self.event}] Error setting specific availability: {e}')
+        finally:
+            await self.event.update_responded_message()
 
     async def on_error(self, interaction: Interaction, error: Exception) -> None:
         await interaction.response.send_message(f'Error getting availability: {error}', ephemeral=True)
@@ -1039,6 +1045,12 @@ class AvailabilityButtons(View):
         async def full_button_callback(interaction: Interaction):
             self.event.ready_to_create = False
             participant = self.event.get_participant(interaction.user.name)
+            if participant is None:
+                member = self.event.guild.get_member(interaction.user.id)
+                participant = Participant(member=member)
+                self.event.participants.append(participant)
+                self.event.update_responded_message()
+            participant.subscribed = True
             if not participant.full_availability_flag:
                 logger.info(f'[{self.event}] {participant} selected full availability button')
                 # Get last availability time that starts today
@@ -1082,6 +1094,11 @@ class AvailabilityButtons(View):
         async def reuse_button_callback(interaction: Interaction):
             logger.info(f'[{self.event}] Reuse button pressed by {interaction.user.name}')
             participant = self.event.get_participant(interaction.user.name)
+            if participant is None:
+                member = self.event.guild.get_member(interaction.user.id)
+                participant = Participant(member=member)
+                self.event.participants.append(participant)
+                self.event.update_responded_message()
             found_availabilities = self.event.get_other_availability(participant)
             if not found_availabilities:
                 logger.info(f'[{self.event}] \tNo existing availability found for {interaction.user.name}')
@@ -1110,6 +1127,9 @@ class AvailabilityButtons(View):
             self.event.changed = True
             self.event.ready_to_create = False
             participant = self.event.get_participant(interaction.user.name)
+            if participant is None:
+                await interaction.response.send_message('You are already not part of this event.', ephemeral=True)
+                return
             if participant.subscribed:
                 logger.info(f'[{self.event}] {interaction.user.name} unsubscribed')
                 participant.subscribed = False
@@ -1288,6 +1308,9 @@ class EventButtons(View):
     def add_unsubscribe_button(self) -> None:
         async def unsubscribe_button_callback(interaction: Interaction):
             participant = self.event.get_participant(interaction.user.name)
+            if participant is None:
+                await interaction.response.send_message('You are already not part of this event.', ephemeral=True)
+                return
             if participant.subscribed:
                 logger.info(f'[{self.event}] {interaction.user.name} unsubscribed')
                 participant.subscribed = False
