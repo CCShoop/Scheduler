@@ -1707,6 +1707,7 @@ async def on_message(message: Message):
         foundEvent = False
         for event in client.events:
             if event.name in message.content.split('to')[1].strip():
+                foundEvent = True
                 id = message.content.split('subscribe')[1].split('to')[0].strip()
                 id = int(id)
                 member = event.guild.get_member(id)
@@ -1721,7 +1722,7 @@ async def on_message(message: Message):
                     logger.warning(f"[{event}] Invalid subscribe other user format from owner")
                 break
         if not foundEvent:
-            await message.content.channel.send("No event found", reference=message)
+            await message.channel.send("Event not found", reference=message)
 
     # Owner unsubscribes another user
     if message.author.id == OWNER_ID and 'scheduler: unsubscribe' in message.content:
@@ -1751,7 +1752,7 @@ async def on_message(message: Message):
                     logger.warning(f"Invalid unsubscribe other user format from owner: {e}")
                 break
         if not foundEvent:
-            await message.content.channel.send("No event found", reference=message)
+            await message.channel.send("Event not found", reference=message)
 
 
 @client.tree.command(name='create', description='Create an event.')
