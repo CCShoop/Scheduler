@@ -604,14 +604,16 @@ class Event:
         message_content += f'Waiting for a response from: \n{mentions}'
         embed = Embed(title='Availabilities', description='Availability of each person', color=Color.blue())
         for participant in self.participants:
-            if participant.availability:
-                participantName = participant.member.name
-                if participant.member.nick:
-                    participantName = participant.member.nick
+            participantName = participant.member.name
+            if participant.member.nick:
+                participantName = participant.member.nick
+            if participant.availability and participant.subscribed:
                 availString = ''
                 for timeblock in participant.availability:
                     availString += f'\n{timeblock}'
                 embed.add_field(name=participantName, value=availString)
+            elif not participant.subscribed:
+                embed.add_field(name=participantName, value="Unsubscribed")
         # Send new message
         if not self.responded_message:
             try:
