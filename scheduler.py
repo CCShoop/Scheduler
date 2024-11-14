@@ -603,6 +603,8 @@ class Event:
         mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
         message_content += f'Waiting for a response from: \n{mentions}'
         embed = Embed(title='Availabilities', description='Availability of each person', color=Color.blue())
+        if self.image_url is not None and self.image_url != "":
+            embed.set_image(url=self.image_url)
         for participant in self.participants:
             participantName = participant.member.name
             if participant.member.nick:
@@ -611,9 +613,9 @@ class Event:
                 availString = ''
                 for timeblock in participant.availability:
                     availString += f'\n{timeblock}'
-                embed.add_field(name=participantName, value=availString)
+                embed.add_field(name=participantName, value=availString, inline=False)
             elif not participant.subscribed:
-                embed.add_field(name=participantName, value="Unsubscribed")
+                embed.add_field(name=participantName, value="Unsubscribed", inline=False)
         # Send new message
         if not self.responded_message:
             try:
