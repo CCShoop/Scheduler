@@ -660,13 +660,21 @@ class Event:
             self.event_buttons = EventButtons(self)
         message = self.get_event_buttons_message_string()
         if self.event_buttons_message is None:
-            self.event_buttons_message = await self.text_channel.send(content=message,
-                                                                      view=self.event_buttons,
-                                                                      file=File(self.image_path))
+            if os.path.exists(self.image_path):
+                self.event_buttons_message = await self.text_channel.send(content=message,
+                                                                          view=self.event_buttons,
+                                                                          file=File(self.image_path))
+            else:
+                self.event_buttons_message = await self.text_channel.send(content=message,
+                                                                          view=self.event_buttons)
         else:
-            await self.event_buttons_message.edit(content=message,
-                                                  view=self.event_buttons,
-                                                  file=File(self.image_path))
+            if os.path.exists(self.image_path):
+                await self.event_buttons_message.edit(content=message,
+                                                      view=self.event_buttons,
+                                                      file=File(self.image_path))
+            else:
+                await self.event_buttons_message.edit(content=message,
+                                                      view=self.event_buttons)
 
     async def cancel(self, reason: str = "", canceller: str = "") -> None:
         content = f'**{self.name} has been cancelled'
@@ -1480,6 +1488,7 @@ class ExistingGuildEventsSelect(Select):
                 if guild_event.name == selected_guild_event.name and guild_event.location == selected_guild_event.location:
                     event.start_times.append(guild_event.start_time.astimezone())
                     event.scheduled_events.append(guild_event)
+            event.save_image_to_file()
             await event.update_event_buttons_message()
             await interaction.followup.send('Success!', ephemeral=True)
             persist.write(client.get_events_dict())
