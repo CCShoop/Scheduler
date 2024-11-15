@@ -592,8 +592,11 @@ class Event:
 
     # Update the availability message to show duration changes and timeout countdown
     async def update_availability_message(self, rescheduler: Participant = None) -> None:
-        self.avail_buttons = AvailabilityButtons(event=self)
-        if self.availability_message is None and not self.created:
+        if self.created:
+            return
+        if self.avail_buttons is None:
+            self.avail_buttons = AvailabilityButtons(event=self)
+        if self.availability_message is None:
             if rescheduler is None:
                 self.avail_msg_content_pt3 += '\n\nThe event will be either created or cancelled within a minute after the last person responds.️'
             else:
