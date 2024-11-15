@@ -1463,11 +1463,14 @@ class ExistingGuildEventsSelect(Select):
                 for participant in participants:
                     participant.answered = True
                 start_times = [selected_guild_event.start_time.astimezone()]
+                image_url = None
+                if selected_guild_event.cover_image is not None:
+                    image_url = selected_guild_event.cover_image.url
                 event = Event(name=selected_guild_event.name,
                               voice_channel=selected_guild_event.location,
                               guild=self.guild,
                               text_channel=interaction.channel,
-                              image_url=selected_guild_event.cover_image.url,
+                              image_url=image_url,
                               scheduler=self.guild.get_member(interaction.user.id),
                               participants=participants,
                               start_times=start_times,
