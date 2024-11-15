@@ -383,7 +383,7 @@ class Event:
 
     # Save the image to a file for sending in messages
     def save_image_to_file(self) -> str:
-        if os.path.exists(self.image_path):
+        if self.image_url is None or self.image_url == "" or os.path.exists(self.image_path):
             return
         try:
             response = requests.get(self.image_url, stream=True)
@@ -593,7 +593,7 @@ class Event:
     # Update the availability message to show duration changes and timeout countdown
     async def update_availability_message(self, rescheduler: Participant = None) -> None:
         self.avail_buttons = AvailabilityButtons(event=self)
-        if self.availability_message is None:
+        if self.availability_message is None and not self.created:
             if rescheduler is None:
                 self.avail_msg_content_pt3 += '\n\nThe event will be either created or cancelled within a minute after the last person responds.️'
             else:
@@ -601,7 +601,6 @@ class Event:
                 self.rescheduler = rescheduler.member
             response = self.get_availability_request_string()
             self.availability_message = await self.text_channel.send(content=response, view=self.avail_buttons)
-            await self.update_responded_message()
         else:
             try:
                 await self.availability_message.edit(content=self.get_availability_request_string(), view=self.avail_buttons)
@@ -1168,7 +1167,7 @@ class AvailabilityButtons(View):
 
     # Unsubscribe from the event
     def add_unsub_button(self) -> Button:
-        button = Button(label=self.unsub_label, style=ButtonStyle.gray)
+        button = Button(label=self.unsub_label, style=ButtonStyle.red)
 
         async def unsub_button_callback(interaction: Interaction):
             self.event.changed = True
@@ -1231,7 +1230,7 @@ class EventButtons(View):
         self.event = event
         self.start_button = Button(label=self.start_label, style=ButtonStyle.blurple)
         self.end_button = Button(label=self.end_label, style=ButtonStyle.blurple)
-        self.unsubscribe_button = Button(label=self.unsubscribe_label, style=ButtonStyle.blurple)
+        self.unsubscribe_button = Button(label=self.unsubscribe_label, style=ButtonStyle.red)
         self.reschedule_button = Button(label=self.reschedule_label, style=ButtonStyle.red)
         self.cancel_button = Button(label=self.cancel_label, style=ButtonStyle.red)
         self.add_start_button()
