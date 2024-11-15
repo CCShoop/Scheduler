@@ -1467,6 +1467,7 @@ class ExistingGuildEventsSelect(Select):
                               voice_channel=selected_guild_event.location,
                               guild=self.guild,
                               text_channel=interaction.channel,
+                              image_url=selected_guild_event.cover_image.url,
                               scheduler=self.guild.get_member(interaction.user.id),
                               participants=participants,
                               start_times=start_times,
