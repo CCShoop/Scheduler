@@ -1041,12 +1041,11 @@ class AvailabilityModal(Modal):
             response = f'**__Availability received for {self.event}!__**\n' + participant.get_availability_string()
             await interaction.response.send_message(response, ephemeral=True)
             self.event.changed = True
-            cur_date = datetime.now().astimezone().date()
             for other_participant in self.event.participants:
                 if other_participant != participant and other_participant.full_availability_flag:
                     for timeblock in participant.availability:
-                        if timeblock.start_time.date() == cur_date and other_participant.availability[0].end_time < timeblock.end_time:
-                            other_participant.availability[0].end_time = timeblock.end_time
+                        if timeblock.start_time.date() == other_participant.availability[0].start_time.date():
+                            other_participant.availability[0].end_time = max(other_participant.availability[0].end_time, timeblock.end_time)
             for timeblock in participant.availability:
                 logger.info(f'\t{timeblock}')
         except Exception as e:
