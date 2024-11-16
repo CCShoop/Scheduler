@@ -1033,19 +1033,19 @@ class AvailabilityModal(Modal):
         avail_string = f'{self.timeslot1.value}, {self.timeslot2.value}, {self.timeslot3.value} {self.timezone.value}'
         try:
             logger.info(f'[{self.event}] Received availability from {interaction.user.name}')
+            self.event.changed = True
             participant.set_specific_availability(avail_string, self.date.value)
             if participant.availability:
                 participant.answered = True
+                for other_participant in self.event.participants:
+                    if other_participant != participant and other_participant.full_availability_flag:
+                        for timeblock in participant.availability:
+                            if timeblock.start_time.date() == other_participant.availability[0].start_time.date():
+                                other_participant.availability[0].end_time = max(other_participant.availability[0].end_time, timeblock.end_time)
             else:
                 participant.answered = False
             response = f'**__Availability received for {self.event}!__**\n' + participant.get_availability_string()
             await interaction.response.send_message(response, ephemeral=True)
-            self.event.changed = True
-            for other_participant in self.event.participants:
-                if other_participant != participant and other_participant.full_availability_flag:
-                    for timeblock in participant.availability:
-                        if timeblock.start_time.date() == other_participant.availability[0].start_time.date():
-                            other_participant.availability[0].end_time = max(other_participant.availability[0].end_time, timeblock.end_time)
             for timeblock in participant.availability:
                 logger.info(f'\t{timeblock}')
         except Exception as e:
@@ -1538,8 +1538,8 @@ class ExistingAvailabilitiesSelect(Select):
                 response = f"**__Availability for {event_avail.event.name}:__**\n"
                 response += self.participant.get_availability_string()
                 break
-        await interaction.response.send_message(content=response, ephemeral=True)
         await event_avail.event.update_responded_message()
+        await interaction.response.send_message(content=response, ephemeral=True)
 
 
 # View to house the previous availability dropdown
