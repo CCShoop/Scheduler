@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from discord import (app_commands, Interaction, Intents, Client, Embed, Color,
                      ButtonStyle, EventStatus, EntityType, TextChannel, File,
-                     VoiceChannel, Message, SelectOption, ScheduledEvent,
+                     VoiceChannel, Message, SelectOption, ScheduledEvent, Member,
                      Guild, PrivacyLevel, User, utils, NotFound, HTTPException)
 from discord.ui import View, Button, Modal, TextInput, Select
 from discord.ext import tasks
@@ -773,9 +773,9 @@ class Event:
 
         # Set (re)scheduler to a participant
         for participant in event_participants:
-            if event_scheduler is not None and event_scheduler.id == participant.member.id:
+            if type(event_scheduler) is Member and event_scheduler.id == participant.member.id:
                 event_scheduler = participant
-            if event_rescheduler is not None and event_rescheduler.id == participant.member.id:
+            if type(event_rescheduler) is Member and event_rescheduler.id == participant.member.id:
                 event_rescheduler = participant
 
         # Interaction (availability) message
