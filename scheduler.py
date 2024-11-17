@@ -98,7 +98,7 @@ class SchedulerClient(Client):
         asyncio.create_task(self.server.start_server())
 
     async def schedule_from_dict(self, data: dict) -> None:
-        logger.info(f"{data['name']}: Schedule from dict triggered")
+        logger.info(f"[{data['name']}] Schedule from dict triggered")
         guild = self.get_guild(data["guildId"])
         textChannel = guild.get_channel(data["textChannelId"])
         voiceChannel = guild.get_channel(data["voiceChannelId"])
@@ -227,7 +227,7 @@ class Event:
             try:
                 self.voice_channel = self.guild.voice_channels[0]
             except Exception as e:
-                logger.error(f'Failed to get voice channel: {e}')
+                logger.exception(f'Failed to get voice channel: {e}')
                 self.voice_channel = None
         self.privacy_level = PrivacyLevel.guild_only
         self.scheduler = scheduler
@@ -249,7 +249,7 @@ class Event:
         self.started = started
         self.scheduled_events: list = scheduled_events if scheduled_events is not None else []
         self.changed = changed
-        self.start_times: list = start_times if start_times is not None else []
+        self.start_times: list = start_times or []
         self.duration = duration
         self.mins_until_start: int = 0
         self.unavailable = unavailable
@@ -275,6 +275,7 @@ class Event:
         self.avail_msg_content_pt3 += '\n**Use Existing** will attempt to grab your availability from another event.'
         self.avail_msg_content_pt3 += '\n**Unsubscribe** will allow the event to occur without you; however, you can still respond and participate.'
         self.avail_msg_content_pt3 += '\n**Cancel** will cancel scheduling.'
+        client.events.append(self)
 
     # Return all timeblocks that intersect each other
     def intersect_time_blocks(self, timeblocks1: list, timeblocks2: list) -> list:
@@ -329,7 +330,7 @@ class Event:
             tb_date = timeblock.start_time.date()
             for date in dates_scheduled:
                 if tb_date.month == date.month and tb_date.day == date.day and tb_date.year == date.year:
-                    logger.info(f'{self.name}: already has event scheduled for date: {tb_date.month}/{tb_date.day}: {timeblock.start_time.strftime("%H:%M")}')
+                    logger.info(f'[{self}] already has event scheduled for date: {tb_date.month}/{tb_date.day}: {timeblock.start_time.strftime("%H:%M")}')
                     date_scheduled = True
                     break
             if timeblock.duration >= self.duration and not date_scheduled:
@@ -337,7 +338,7 @@ class Event:
                 self.ready_to_create = True
                 dates_scheduled.append(tb_date)
         if not self.ready_to_create:
-            logger.info(f'{self.name}: compare_availabilities: No common availability found between all participants, cancelling event')
+            logger.info(f'[{self.name}] compare_availabilities: No common availability found between all participants, cancelling event')
 
     # Return the number of participants who have responded
     def number_of_responded(self) -> int:
@@ -368,22 +369,24 @@ class Event:
                     response = requests.get(self.image_url)
                     if response.status_code == 200:
                         await scheduled_event.edit(image=response.content)
-                        logger.info(f'{self.name}: Processed image')
+                        logger.info(f'[{self}] Processed image')
                     else:
                         self.image_url = ''
-                        logger.warning(f'{self.name}: Failed to get image')
+                        logger.warning(f'[{self}] Failed to get image')
                 except Exception as e:
                     self.image_url = ''
-                    logger.exception(f'{self.name}: Failed to process image: {e}')
+                    logger.exception(f'[{self}] Failed to process image: {e}')
             self.scheduled_events.append(scheduled_event)
-            logger.info(f'{self.name}: Created event starting {start_time.strftime("%m/%d/%Y: %H:%M")} ET')
+            logger.info(f'[{self}] Created event starting {start_time.strftime("%m/%d/%Y: %H:%M")} ET')
         self.ready_to_create = False
         self.created = True
         self.changed = False
 
     # Save the image to a file for sending in messages
     def save_image_to_file(self) -> str:
-        if self.image_url is None or self.image_url == "" or os.path.exists(self.image_path):
+        if self.image_url == "":
+            self.image_url = None
+        if self.image_url is None or os.path.exists(self.image_path):
             return
         try:
             response = requests.get(self.image_url, stream=True)
@@ -392,16 +395,20 @@ class Event:
                     response.raw.decode_content = True
                     shutil.copyfileobj(response.raw, file)
             else:
-                logger.error(f"Request returned: {response.status_code}")
+                logger.error(f"[{self}] Request returned: {response.status_code}")
+                logger.error(f"[{self}] Image link: {self.image_url}")
+                self.image_url = None
         except Exception as e:
-            logger.exception(f"Failed to get image: {e}")
+            logger.exception(f"[{self}] Failed to download image: {e}")
+            logger.error(f"[{self}] Image link: {self.image_url}")
+            self.image_url = None
 
     # Delete image file
     def delete_image_file(self) -> None:
         try:
             os.remove(self.image_path)
         except Exception as e:
-            logger.exception(f"Failed to delete image: {e}")
+            logger.exception(f"[{self}] Failed to delete image: {e}")
 
     # Get a string explaining the current event status
     def get_scheduling_status(self) -> str:
@@ -427,10 +434,8 @@ class Event:
         for participant in self.participants:
             if mention:
                 name_string = f'{participant.member.mention} '
-            elif participant.member.nick:
-                name_string = f'{participant.member.nick}'
             else:
-                name_string = f'{participant.member.name}'
+                name_string = f'{participant}'
 
             # No conditions are true
             if (not subscribed_only) and (not unsubscribed_only) and (not unanswered_only):
@@ -468,9 +473,11 @@ class Event:
             self.participants.append(participant)
 
     # Get a participant from the event with a username
-    def get_participant(self, username: str) -> Participant:
+    def get_participant(self, username_or_id) -> Participant:
         for participant in self.participants:
-            if participant.member.name == username:
+            if participant.member.nick and participant.member.nick == username_or_id:
+                return participant
+            if participant.member.name == username_or_id or participant.member.id == username_or_id:
                 return participant
         return None
 
@@ -489,7 +496,7 @@ class Event:
             for other_participant in event.participants:
                 if self_participant.member.id == other_participant.member.id:
                     other_participants.append(other_participant)
-                    logger.info(f"Found shared participant {self_participant.member.name} in {self.name} and {event}")
+                    logger.info(f"Found shared participant {self_participant} in {self.name} and {event}")
         return other_participants
 
     # Get availability for participant from another event
@@ -608,7 +615,7 @@ class Event:
             try:
                 await self.availability_message.edit(content=self.get_availability_request_string(), view=self.avail_buttons)
             except Exception as e:
-                logger.exception(f'{self.name}: Failed to edit availability message in update: {e}')
+                logger.exception(f'[{self}] Failed to edit availability message in update: {e}')
 
     # Create or edit the responded message to show who still needs to respond to the availability request
     async def update_responded_message(self) -> None:
@@ -625,9 +632,7 @@ class Event:
         if self.image_url is not None and self.image_url != "":
             embed.set_image(url=self.image_url)
         for participant in self.participants:
-            participantName = participant.member.name
-            if participant.member.nick:
-                participantName = participant.member.nick
+            participantName = f'{participant}'
             if participant.availability and participant.subscribed:
                 availString = ''
                 for timeblock in participant.availability:
@@ -640,20 +645,20 @@ class Event:
             try:
                 self.responded_message = await self.text_channel.send(content=message_content, embed=embed)
             except Exception as e:
-                logger.exception(f'{self.name}: Error sending responded message: {e}')
+                logger.exception(f'[{self}] Error sending responded message: {e}')
             return
         # Edit existing message
         if not self.has_everyone_answered():
             try:
                 await self.responded_message.edit(content=message_content, embed=embed)
             except Exception as e:
-                logger.exception(f'{self.name}: Error getting mentions string or editing responded message: {e}')
+                logger.exception(f'[{self}] Error getting mentions string or editing responded message: {e}')
             return
         # Everyone has responded
         try:
             await self.responded_message.edit(content='Everyone has responded.', embed=embed)
         except Exception as e:
-            logger.exception(f'{self.name}: Error editing responded message with "everyone has responded": {e}')
+            logger.exception(f'[{self}] Error editing responded message with "everyone has responded": {e}')
 
     # Update the event's event buttons message
     async def update_event_buttons_message(self) -> None:
@@ -1125,7 +1130,7 @@ class AvailabilityButtons(View):
                     logger.info(f'[{self.event}] \t{timeblock}')
                 participant.full_availability_flag = True
                 participant.answered = True
-                response = f"**Availability for {self.event.name}:**\n"
+                response = f"**Availability for {self.event}:**\n"
                 response += participant.get_availability_string()
                 await interaction.response.send_message(response, ephemeral=True)
             else:
@@ -1485,7 +1490,6 @@ class ExistingGuildEventsSelect(Select):
                               participants=participants,
                               start_times=start_times,
                               created=True)
-                client.events.append(event)
             for guild_event in self.guild.scheduled_events:
                 if guild_event.name == selected_guild_event.name and guild_event.location == selected_guild_event.location:
                     event.start_times.append(guild_event.start_time.astimezone())
@@ -1773,8 +1777,8 @@ async def on_message(message: Message):
                 for participant in event.participants:
                     if participant.member.id == id:
                         existingParticipant = True
-                        await message.channel.send(f"{participant.member.name} is already subscribed to {event}", reference=message)
-                        logger.info(f"[{event}] Owner tried to resubscribe existing participant {participant.member.name}")
+                        await message.channel.send(f"{participant} is already subscribed to {event}", reference=message)
+                        logger.info(f"[{event}] Owner tried to resubscribe existing participant {participant}")
                         break
                 if not existingParticipant:
                     member = event.guild.get_member(id)
@@ -1782,8 +1786,8 @@ async def on_message(message: Message):
                         participant = Participant(member)
                         event.participants.append(participant)
                         await event.update_messages()
-                        await message.channel.send(f"Subscribed {participant.member.name} to {event}", reference=message)
-                        logger.info(f"[{event}] Owner force subscribed {participant.member.name}")
+                        await message.channel.send(f"Subscribed {participant} to {event}", reference=message)
+                        logger.info(f"[{event}] Owner force subscribed {participant}")
                     else:
                         await message.channel.send("Invalid ID provided", reference=message)
                         logger.info(f"[{event}] Invalid subscribe other user format from owner")
@@ -1803,17 +1807,14 @@ async def on_message(message: Message):
                     found = False
                     for participant in event.participants:
                         if participant.member.id == id:
-                            logger.info(f'[{event}] Unsubscribed {participant.member.name}')
+                            logger.info(f'[{event}] Unsubscribed {participant}')
                             found = True
                             participant.subscribed = False
-                            if participant.member.nick:
-                                await message.channel.send(f"Unsubscribed {participant.member.nick}", reference=message)
-                            else:
-                                await message.channel.send(f"Unsubscribed {participant.member.name}", reference=message)
+                            await message.channel.send(f"Unsubscribed {participant}", reference=message)
                             await event.update_responded_message()
                             break
                     if not found:
-                        await message.channel.send(f"[{event}] participant {participant.name} not found", reference=message)
+                        await message.channel.send(f"[{event}] participant not found", reference=message)
                 except Exception as e:
                     await message.channel.send("Invalid ID provided", reference=message)
                     logger.info(f"Invalid unsubscribe other user format from owner: {e}")
@@ -1876,7 +1877,6 @@ async def create_command(interaction: Interaction, event_name: str, voice_channe
                   image_url=image_url,
                   duration=duration,
                   start_times=start_times)
-    client.events.append(event)
     await event.make_scheduled_events()
 
     try:
@@ -1940,9 +1940,9 @@ async def schedule(eventName: str,
                    roles: str = None,
                    duration: int = 30,
                    multiEvent: bool = False):
-    logger.info(f"{eventName}: Scheduling event...")
+    logger.info(f"[{eventName}] Scheduling event...")
     if not guild.voice_channels:
-        logger.info(f"{eventName}: Scheduling cancelled due to no voice channel in guild")
+        logger.info(f"[{eventName}] Scheduling cancelled due to no voice channel in guild")
         content = "The server must have at least one voice channel to schedule an event."
         ephemeral = True
         return content, ephemeral
@@ -1954,7 +1954,7 @@ async def schedule(eventName: str,
         scheduler = guild.members[0]
 
     if eventName in [event.name for event in client.events]:
-        logger.info(f"{eventName}: Scheduling cancelled due to existing name")
+        logger.info(f"[{eventName}] Scheduling cancelled due to existing name")
         content = f"Sorry, I already have an event called {eventName}. Please choose a different name."
         ephemeral = True
         return content, ephemeral
@@ -1968,10 +1968,13 @@ async def schedule(eventName: str,
                                                      usernames=usernames,
                                                      roles=roles)
     except Exception as e:
-        logger.error(f"{eventName}: Error getting participants: {e}")
+        logger.error(f"[{eventName}] Error getting participants: {e}")
         content = f"Failed to generate participants list: {e}"
         ephemeral = True
         return content, ephemeral
+
+    if imageUrl == "":
+        imageUrl = None
 
     # Make event object
     try:
@@ -1985,17 +1988,16 @@ async def schedule(eventName: str,
                       image_url=imageUrl,
                       duration=duration,
                       multi_event=multiEvent)
-        client.events.append(event)
-        logger.info(f"{eventName}: Created and saved event object")
+        logger.info(f"[{eventName}] Created and saved event object")
     except Exception as e:
-        logger.error(f'Error making event object: {e}')
+        logger.error(f'[{eventName}] Error making event object: {e}')
         content = f"Failed to make event object: {e}"
         ephemeral = True
         return content, ephemeral
 
     # Request availability and make participant response tracker message
     try:
-        logger.info(f"{eventName}: Requesting availability")
+        logger.info(f"[{eventName}] Requesting availability")
         await event.update_availability_message()
     except Exception as e:
         logger.exception(f'Error requesting availability: {e}')
@@ -2085,10 +2087,7 @@ async def update():
                 unavailable_names = []
                 for participant in event.participants:
                     if participant.unavailable:
-                        if participant.member.nick:
-                            unavailable_names.append(f'{participant.member.nick} ')
-                        else:
-                            unavailable_names.append(f'{participant.member.name} ')
+                        unavailable_names.append(f'{participant} ')
                 if unavailable_names:
                     notification_message = f'{event.get_names_string(subscribed_only=True, mention=True)}\nScheduling for **{event}** has been cancelled by {", ".join(unavailable_names)}.\n'
                 else:

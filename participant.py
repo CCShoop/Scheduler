@@ -357,4 +357,6 @@ class Participant:
         }
 
     def __repr__(self) -> str:
+        if self.member.nick:
+            return f'{self.member.nick}'
         return f'{self.member.name}'
