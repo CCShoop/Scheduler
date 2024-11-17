@@ -407,6 +407,7 @@ class Event:
     def delete_image_file(self) -> None:
         try:
             os.remove(self.image_path)
+            logger.info(f"[{self}] Deleted image file")
         except Exception as e:
             logger.exception(f"[{self}] Failed to delete image: {e}")
 
@@ -611,6 +612,7 @@ class Event:
                 self.rescheduler = rescheduler.member
             response = self.get_availability_request_string()
             self.availability_message = await self.text_channel.send(content=response, view=self.avail_buttons)
+            self.update_responded_message()
         else:
             try:
                 await self.availability_message.edit(content=self.get_availability_request_string(), view=self.avail_buttons)
