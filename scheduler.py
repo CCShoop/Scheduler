@@ -191,7 +191,7 @@ class Event:
                  voice_channel: VoiceChannel,
                  guild: Guild,
                  text_channel: TextChannel,
-                 image_url: str = '',
+                 image_url: str = None,
                  scheduler: Participant = None,
                  rescheduler: Participant = None,
                  participants: list = None,
@@ -941,6 +941,10 @@ class Event:
         except Exception as e:
             logger.warning(f'Failed getting participants dict list: {e}')
             participants = []
+        if self.image_url is not None:
+            image_url = self.image_url
+        else:
+            image_url = ''
         try:
             event_buttons_message_id = self.event_buttons_message.id
         except Exception:
@@ -965,7 +969,7 @@ class Event:
             'scheduler_id': scheduler_id,
             'rescheduler_id': rescheduler_id,
             'participants': participants,
-            'image_url': self.image_url,
+            'image_url': image_url,
             'event_buttons_message_id': event_buttons_message_id,
             'event_buttons_msg_content_pt1': self.event_buttons_msg_content_pt1,
             'event_buttons_msg_content_pt2': self.event_buttons_msg_content_pt2,
