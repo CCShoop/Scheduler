@@ -269,7 +269,6 @@ class Event:
         self.avail_msg_content_pt3 += '\n**Use Existing** will attempt to grab your availability from another event.'
         self.avail_msg_content_pt3 += '\n**Unsubscribe** will allow the event to occur without you; however, you can still respond and participate.'
         self.avail_msg_content_pt3 += '\n**Cancel** will cancel scheduling.'
-        client.events.append(self)
 
     # Return all timeblocks that intersect each other
     def intersect_time_blocks(self, timeblocks1: list, timeblocks2: list) -> list:
@@ -1493,6 +1492,7 @@ class ExistingGuildEventsSelect(Select):
                               participants=participants,
                               start_times=start_times,
                               created=True)
+                client.events.append(event)
             for guild_event in self.guild.scheduled_events:
                 if guild_event.name == selected_guild_event.name and guild_event.location == selected_guild_event.location:
                     event.start_times.append(guild_event.start_time.astimezone())
@@ -1882,6 +1882,7 @@ async def create_command(interaction: Interaction, event_name: str, voice_channe
                   image_url=image_url,
                   duration=duration,
                   start_times=start_times)
+    client.events.append(event)
     await event.make_scheduled_events()
 
     try:
@@ -1998,6 +1999,7 @@ async def schedule(eventName: str,
                       image_url=imageUrl,
                       duration=duration,
                       multi_event=multiEvent)
+        client.events.append(event)
         logger.info(f"[{eventName}] Created and saved event object")
     except Exception as e:
         logger.error(f'[{eventName}] Error making event object: {e}')
