@@ -380,7 +380,7 @@ class Event:
     def save_image_to_file(self) -> str:
         if self.image_url == "":
             self.image_url = None
-        if self.image_url is None or os.path.exists(self.image_path):
+        if self.image_url is None:
             return
         try:
             response = requests.get(self.image_url, stream=True)
@@ -399,7 +399,7 @@ class Event:
 
     # Delete image file
     def delete_image_file(self) -> None:
-        if not os.path.exists(self.image_path):
+        if not self.has_image_saved():
             return
         try:
             os.remove(self.image_path)
@@ -597,14 +597,22 @@ class Event:
                     return False
         return True
 
+    # Returns true if the event has an image
+    def has_image_saved(self) -> bool:
+        return os.path.exists(self.image_path)
+
     # Update the appropriate message for whatever the state of the event is
     async def update_messages(self) -> None:
-        await self.update_availability_message()
-        await self.update_event_buttons_message()
+        if not self.created:
+            await self.update_availability_message()
+        else:
+            await self.update_event_buttons_message()
 
     # Update the availability message to show duration changes and timeout countdown
     async def update_availability_message(self, rescheduler: Participant = None) -> None:
         if self.created:
+            self.avail_buttons = None
+            self.availability_message = None
             return
         self.rescheduler = rescheduler
         if self.avail_buttons is None:
@@ -644,20 +652,50 @@ class Event:
     # Update the event's event buttons message
     async def update_event_buttons_message(self) -> None:
         if not self.created:
+            self.event_buttons = None
+            self.event_buttons_message = None
             return
         if not self.event_buttons:
             self.event_buttons = EventButtons(self)
         message = self.get_event_buttons_message_string()
+        # Send a new message
         if self.event_buttons_message is None:
-            if os.path.exists(self.image_path):
+            if self.has_image_saved():
                 self.event_buttons_message = await self.text_channel.send(content=message,
                                                                           view=self.event_buttons,
                                                                           file=File(self.image_path))
             else:
                 self.event_buttons_message = await self.text_channel.send(content=message,
                                                                           view=self.event_buttons)
+        # Edit existing message
         else:
-            if os.path.exists(self.image_path):
+            try:
+                if datetime.now().astimezone() < self.start_times[0]:
+                    time_until_start: timedelta = self.start_times[0] - datetime.now().astimezone()
+                    self.mins_until_start = int(time_until_start.total_seconds() // 60) + 1
+                elif datetime.now().astimezone().replace(second=0, microsecond=0) == self.start_times[0]:
+                    self.mins_until_start = 0
+                else:
+                    time_until_start: timedelta = datetime.now().astimezone() - self.start_times[0]
+                    self.mins_until_start = int(time_until_start.total_seconds() // 60) + 1
+                # Event start time is in the past
+                if self.start_times[0] < datetime.now().astimezone().replace(second=0, microsecond=0):
+                    self.event_buttons_msg_content_pt2 = '\n**Overdue by:**'
+                    hrs_mins_overdue_start_string = get_time_str_from_minutes(self.mins_until_start - 1)
+                    response = f'{self.event_buttons_msg_content_pt1} {self.event_buttons_msg_content_pt2} {hrs_mins_overdue_start_string} {self.event_buttons_msg_content_pt3} {self.event_buttons_msg_content_pt4}'
+                # It is event start time
+                elif self.start_times[0] == datetime.now().astimezone().replace(second=0, microsecond=0):
+                    self.event_buttons_msg_content_pt2 = '\n**Starting now**'
+                    response = f'{self.event_buttons_msg_content_pt1} {self.event_buttons_msg_content_pt2} {self.event_buttons_msg_content_pt3} {self.event_buttons_msg_content_pt4}'
+                # Event start time is in the future
+                else:
+                    self.event_buttons_msg_content_pt2 = '\n**Starts in:**'
+                    hrs_mins_until_start_string = get_time_str_from_minutes(self.mins_until_start)
+                    response = f'{self.event_buttons_msg_content_pt1} {self.event_buttons_msg_content_pt2} {hrs_mins_until_start_string} {self.event_buttons_msg_content_pt3} {self.event_buttons_msg_content_pt4}'
+                await self.event_buttons_message.edit(content=response, view=self.event_buttons)
+            except Exception as e:
+                logger.error(f'[{self}] Error counting down: {e}')
+            if self.has_image_saved():
                 await self.event_buttons_message.edit(content=message,
                                                       view=self.event_buttons,
                                                       file=File(self.image_path))
@@ -665,6 +703,19 @@ class Event:
                 await self.event_buttons_message.edit(content=message,
                                                       view=self.event_buttons)
 
+    # Delete availability request message
+    def clear_availability_message(self) -> None:
+        if self.availability_message is None:
+            self.avail_buttons = None
+            return
+        try:
+            self.availability_message.delete()
+            self.avail_buttons = None
+            self.availability_message = None
+        except Exception as e:
+            logger.error(f'[{self}] Error deleting availability buttons: {e}')
+
+    # Cancel the event
     async def cancel(self, reason: str = "", canceller: str = "") -> None:
         content = f'**{self.name} has been cancelled'
         if canceller == "":
@@ -675,14 +726,14 @@ class Event:
             content += f'\n**Reason:** "{reason}"'
         content += f'\n{self.get_names_string(subscribed_only=True, mention=True)}'
         if self.text_channel:
-            if os.path.exists(self.image_path):
+            if self.has_image_saved():
                 await self.text_channel.send(content=content, file=File(self.image_path))
             else:
                 await self.text_channel.send(content=content)
         else:
             for participant in self.participants:
                 async with participant.msg_lock:
-                    if os.path.exists(self.image_path):
+                    if self.has_image_saved():
                         await participant.member.send(content=content, file=File(self.image_path))
                     else:
                         await participant.member.send(content=content)
@@ -2121,34 +2172,7 @@ async def update():
         # Countdown to start + 5 minute warning
         if event.created and not event.started:
             # Countdown
-            try:
-                if datetime.now().astimezone() < event.start_times[0]:
-                    time_until_start: timedelta = event.start_times[0] - datetime.now().astimezone()
-                    event.mins_until_start = int(time_until_start.total_seconds() // 60) + 1
-                elif datetime.now().astimezone().replace(second=0, microsecond=0) == event.start_times[0]:
-                    event.mins_until_start = 0
-                else:
-                    time_until_start: timedelta = datetime.now().astimezone() - event.start_times[0]
-                    event.mins_until_start = int(time_until_start.total_seconds() // 60) + 1
-                # Event start time is in the past
-                if event.start_times[0] < datetime.now().astimezone().replace(second=0, microsecond=0):
-                    event.event_buttons_msg_content_pt2 = '\n**Overdue by:**'
-                    hrs_mins_overdue_start_string = get_time_str_from_minutes(event.mins_until_start - 1)
-                    response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {hrs_mins_overdue_start_string} {event.event_buttons_msg_content_pt3} {event.event_buttons_msg_content_pt4}'
-                # It is event start time
-                elif event.start_times[0] == datetime.now().astimezone().replace(second=0, microsecond=0):
-                    event.event_buttons_msg_content_pt2 = '\n**Starting now**'
-                    response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {event.event_buttons_msg_content_pt3} {event.event_buttons_msg_content_pt4}'
-                # Event start time is in the future
-                else:
-                    event.event_buttons_msg_content_pt2 = '\n**Starts in:**'
-                    hrs_mins_until_start_string = get_time_str_from_minutes(event.mins_until_start)
-                    response = f'{event.event_buttons_msg_content_pt1} {event.event_buttons_msg_content_pt2} {hrs_mins_until_start_string} {event.event_buttons_msg_content_pt3} {event.event_buttons_msg_content_pt4}'
-                await event.event_buttons_message.edit(content=response, view=event.event_buttons)
-            except Exception as e:
-                logger.error(f'[{event}] Error counting down: {e}')
-                continue
-
+            await event.update_event_buttons_message()
             # Send 5 minute warning
             try:
                 if datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=5) == event.start_times[0] and event.scheduled_events[0].status == EventStatus.scheduled and not event.started:
@@ -2175,12 +2199,7 @@ async def update():
         if event.created or not event.has_everyone_answered():
             continue
 
-        # Delete availability request message
-        try:
-            await event.availability_message.delete()
-            event.availability_message = None
-        except Exception as e:
-            logger.error(f'[{event}] Error disabling availability buttons: {e}')
+        event.clear_availability_message()
         # Compare availabilities
         try:
             event.compare_availabilities()
