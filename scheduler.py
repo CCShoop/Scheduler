@@ -162,6 +162,7 @@ class SchedulerClient(Client):
                                     except Exception as e:
                                         logger.error(f'[{event}] Failed to disable start button for {other_event}: {e}')
                             await event.event_buttons_message.edit(view=event.event_buttons)
+                        client.events.append(event)
                         logger.info(f'[{event}] event loaded and added to client event list')
                     except Exception as e:
                         logger.error(f'Could not add event to client event list: {e}')
