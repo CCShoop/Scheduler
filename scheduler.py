@@ -698,7 +698,7 @@ class Event:
             if self.has_image_saved():
                 await self.event_buttons_message.edit(content=message,
                                                       view=self.event_buttons,
-                                                      file=File(self.image_path))
+                                                      attachments=[File(self.image_path)])
             else:
                 await self.event_buttons_message.edit(content=message,
                                                       view=self.event_buttons)
