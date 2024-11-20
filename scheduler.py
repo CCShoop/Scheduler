@@ -612,7 +612,9 @@ class Event:
     async def update_availability_message(self, rescheduler: Participant = None) -> None:
         if self.created:
             self.avail_buttons = None
-            self.availability_message = None
+            if self.availability_message is not None:
+                await self.availability_message.delete()
+                self.availability_message = None
             return
         self.rescheduler = rescheduler
         if self.avail_buttons is None:
@@ -653,7 +655,9 @@ class Event:
     async def update_event_buttons_message(self) -> None:
         if not self.created:
             self.event_buttons = None
-            self.event_buttons_message = None
+            if self.event_buttons_message is not None:
+                await self.event_buttons_message.delete()
+                self.event_buttons_message = None
             return
         if not self.event_buttons:
             self.event_buttons = EventButtons(self)
@@ -1463,11 +1467,7 @@ class EventButtons(View):
             self.event.created = False
             self.event.five_minute_warning_flag = False
             self.event.event_buttons_msg_content_pt2 = f'\n**Rescheduled at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
-            try:
-                await self.event.event_buttons_message.edit(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt4}', view=None)
-            except Exception as e:
-                logger.error(f"[{self.event}] Error editing event buttons message during reschedule: {e}")
-            self.event.event_buttons_message = None
+            await self.event.update_event_buttons_message()
             try:
                 participant = self.event.get_participant(interaction.user.name)
                 for p in self.event.participants:
