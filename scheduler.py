@@ -707,18 +707,6 @@ class Event:
                 await self.event_buttons_message.edit(content=message,
                                                       view=self.event_buttons)
 
-    # Delete availability request message
-    def clear_availability_message(self) -> None:
-        if self.availability_message is None:
-            self.avail_buttons = None
-            return
-        try:
-            self.availability_message.delete()
-            self.avail_buttons = None
-            self.availability_message = None
-        except Exception as e:
-            logger.error(f'[{self}] Error deleting availability buttons: {e}')
-
     # Cancel the event
     async def cancel(self, reason: str = "", canceller: str = "") -> None:
         content = f'**{self.name} has been cancelled'
@@ -2128,39 +2116,11 @@ async def update():
             event.changed = False
             continue
 
-        # Remove event if no common availability is found
+        # Cancel event if no common availability is found
         if event.unavailable:
-            try:
-                try:
-                    await event.availability_message.delete()
-                    event.availability_message = None
-                except NotFound as e:
-                    logger.warning(f"[{event}] Unavailable delete: Availability message not found: {e}")
-                except Exception as e:
-                    logger.error(f"[{event}] Unavailable delete: Error deleting availability message: {e}")
-                event.availability_message = None
-                try:
-                    await event.responded_message.delete()
-                    event.responded_message = None
-                except NotFound:
-                    logger.warning(f"[{event}] Unavailable delete: Responded message not found")
-                except Exception as e:
-                    logger.error(f"[{event}] Unavailable delete: Error while deleting responded message: {e}")
-                event.responded_message = None
-                notification_message = f'{event.get_names_string(subscribed_only=True, mention=True)}'
-                notification_message += f'Scheduling for **{event}** has been cancelled; participants lack common availability.'
-                if event.text_channel:
-                    await event.text_channel.send(notification_message)
-                else:
-                    for participant in event.participants:
-                        async with participant.msg_lock:
-                            await participant.member.send(notification_message)
-                logger.info(f'[{event}] Participant(s) lacked (common) availability, removed event from memory')
-                event.remove()
-                persist.write(client.get_events_dict())
-            except Exception as e:
-                logger.error(f'Error invalidating and deleting event: {e}')
-                continue
+            reason = f'{event.get_names_string(subscribed_only=True, mention=True)}'
+            reason += f'Scheduling for **{event}** has been cancelled; participants lack common availability.'
+            await event.cancel(reason=reason)
             continue
 
         # Countdown to start + 5 minute warning
@@ -2193,7 +2153,7 @@ async def update():
         if event.created or not event.has_everyone_answered():
             continue
 
-        event.clear_availability_message()
+        await event.update_availability_message()
         # Compare availabilities
         try:
             event.compare_availabilities()
@@ -2241,25 +2201,13 @@ async def update():
                 logger.error(f'[{event}] Error creating scheduled event: {e}')
                 continue
 
+            # Delete availability message, send event buttons message
+            await event.update_messages()
+
             # Go through created events and remove availability during the event time of all shared participants
             for other_event in client.events:
                 for participant in other_event.participants:
                     participant.remove_availability_for_event(event_start_times=event.start_times, event_duration=event.duration)
-
-            # Calculate time until start
-            try:
-                try:
-                    await event.responded_message.delete()
-                    event.responded_message = None
-                except NotFound:
-                    logger.warning("Creation delete: Responded message not found")
-                except Exception as e:
-                    logger.error(f"Creation delete: Failed to delete responded message: {e}")
-                event.responded_message = None
-                await event.update_event_buttons_message()
-            except Exception as e:
-                logger.error(f'[{event}] Error sending event created notification with buttons: {e}')
-                continue
 
             # If there is an active event in the same location, disable the start button
             if location_has_active_event(event.voice_channel):
