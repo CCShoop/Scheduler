@@ -2107,7 +2107,7 @@ async def update():
             # Mark participant as unanswered if their last timeblock isn't on the same date as the last entry
             latest_date = event.get_latest_date()
             for participant in event.participants:
-                if participant.availability and participant.subscribed and not participant.unavailable:
+                if participant.availability and participant.subscribed:
                     participant.answered = participant.availability[-1].start_time.date() >= latest_date
             for participant in event.participants:
                 participant.confirm_answered(duration=event.duration, latest_date=latest_date)
@@ -2128,7 +2128,7 @@ async def update():
             event.changed = False
             continue
 
-        # Remove events if a participant is unavailable
+        # Remove event if no common availability is found
         if event.unavailable:
             try:
                 try:
@@ -2147,14 +2147,8 @@ async def update():
                 except Exception as e:
                     logger.error(f"[{event}] Unavailable delete: Error while deleting responded message: {e}")
                 event.responded_message = None
-                unavailable_names = []
-                for participant in event.participants:
-                    if participant.unavailable:
-                        unavailable_names.append(f'{participant} ')
-                if unavailable_names:
-                    notification_message = f'{event.get_names_string(subscribed_only=True, mention=True)}\nScheduling for **{event}** has been cancelled by {", ".join(unavailable_names)}.\n'
-                else:
-                    notification_message = f'{event.get_names_string(subscribed_only=True, mention=True)}\nScheduling for **{event}** has been cancelled; participants lack common availability.\n'
+                notification_message = f'{event.get_names_string(subscribed_only=True, mention=True)}'
+                notification_message += f'Scheduling for **{event}** has been cancelled; participants lack common availability.'
                 if event.text_channel:
                     await event.text_channel.send(notification_message)
                 else:
