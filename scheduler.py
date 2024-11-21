@@ -54,6 +54,10 @@ START_TIME_DELAY = 10
 EVENT_TIMEOUT: int = (2 * 60 * 24 * 3)
 
 
+def save() -> None:
+    persist.write(client.get_events_dict())
+
+
 # Get time string from minutes
 def get_time_str_from_minutes(minutes: int) -> str:
     if minutes < 0:
@@ -349,7 +353,7 @@ class Event:
             self.start_times = self.start_times[1:]
             self.five_minute_warning_flag = False
             await self.update_event_buttons_message()
-            persist.write(client.get_events_dict())
+            save()
             return True
         else:
             return False
@@ -507,43 +511,6 @@ class Event:
                         event_availabilities.append(event_avail)
         return event_availabilities
 
-    # Set event_buttons_msg_content parts and get response message
-    def get_event_buttons_message_string(self, end_time: datetime = None) -> str:
-        if end_time is None:
-            duration = f"{get_time_str_from_minutes(self.get_duration_minutes())}"
-            time_until_start: timedelta = self.start_times[0] - datetime.now().astimezone()
-            self.mins_until_start = (time_until_start.total_seconds() // 60) + 1
-        else:
-            real_duration: timedelta = end_time - self.start_times[0]
-            duration = f"{get_time_str_from_minutes(real_duration.total_seconds() // 60)}"
-        unsubbed = self.get_names_string(unsubscribed_only=True)
-        if unsubbed != "":
-            unsubbed = f"\n**Unsubscribed:** {unsubbed}"
-
-        # List subscribed people and list unsubscribed people
-        self.event_buttons_msg_content_pt1  = f"**Event name:** {self.name}"
-        self.event_buttons_msg_content_pt1 += f"\n**Scheduled:** {self.get_start_time_string(0)}"
-        self.event_buttons_msg_content_pt1 += f"\n**Duration:** {duration}"
-        self.event_buttons_msg_content_pt1 += f"\n**Multi-event:** {self.multi_event}"
-        # Event has not started
-        if end_time is None and not self.started:
-            if self.mins_until_start > 0:
-                self.event_buttons_msg_content_pt2 = f"\n**Starts in:** {get_time_str_from_minutes(self.mins_until_start)}"
-            elif self.mins_until_start == 0:
-                self.event_buttons_msg_content_pt2 = "\n**Starting now**"
-            else:
-                self.event_buttons_msg_content_pt2 = f"\n**Overdue by:** {get_time_str_from_minutes(self.mins_until_start)}"
-        # Event is in progress
-        elif end_time is None and self.started:
-            self.event_buttons_msg_content_pt2 = f"\n**Started:** {self.get_start_time_string(0)}"
-        # Event has ended
-        else:
-            self.event_buttons_msg_content_pt2 = f'\n**Ended:** {end_time.strftime("%a, %m/%d at %H:%M")} ET'
-        self.event_buttons_msg_content_pt3 = f"\n{self.get_names_string(subscribed_only=True, mention=True)}"
-        self.event_buttons_msg_content_pt4 = f"\n{unsubbed}"
-        response = f"{self.event_buttons_msg_content_pt1} {self.event_buttons_msg_content_pt2} {self.event_buttons_msg_content_pt3} {self.event_buttons_msg_content_pt4}"
-        return response
-
     # Get duration value in minutes
     def get_duration_minutes(self) -> int:
         return self.duration.total_seconds() // 60
@@ -572,8 +539,8 @@ class Event:
             output += f'\n\nWaiting for a response from:\n{mentions}'
             cur_date = datetime.now().astimezone().date()
             latest_date = self.get_latest_date()
-            if latest_date > cur_date:
-                output = f'\n**Input availability with start time on latest availability date: {latest_date.month}/{latest_date.day}**'
+            if cur_date < latest_date:
+                output += f'\n**Input availability with start time on latest availability date: {latest_date.strftime("%m/%d")}**'
         else:
             output += '\n\nEveryone has responded.'
         return output
@@ -600,6 +567,46 @@ class Event:
     # Returns true if the event has an image
     def has_image_saved(self) -> bool:
         return os.path.exists(self.image_path)
+
+    # Set event_buttons_msg_content parts and get response message
+    def get_event_buttons_message_string(self, end_time: datetime = None) -> str:
+        if end_time is None:
+            # Get time until start
+            duration = f"{get_time_str_from_minutes(self.get_duration_minutes())}"
+            time_until_start: timedelta = self.start_times[0] - datetime.now().astimezone()
+            self.mins_until_start = int(time_until_start.total_seconds() // 60)
+        else:
+            # Replace duration with actual duration
+            real_duration: timedelta = end_time - self.start_times[0]
+            duration = f"{get_time_str_from_minutes(real_duration.total_seconds() // 60)}"
+        unsubbed = self.get_names_string(unsubscribed_only=True)
+        if unsubbed != "":
+            unsubbed = f"\n**Unsubscribed:** {unsubbed}"
+
+        # List subscribed people and list unsubscribed people
+        self.event_buttons_msg_content_pt1  = f"**Event name:** {self.name}"
+        self.event_buttons_msg_content_pt1 += f"\n**Scheduled:** {self.get_start_time_string(0)}"
+        self.event_buttons_msg_content_pt1 += f"\n**Duration:** {duration}"
+        self.event_buttons_msg_content_pt1 += f"\n**Multi-event:** {self.multi_event}"
+        # Event has not started
+        if end_time is None and not self.started:
+            if self.mins_until_start > 0:
+                self.event_buttons_msg_content_pt2 = f"\n**Starts in:** {get_time_str_from_minutes(self.mins_until_start + 1)}"
+            elif self.mins_until_start == 0:
+                self.event_buttons_msg_content_pt2 = "\n**Starting now**"
+            else:
+                self.event_buttons_msg_content_pt2 = f"\n**Overdue by:** {get_time_str_from_minutes(self.mins_until_start)}"
+        # Event is in progress
+        elif end_time is None and self.started:
+            self.event_buttons_msg_content_pt2 = f"\n**Started:** {self.get_start_time_string(0)}"
+        # Event has ended
+        else:
+            self.event_buttons_msg_content_pt2 = f'\n**Ended:** {end_time.strftime("%a, %m/%d at %H:%M")} ET'
+        self.event_buttons_msg_content_pt3 = f"\n{self.get_names_string(subscribed_only=True, mention=True)}"
+        self.event_buttons_msg_content_pt4 = f"\n{unsubbed}"
+        response = f"{self.event_buttons_msg_content_pt1} {self.event_buttons_msg_content_pt2} {self.event_buttons_msg_content_pt3} {self.event_buttons_msg_content_pt4}"
+        save()
+        return response
 
     # Update the appropriate message for whatever the state of the event is
     async def update_messages(self) -> None:
@@ -673,32 +680,6 @@ class Event:
                                                                           view=self.event_buttons)
         # Edit existing message
         else:
-            try:
-                if datetime.now().astimezone() < self.start_times[0]:
-                    time_until_start: timedelta = self.start_times[0] - datetime.now().astimezone()
-                    self.mins_until_start = int(time_until_start.total_seconds() // 60) + 1
-                elif datetime.now().astimezone().replace(second=0, microsecond=0) == self.start_times[0]:
-                    self.mins_until_start = 0
-                else:
-                    time_until_start: timedelta = datetime.now().astimezone() - self.start_times[0]
-                    self.mins_until_start = int(time_until_start.total_seconds() // 60) + 1
-                # Event start time is in the past
-                if self.start_times[0] < datetime.now().astimezone().replace(second=0, microsecond=0):
-                    self.event_buttons_msg_content_pt2 = '\n**Overdue by:**'
-                    hrs_mins_overdue_start_string = get_time_str_from_minutes(self.mins_until_start - 1)
-                    response = f'{self.event_buttons_msg_content_pt1} {self.event_buttons_msg_content_pt2} {hrs_mins_overdue_start_string} {self.event_buttons_msg_content_pt3} {self.event_buttons_msg_content_pt4}'
-                # It is event start time
-                elif self.start_times[0] == datetime.now().astimezone().replace(second=0, microsecond=0):
-                    self.event_buttons_msg_content_pt2 = '\n**Starting now**'
-                    response = f'{self.event_buttons_msg_content_pt1} {self.event_buttons_msg_content_pt2} {self.event_buttons_msg_content_pt3} {self.event_buttons_msg_content_pt4}'
-                # Event start time is in the future
-                else:
-                    self.event_buttons_msg_content_pt2 = '\n**Starts in:**'
-                    hrs_mins_until_start_string = get_time_str_from_minutes(self.mins_until_start)
-                    response = f'{self.event_buttons_msg_content_pt1} {self.event_buttons_msg_content_pt2} {hrs_mins_until_start_string} {self.event_buttons_msg_content_pt3} {self.event_buttons_msg_content_pt4}'
-                await self.event_buttons_message.edit(content=response, view=self.event_buttons)
-            except Exception as e:
-                logger.error(f'[{self}] Error counting down: {e}')
             if self.has_image_saved():
                 await self.event_buttons_message.edit(content=message,
                                                       view=self.event_buttons,
@@ -752,7 +733,7 @@ class Event:
             logger.error(f'Error in event cancel while prepping next scheduled event: {e}')
         if not anotherEvent:
             self.remove()
-        persist.write(client.get_events_dict())
+        save()
 
     # Remove event from event list
     def remove(self) -> None:
@@ -1137,7 +1118,7 @@ class AvailabilityButtons(View):
                 await interaction.response.send_modal(AvailabilityModal(event=self.event, title=am_title))
             except Exception as e:
                 logger.exception(f'Error sending availability modal: {e}')
-            persist.write(client.get_events_dict())
+            save()
         button.callback = respond_button_callback
         self.add_item(button)
         return button
@@ -1186,7 +1167,7 @@ class AvailabilityButtons(View):
                     participant.answered = False
                 await interaction.response.send_message('Your availability has been cleared.', ephemeral=True)
             await self.event.update_availability_message()
-            persist.write(client.get_events_dict())
+            save()
         button.callback = full_button_callback
         self.add_item(button)
         return button
@@ -1218,7 +1199,7 @@ class AvailabilityButtons(View):
             else:
                 await interaction.response.send_message('Select another event to grab your availability from.', view=ExistingAvailabilitiesSelectView(found_availabilities, participant), ephemeral=True)
             await self.event.update_availability_message()
-            persist.write(client.get_events_dict())
+            save()
         button.callback = reuse_button_callback
         self.add_item(button)
         return button
@@ -1246,7 +1227,7 @@ class AvailabilityButtons(View):
                     participant.answered = False
                 await interaction.response.send_message(f'You have been resubscribed to {self.event}.', ephemeral=True)
             await self.event.update_availability_message()
-            persist.write(client.get_events_dict())
+            save()
         button.callback = unsub_button_callback
         self.add_item(button)
         return button
@@ -1262,7 +1243,7 @@ class AvailabilityButtons(View):
             if len(title) >= 45:
                 title = f"{title[:41]}..."
             await interaction.response.send_modal(CancelModal(event=self.event, title=title))
-            persist.write(client.get_events_dict())
+            save()
         button.callback = cancel_button_callback
         self.add_item(button)
         return button
@@ -1350,7 +1331,7 @@ class EventButtons(View):
                     logger.info(f'[{self.event}] Disabled start button for event with same location: {event}')
                 except Exception as e:
                     logger.error(f'[{self.event}] Failed to disable start button for {event}: {e}')
-            persist.write(client.get_events_dict())
+            save()
         self.start_button.callback = start_button_callback
         self.add_item(self.start_button)
 
@@ -1404,7 +1385,7 @@ class EventButtons(View):
                 logger.info(f"[{self.event}] last event ended, removed from memory")
             else:
                 logger.info(f"[{self.event}] next event starts at {self.event.start_times[0]}")
-            persist.write(client.get_events_dict())
+            save()
         self.end_button.callback = end_button_callback
         self.add_item(self.end_button)
 
@@ -1423,8 +1404,8 @@ class EventButtons(View):
                 logger.info(f'[{self.event}] {interaction.user.name} resubscribed')
                 participant.subscribed = True
                 await interaction.response.send_message(f'You have been resubscribed to {self.event}.', ephemeral=True)
-            await self.event.event_buttons_message.edit(content=self.event.get_event_buttons_message_string(), view=self)
-            persist.write(client.get_events_dict())
+            await self.event.update_event_buttons_message()
+            save()
         self.unsubscribe_button.callback = unsubscribe_button_callback
         self.add_item(self.unsubscribe_button)
 
@@ -1464,7 +1445,7 @@ class EventButtons(View):
                 await interaction.followup.send(f"Event rescheduling started for {self.event.name}.", ephemeral=True)
             except Exception as e:
                 logger.error(f"[{self.event}] Error with RESCHEDULE button requesting availability: {e}")
-            persist.write(client.get_events_dict())
+            save()
         self.reschedule_button.callback = reschedule_button_callback
         self.add_item(self.reschedule_button)
 
@@ -1480,7 +1461,7 @@ class EventButtons(View):
             if len(title) >= 45:
                 title = f"{title[:41]}..."
             await interaction.response.send_modal(CancelModal(event=self.event, title=title))
-            persist.write(client.get_events_dict())
+            save()
         self.cancel_button.callback = cancel_button_callback
         self.add_item(self.cancel_button)
 
@@ -1540,7 +1521,7 @@ class ExistingGuildEventsSelect(Select):
             event.save_image_to_file()
             await event.update_event_buttons_message()
             await interaction.followup.send('Success!', ephemeral=True)
-            persist.write(client.get_events_dict())
+            save()
         else:
             await interaction.response.send_message('Error getting guild scheduled event.')
             logger.exception(f'Error getting guild scheduled event selected by {interaction.user.name}')
@@ -1716,7 +1697,7 @@ def sort_events() -> None:
         if not event.created and not event.start_times:
             new_events.append(event)
     client.events = new_events
-    persist.write(client.get_events_dict())
+    save()
 
 
 # Decrement event timeout counters and remove events that hit 0
@@ -1755,7 +1736,7 @@ async def clear_timed_out_events() -> None:
                 logger.error(f"[{event}] Couldn't delete responded_message: {e}")
             event.responded_message = None
     client.events = new_events
-    persist.write(client.get_events_dict())
+    save()
 
 
 @client.event
@@ -1933,7 +1914,7 @@ async def create_command(interaction: Interaction, event_name: str, voice_channe
         await event.update_event_buttons_message()
     except Exception as e:
         logger.error(f'Error making event buttons or sending event buttons message in create command: {e}')
-    persist.write(client.get_events_dict())
+    save()
 
 
 @client.tree.command(name='schedule', description='Schedule an event.')
@@ -2053,7 +2034,7 @@ async def schedule(eventName: str,
         await event.update_availability_message()
     except Exception as e:
         logger.exception(f'Error requesting availability: {e}')
-    persist.write(client.get_events_dict())
+    save()
     content = f"Event scheduling started for {eventName}."
     ephemeral = True
     return content, ephemeral
@@ -2212,6 +2193,6 @@ async def update():
             # If there is an active event in the same location, disable the start button
             if location_has_active_event(event.voice_channel):
                 event.event_buttons.start_button.disabled = True
-    persist.write(client.get_events_dict())
+    save()
 
 client.run(DISCORD_TOKEN)
