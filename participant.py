@@ -5,6 +5,9 @@ from datetime import datetime, timedelta
 from calendar import isleap
 
 
+HOURS_PAST_MIDNIGHT_CUTOFF = 3
+
+
 class TimeBlock():
     def __init__(self, start_time: datetime, end_time: datetime) -> None:
         self.start_time: datetime = start_time
@@ -330,7 +333,7 @@ class Participant:
                     new_availability.append(tb)
             self.availability = new_availability
         if self.availability and latest_date is not None:
-            self.answered = self.availability[-1].end_time.date() >= latest_date
+            self.answered = (self.availability[-1].start_time - timedelta(hours=HOURS_PAST_MIDNIGHT_CUTOFF)).date() >= latest_date
         if not self.availability:
             self.answered = False
             self.full_availability_flag = False

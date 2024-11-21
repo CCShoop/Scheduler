@@ -535,12 +535,12 @@ class Event:
         output += get_time_str_from_minutes(self.get_timeout_minutes())
         output += self.avail_msg_content_pt3
         if not self.has_everyone_answered():
-            mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
-            output += f'\n\nWaiting for a response from:\n{mentions}'
             cur_date = datetime.now().astimezone().date()
             latest_date = self.get_latest_date()
             if cur_date < latest_date:
-                output += f'\n**Input availability with start time on latest availability date: {latest_date.strftime("%m/%d")}**'
+                output += f'\n\n**Input availability with start time on latest availability date: {latest_date.strftime("%m/%d")}**'
+            mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
+            output += f'\nWaiting for a response from:\n{mentions}'
         else:
             output += '\n\nEveryone has responded.'
         return output
