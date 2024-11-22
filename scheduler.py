@@ -610,10 +610,8 @@ class Event:
 
     # Update the appropriate message for whatever the state of the event is
     async def update_messages(self) -> None:
-        if not self.created:
-            await self.update_availability_message()
-        else:
-            await self.update_event_buttons_message()
+        await self.update_availability_message()
+        await self.update_event_buttons_message()
 
     # Update the availability message to show duration changes and timeout countdown
     async def update_availability_message(self, rescheduler: Participant = None) -> None:
