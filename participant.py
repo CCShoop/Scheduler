@@ -373,16 +373,12 @@ class Participant:
 
     @classmethod
     def from_dict(cls, guild: Guild, data: dict):
-        try:
-            removed_times = [RemovedTime.from_dict(removed_time_data) for removed_time_data in data['removed_time']]
-        except Exception:
-            removed_times = []
         return cls(
             member=guild.get_member(data['member_id']),
             answered=data['answered'],
             subscribed=data['subscribed'],
             unavailable=data['unavailable'],
-            removed_times=removed_times,
+            removed_times=[RemovedTime.from_dict(removed_time_data) for removed_time_data in data['removed_time']],
             full_availability_flag=data['full_availability_flag'],
             availability=[TimeBlock.from_dict(timeblock_data) for timeblock_data in data['availability']]
         )
