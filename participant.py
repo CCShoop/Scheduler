@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from calendar import isleap
 
 
-HOURS_PAST_MIDNIGHT_CUTOFF = 3
+HOURS_PAST_MIDNIGHT_CUTOFF = 2
 
 
 class TimeBlock():
@@ -31,6 +31,25 @@ class TimeBlock():
         return f'{self.start_time.strftime("%a, %m/%d %H:%M")} - {self.end_time.strftime("%a, %m/%d %H:%M")}'
 
 
+class RemovedTime:
+    def __init__(self, event_name: str, timeblock: TimeBlock):
+        self.event_name = event_name
+        self.timeblock = timeblock
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls(
+            event_name=data['event_name'],
+            timeblock=TimeBlock.from_dict(data['timeblock'])
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            'event_name': self.event_name,
+            'timeblock': self.timeblock.to_dict()
+        }
+
+
 class Participant:
     def __init__(self,
                  member: Member,
@@ -38,13 +57,15 @@ class Participant:
                  answered: bool = False,
                  subscribed: bool = True,
                  unavailable: bool = False,
+                 removed_times: list = None,
                  full_availability_flag: bool = False
                  ) -> None:
         self.member = member
-        self.availability = availability if availability else []
+        self.availability = availability or []
         self.answered = answered
         self.subscribed = subscribed
         self.unavailable = unavailable
+        self.removed_times = removed_times or []
         self.full_availability_flag = full_availability_flag
         self.msg_lock = Lock()
 
@@ -74,7 +95,7 @@ class Participant:
                 year = cur_time.year
             start_time = cur_time.replace(month=month, day=day, year=year)
             if not end_time:
-                end_time = cur_time.replace(month=month, day=day + 1, year=year, hour=0, minute=0)
+                end_time = cur_time.replace(month=month, day=day + 1, year=year, hour=HOURS_PAST_MIDNIGHT_CUTOFF, minute=0)
             self.availability.append(TimeBlock(start_time, end_time))
             self.answered = True
             self.full_availability_flag = True
@@ -294,9 +315,11 @@ class Participant:
                 else:
                     merged_availability.append(timeblock)
         self.availability = merged_availability
+        if self.availability:
+            self.answered = True
 
-    # Remove the participant's availability for an event with its start time and duration
-    def remove_availability_for_event(self, event_start_times: list, event_duration: timedelta) -> None:
+    # Remove the participant's availability for another event with its start time and duration
+    def remove_availability_for_event(self, event_name: str, event_start_times: list, event_duration: timedelta) -> None:
         if not self.availability:
             return
         new_availability = []
@@ -310,6 +333,7 @@ class Participant:
                     new_availability.append(timeblock)
                 # Timeblock overlaps with event
                 else:
+                    self.removed_times.append(RemovedTime(event_name, TimeBlock(event_start_time, event_end_time)))
                     # Timeblock starts before event
                     if timeblock.start_time < event_start_time:
                         new_availability.append(TimeBlock(timeblock.start_time, event_start_time))
@@ -322,6 +346,15 @@ class Participant:
                 self.clean_availability()
             else:
                 self.full_availability_flag = False
+
+    # Restore the participant's availability for another event
+    def restore_availability_for_event(self, event_name: str) -> None:
+        for removed_time in self.removed_times.copy():
+            if removed_time.name == event_name:
+                self.availability.append(removed_time.timeblock)
+                self.removed_times.remove(removed_time)
+                self.clean_availability()
+                break
 
     # Confirm the participant's availability is still valid
     def confirm_answered(self, duration: timedelta = timedelta(minutes=30), latest_date=None) -> None:
@@ -340,11 +373,16 @@ class Participant:
 
     @classmethod
     def from_dict(cls, guild: Guild, data: dict):
+        try:
+            removed_times = [RemovedTime.from_dict(removed_time_data) for removed_time_data in data['removed_time']]
+        except Exception:
+            removed_times = []
         return cls(
             member=guild.get_member(data['member_id']),
             answered=data['answered'],
             subscribed=data['subscribed'],
             unavailable=data['unavailable'],
+            removed_times=removed_times,
             full_availability_flag=data['full_availability_flag'],
             availability=[TimeBlock.from_dict(timeblock_data) for timeblock_data in data['availability']]
         )
@@ -355,6 +393,7 @@ class Participant:
             'answered': self.answered,
             'subscribed': self.subscribed,
             'unavailable': self.unavailable,
+            'removed_time_data': [removed_time.to_dict() for removed_time in self.removed_times],
             'full_availability_flag': self.full_availability_flag,
             'availability': [timeblock.to_dict() for timeblock in self.availability]
         }
