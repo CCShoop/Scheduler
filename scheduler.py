@@ -48,9 +48,15 @@ INCLUDE_EXCLUDE: Literal = Literal[INCLUDE, EXCLUDE]
 
 # Time in minutes to delay "immediate" start
 START_TIME_DELAY = 10
+
 # Number of updates before an event is cleared
-# updates/min * min/hour * hours/day * days
-EVENT_TIMEOUT: int = (2 * 60 * 24 * 3)
+UPDATES_PER_MINUTE: int = 2
+MINUTES_PER_HOUR: int = 60
+HOURS_PER_DAY: int = 24
+EVENT_TIMEOUT_DAYS: int = 3
+EVENT_TIMEOUT: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * HOURS_PER_DAY * EVENT_TIMEOUT_DAYS
+RESEND_INTERVAL_HOURS: int = 23
+RESEND_INTERVAL: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * RESEND_INTERVAL_HOURS
 
 
 def save() -> None:
@@ -637,10 +643,10 @@ class Event:
     # Update the availability message to show duration changes and timeout countdown
     async def update_availability_message(self, rescheduler: Participant = None) -> None:
         if self.created:
-            self.avail_buttons = None
             if self.availability_message is not None:
                 await self.availability_message.delete()
                 self.availability_message = None
+            self.avail_buttons = None
             return
         self.rescheduler = rescheduler
         if self.avail_buttons is None:
@@ -680,10 +686,10 @@ class Event:
     # Update the event's event buttons message
     async def update_event_buttons_message(self) -> None:
         if not self.created:
-            self.event_buttons = None
             if self.event_buttons_message is not None:
                 await self.event_buttons_message.delete()
                 self.event_buttons_message = None
+            self.event_buttons = None
             return
         if not self.event_buttons:
             self.event_buttons = EventButtons(self)
@@ -1709,8 +1715,8 @@ def sort_events() -> None:
     save()
 
 
-# Decrement event timeout counters and remove events that hit 0
-async def clear_timed_out_events() -> None:
+# Decrement event timeout counters, resend availability messages every RESEND_INTERVAL_HOURS hours, remove events that hit 0
+async def update_event_timeouts() -> None:
     new_events = []
     for event in client.events:
         if event.created:
@@ -1719,6 +1725,13 @@ async def clear_timed_out_events() -> None:
         event.timeout_counter -= 1
         if event.timeout_counter > 0:
             new_events.append(event)
+            if not event.created:
+                if event.timeout_counter % RESEND_INTERVAL == 0:
+                    if event.availability_message is not None:
+                        await event.availability_message.delete()
+                        event.availability_message = None
+                    event.avail_buttons = None
+                    await event.update_availability_message()
         else:
             notification_message = f'{event.get_names_string(subscribed_only=True, mention=True)}\nScheduling for **{event}** has timed out and has been cancelled.\n'
             if event.text_channel:
@@ -2125,7 +2138,7 @@ async def listevents_command(interaction: Interaction):
 @tasks.loop(seconds=30)
 async def update():
     sort_events()
-    await clear_timed_out_events()
+    await update_event_timeouts()
 
     # Participant availability checks
     for event in client.events:
