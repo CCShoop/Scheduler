@@ -437,9 +437,8 @@ class Event:
     def compare_availabilities(self) -> None:
         """Compares availabilites of all subscribed participants to select (a) start time(s) for the event.
         """
-        if self.created or self.ready_to_create or self.changed:
+        if self.created or self.ready_to_create:
             return
-        self.changed = True
         subbed_participants = []
         for participant in self.participants:
             if participant.subscribed:
@@ -545,7 +544,6 @@ class Event:
             logger.info(f'[{self}] Created event starting {start_time.strftime("%A, %m/%d/%Y: %H:%M")} ET')
         self.ready_to_create = False
         self.created = True
-        self.changed = False
 
     async def save_image_to_file(self) -> str:
         """Saves the image from the url to a file to allow for sending in messages.
@@ -563,7 +561,7 @@ class Event:
                             file.write(await response.read())
                         logger.info(f"[{self}] Saved image")
                     else:
-                        logger.error(f"[{self}] Request returned: {response.status_code}")
+                        logger.error(f"[{self}] Request returned: {response.status}")
                         self.image_url = None
         except Exception as e:
             logger.exception(f"[{self}] Failed to download or save image: {e}")
@@ -1464,9 +1462,8 @@ class AvailabilityModal(Modal):
         avail_string = f'{self.timeslot1.value}, {self.timeslot2.value}, {self.timeslot3.value} {self.timezone.value}'
         try:
             logger.info(f'[{self.event}] Received availability from {interaction.user.name}')
-            self.event.changed = True
             participant.set_specific_availability(avail_string, self.date.value)
-            self.event.update_availabilities_to(participant)
+            # self.event.update_availabilities_to(participant)
             response = f'**__Availability received for {self.event}!__**\n' + participant.get_availability_string()
             await interaction.response.send_message(response, ephemeral=True)
             for timeblock in participant.availability:
@@ -1573,7 +1570,7 @@ class AvailabilityButtons(View):
             if not participant.full_availability_flag:
                 logger.info(f'[{self.event}] {participant} selected full availability button')
                 participant.set_full_availability()
-                self.event.update_availabilities_to(participant)
+                # self.event.update_availabilities_to(participant)
                 for timeblock in participant.availability:
                     logger.info(f'[{self.event}] \t{timeblock}')
                 participant.answered = True
@@ -1642,7 +1639,6 @@ class AvailabilityButtons(View):
         button = Button(label=self.unsub_label, style=ButtonStyle.red)
 
         async def unsub_button_callback(interaction: Interaction):
-            self.event.changed = True
             self.event.ready_to_create = False
             participant = self.event.get_participant(interaction.user.name)
             if participant is None:
@@ -1676,7 +1672,6 @@ class AvailabilityButtons(View):
         button = Button(label=self.cancel_label, style=ButtonStyle.red)
 
         async def cancel_button_callback(interaction: Interaction):
-            self.event.changed = True
             self.event.ready_to_create = False
             title = f"Cancel {self.event.name}"
             if len(title) >= 45:
@@ -2699,11 +2694,6 @@ async def update():
                                 break
 
     for event in client.events.copy():
-        # Reset to ensure at least 30 seconds to finish answering
-        if event.changed:
-            event.changed = False
-            continue
-
         # Countdown to start + 5 minute warning
         if event.created and not event.started:
             # Countdown
