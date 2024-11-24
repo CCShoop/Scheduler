@@ -60,11 +60,18 @@ RESEND_INTERVAL: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * RESEND_INTERVAL_H
 
 
 def save() -> None:
+    """Saves the bot's status by writing the client's events to a file."""
     persist.write(client.get_events_dict())
 
 
-# Get time string from minutes
 def get_time_str_from_minutes(minutes: int) -> str:
+    """Makes a formatted string including weeks, days, hours, and minutes.
+
+    Arguments
+    ----------
+    minutes: :class:`int`
+        The number of minutes to format.
+    """
     if minutes < 0:
         minutes *= -1
     output = ''
@@ -87,12 +94,55 @@ def get_time_str_from_minutes(minutes: int) -> str:
 
 # Add a 0 if the digit is < 10
 def double_digit_string(digit_string: str) -> str:
-    if int(digit_string) < 10 and len(digit_string) == 1:
-        digit_string = '0' + digit_string
+    """Adds 0 if a digit string is < 10.
+
+    Arguments
+    ----------
+    digit_string: :class`str`
+        The digit string that may need a 0 inserted at the beginning.
+
+    Returns
+    --------
+    digit_string: :class`str`
+        The digit string with a 0 appended if appropriate.
+
+    Raises
+    -------
+    ValueError
+        An invalid string was passed in.
+    """
+    try:
+        if int(digit_string) < 10 and len(digit_string) == 1:
+            digit_string = '0' + digit_string
+    except ValueError as e:
+        raise e
+    except Exception as e:
+        raise e
     return digit_string
 
 
 class SchedulerClient(Client):
+    """Represents the Scheduler Client.
+
+    This client assists guild members in scheduling an event
+    using slash commands and accepting json packets on udp.
+
+    Attributes
+    -----------
+    tree: :class:`app_commands.CommandTree`
+        The command tree for slash commands.
+    loaded_json: :class:`bool`
+        Whether or not the client has loaded the json file.
+    server_is_running: :class:`bool`
+        Whether or not the client's server is running to accept event scheduling from json packets.
+    server: :class:`Server`
+        The server to accept event scheduling from json packets.
+    server.callback: :class:`callable`
+        The callback for the server to use when it receives an event json packet.
+    events: :class:`list`
+        The list of events that the client is managing.
+    """
+
     def __init__(self, intents) -> None:
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
@@ -103,10 +153,19 @@ class SchedulerClient(Client):
         self.events = []
 
     async def start_server(self):
+        """Starts the client's server for accepting event scheduling json packets.
+        """
         self.server_is_running = True
         asyncio.create_task(self.server.start_server())
 
     async def schedule_from_dict(self, data: dict) -> None:
+        """The callback to process an event scheduling json packet.
+
+        Arguments
+        ----------
+        data: :class:`dict`
+            The json packet with the information necessary for scheduling an event.
+        """
         logger.info(f"[{data['name']}] Schedule from dict triggered")
         guild = self.get_guild(data["guildId"])
         textChannel = guild.get_channel(data["textChannelId"])
@@ -123,8 +182,12 @@ class SchedulerClient(Client):
                        duration=data["duration"],
                        multiEvent=data["multiEvent"])
 
-    # Load all events from the data file
     async def retrieve_events(self) -> None:
+        """Load event data from the data file to resume operations after a restart.
+
+        If an event has an invalid field, it will receive a default value or be discarded
+        dependant on which field. Availability and event control buttons are reconfigured from scratch.
+        """
         if not self.loaded_json:
             self.loaded_json = True
             events_data = persist.read()
@@ -182,11 +245,20 @@ class SchedulerClient(Client):
 
     # Return all events as a dict
     def get_events_dict(self) -> dict:
+        """Shove all events into a dictionary for writing to the data file.
+
+        Returns
+        --------
+        events_data: :class:`dict`
+            A dict containing all of the data for each event.
+        """
         events_data = {}
         events_data['events'] = [event.to_dict() for event in self.events]
         return events_data
 
     async def setup_hook(self):
+        """Syncs the command tree with the guilds the client is in.
+        """
         await self.tree.sync()
 
 
@@ -196,6 +268,69 @@ client = SchedulerClient(intents=Intents.all())
 
 
 class Event:
+    """Represents an event that the bot will manage.
+
+    Events can be scheduled through slash commands or network json packets.
+    They can be also be manually created for a specific time.
+
+    Attributes
+    -----------
+    name: :class:`str`
+        The name for the event. Two events cannot share the same name.
+    voice_channel: :class:`VoiceChannel`
+        The voice channel that the event will occur in.
+    guild: :class:`Guild`
+        The guild that the event will occur in.
+    text_channel: :class:`TextChannel`
+        The text channel that event related messages will be sent in.
+    image_url: :class:`str`
+        The url to an image to use for the event.
+    scheduler: :class:`Participant`
+        The :class:`Participant` who scheduled the event.
+    rescheduler: :class:`Participant`
+        The most recent :class:`Participant` to reschedule the event.
+    participants: :class:`list`
+        The list of :class:`Participant`s invited to the event.
+    duration: :class:`timedelta`
+        The duration of the event.
+    multi_event: :class:`bool`
+        Whether or not this :class:`Event` will have multiple guild events.
+    start_times: :class:`list`
+        The list of guild event start times.
+    availability_message: :class:`Message`
+        The message object that is requesting availability from participants.
+    avail_buttons: :class:`AvailabilityButtons`
+        The availability buttons attached to the availability_message that users can
+        use to submit their availability, unsubscribe, or cancel.
+    event_buttons_message: :class:`Message`
+        The event control buttons message. States the start time, time remaining until
+        the start time, when the event was started, when the event was rescheduled,
+        the event's duration, and when the event was ended.
+    event_buttons: :class:`EventButtons`
+        The event control buttons attached to the event_buttons_message. These allow
+        for starting, ending, unsubscribing from, rescheduling, and cancelling the event.
+    event_buttons_msg_content_pt1: :class:`str`
+        The first segment of the event buttons message. The duration comes after.
+    event_buttons_msg_content_pt2: :class:`str`
+        The second segment of the event buttons message. The timeout counter comes after.
+    event_buttons_msg_content_pt3: :class:`str`
+        The third segment of the event buttons message. The participant mentions come after.
+    event_buttons_msg_content_pt4: :class:`str`
+        The fourth segment of the event buttons message. It contains the unsubscribed users.
+    ready_to_create: :class:`bool`
+        Indicator of whether (a) start time(s) has been set and the event(s) is(/are) ready to create.
+    created: :class:`bool`
+        Indicator of whether or not the event has had (a) guild event(s) created.
+    started: :class:`bool`
+        Indicator of whether or not the first in line guild event has been started.
+    scheduled_events: :class:`list`
+        List of guild scheduled event objects.
+    changed: :class:`bool`
+        Indicator of whether a participant has interacted with the bot since the last update.
+    timeout_counter: :class:`int`
+        The event's time to live. Also used to resend the availability message for visibility.
+    """
+
     def __init__(self,
                  name: str,
                  voice_channel: VoiceChannel,
@@ -210,7 +345,6 @@ class Event:
                  start_times: list = None,
                  availability_message=None,
                  avail_buttons=None,
-                 responded_message=None,
                  event_buttons_message=None,
                  event_buttons=None,
                  event_buttons_msg_content_pt1: str = '',
@@ -222,7 +356,6 @@ class Event:
                  started: bool = False,
                  scheduled_events: list = None,
                  changed: bool = False,
-                 unavailable: bool = False,
                  timeout_counter: int = EVENT_TIMEOUT
                  ) -> None:
         self.name = name
@@ -230,7 +363,6 @@ class Event:
         self.entity_type = EntityType.voice
         self.text_channel = text_channel
         self.availability_message = availability_message
-        self.responded_message = responded_message
         if voice_channel:
             self.voice_channel = voice_channel
         else:
@@ -261,7 +393,6 @@ class Event:
         self.start_times: list = start_times or []
         self.duration = duration
         self.mins_until_start: int = 0
-        self.unavailable = unavailable
         self.multi_event = multi_event
         self.timeout_counter: int = timeout_counter
         self.avail_msg_content_pt1 = f'**Event name:** {self.name}'
@@ -279,8 +410,21 @@ class Event:
         self.avail_msg_content_pt3 += '\n**Unsubscribe** will allow the event to occur without you; however, you can still respond and participate.'
         self.avail_msg_content_pt3 += '\n**Cancel** will cancel scheduling.'
 
-    # Return all timeblocks that intersect each other
     def intersect_time_blocks(self, timeblocks1: list, timeblocks2: list) -> list:
+        """Gets all timeblocks in the two availabilities that intersect.
+
+        Arguments
+        ----------
+        timeblocks1: :class:`list`
+            The first availability to compare.
+        timeblocks2: :class:`list`
+            The second availability to compare.
+
+        Returns
+        --------
+        intersected_time_blocks: :class:`list`
+            A list of timeblocks representing the overlapping time between the two availabilities.
+        """
         intersected_time_blocks = []
         for block1 in timeblocks1:
             for block2 in timeblocks2:
@@ -290,8 +434,9 @@ class Event:
                     intersected_time_blocks.append(TimeBlock(start_time, end_time))
         return intersected_time_blocks
 
-    # Compare availabilities of all subscribed participants
     def compare_availabilities(self) -> None:
+        """Compares availabilites of all subscribed participants to select (a) start time(s) for the event.
+        """
         if self.created or self.ready_to_create or self.changed:
             return
         self.changed = True
@@ -342,28 +487,50 @@ class Event:
         if not self.ready_to_create:
             logger.info(f'[{self.name}] compare_availabilities: No common availability found between all participants, cancelling event')
 
-    # Return the number of participants who have responded
     def number_of_responded(self) -> int:
+        """Gets the number of participants who are subscribed and have responded to the event.
+
+        Returns
+        --------
+        responded: :class:`int`
+            The number of participants who are subscribed and have responded to the event.
+        """
         responded = 0
         for participant in self.participants:
             if participant.subscribed and participant.answered:
                 responded += 1
         return responded
 
-    # Prep next scheduled event
     async def prep_next_scheduled_event(self) -> bool:
+        """Preps the next guild scheduled event and update the event control buttons message.
+
+        Returns
+        --------
+        :class:`bool`
+            Whether or not the event has more scheduled events.
+        """
         if len(self.scheduled_events) > 1 and len(self.start_times) > 1:
             self.scheduled_events = self.scheduled_events[1:]
             self.start_times = self.start_times[1:]
             self.five_minute_warning_flag = False
+            self.event_buttons.start_button.disabled = True
+            self.event_buttons.end_button.disabled = True
+            self.event_buttons.unsubscribe_button.disabled = True
+            self.event_buttons.reschedule_button.disabled = True
+            self.event_buttons.cancel_button.disabled = True
+            if self.event_buttons_message is not None:
+                self.event_buttons_message.delete()
+                self.event_buttons_message = None
+            self.event_buttons = None
             await self.update_event_buttons_message()
             save()
             return True
         else:
             return False
 
-    # Make the guild scheduled event objects, set an image if there is a url
     async def make_scheduled_events(self) -> None:
+        """Creates a scheduled event for each start time and sets the guild event's image if appropriate.
+        """
         for start_time in self.start_times:
             scheduled_event = await self.guild.create_scheduled_event(name=self.name,
                                                                       description='Bot-generated event',
@@ -380,8 +547,9 @@ class Event:
         self.created = True
         self.changed = False
 
-    # Save the image to a file for sending in messages
     async def save_image_to_file(self) -> str:
+        """Saves the image from the url to a file to allow for sending in messages.
+        """
         if self.image_url == "":
             self.image_url = None
         if self.image_url is None:
@@ -402,12 +570,19 @@ class Event:
             logger.error(f"[{self}] Image link: {self.image_url}")
             self.image_url = None
 
-    # Get image as bytes
     def get_image(self) -> bytes:
+        """Gets the image from the file as bytes for use in messages.
+
+        Returns
+        --------
+        image_bytes: :class:`bytes`
+            The image file loaded as bytes.
+        """
         return open(self.image_path, 'rb')
 
-    # Delete image file
     def delete_image_file(self) -> None:
+        """Deletes the image file if one has been downloaded for the event.
+        """
         if not self.has_image_saved():
             return
         try:
@@ -416,8 +591,14 @@ class Event:
         except Exception as e:
             logger.exception(f"[{self}] Failed to delete image: {e}")
 
-    # Get a string explaining the current event status
     def get_scheduling_status(self) -> str:
+        """Gets the current event status.
+
+        Returns
+        --------
+        status: :class:`str`
+            A string describing the current status of the event.
+        """
         if self.started:
             return "Started event"
         if self.created:
@@ -430,8 +611,20 @@ class Event:
             return "Preparing to create event"
         return "Awaiting availability"
 
-    # Get a string of participant mentions/names
     def get_names_string(self, subscribed_only: bool = False, unsubscribed_only: bool = False, unanswered_only: bool = False, mention: bool = False) -> str:
+        """Gets a string of names meeting the criteria provided through arguments.
+
+        Arguments
+        ----------
+        subscribed_only: :class:`bool`
+            Only include subscribed participants in the string.
+        unsubscribed_only: :class:`bool`
+            Only include unsubscribed participants in the string.
+        unanswered_only: :class:`bool`
+            Only include unanswered participants in the string.
+        mention: :class:`bool`
+            Use mentions instead of nicknames or usernames.
+        """
         names = []
         mentions = ''
 
@@ -473,15 +666,34 @@ class Event:
             return f'\n{mentions}'
         return ", ".join(names)
 
-    # If a user isn't a participant, add them
     def add_user_as_participant(self, user: User) -> None:
+        """Adds the user to the event as a participant if they are not one already.
+
+        Arguments
+        ----------
+        user: :class:`User` or :class:`Member`
+            The user to add to the event.
+        """
         if user.id not in [participant.member.id for participant in self.participants]:
             member = self.guild.get_member(user.id)
             participant = Participant(member=member)
             self.participants.append(participant)
 
-    # Get a participant from the event with a username
     def get_participant(self, username_or_id) -> Participant:
+        """Gets a participant with their nickname, username, or id.
+
+        Arguments
+        ----------
+        username_or_id: :class:`str` or :class:`int`
+            The nickname, username, or id to get the participant object for.
+
+        Returns
+        --------
+        participant: :class:`Participant`
+            If a participant with that nickname, username, or id is found.
+        None:
+            If no participant is found matching the provided data.
+        """
         for participant in self.participants:
             if participant.member.nick and participant.member.nick == username_or_id:
                 return participant
@@ -489,16 +701,41 @@ class Event:
                 return participant
         return None
 
-    # Whether or not this event shares participants with the other event
     def shares_participants(self, event) -> bool:
+        """Indicates whether this event shares participants with the event provided.
+
+        Arguments
+        ----------
+        event: :class:`Event`
+            The event to compare participants with.
+
+        Returns
+        --------
+        True:
+            If a participant with a matching member id is found.
+        False:
+            If no participants with a matching member id are found.
+        """
         for self_participant in self.participants:
             for other_participant in event.participants:
                 if self_participant.member.id == other_participant.member.id:
                     return True
         return False
 
-    # Get a list of shared participants with the other event
     def shared_participants(self, event) -> list:
+        """Gets the list of participants shared with the provided event.
+
+        Arguments
+        ----------
+        event: :class:`Event`
+            The event to compare participants with.
+
+        Returns
+        --------
+        other_participants: :class:`list`
+            The list of shared participants between this event and the other event.
+            Empty if the events do not share participants.
+        """
         other_participants = []
         for self_participant in self.participants:
             for other_participant in event.participants:
@@ -507,8 +744,19 @@ class Event:
                     logger.info(f"Found shared participant {self_participant} in {self.name} and {event}")
         return other_participants
 
-    # Get availability for participant from another event
     def get_other_availability(self, participant: Participant) -> list:
+        """Gets availability of a participant from another event that they are in.
+
+        Arguments
+        ----------
+        participant: :class:`Participant`
+            The participant to get availability for.
+
+        Returns
+        --------
+        event_availabilities: :class:`list`
+            The list of availabilities from other events the participant is in.
+        """
         event_availabilities = []
         for other_event in client.events:
             if other_event != self:
@@ -518,24 +766,55 @@ class Event:
                         event_availabilities.append(event_avail)
         return event_availabilities
 
-    # Get duration value in minutes
     def get_duration_minutes(self) -> int:
+        """Gets the duration of the event in minutes.
+
+        Returns
+        --------
+        duration: :class:`int`
+            The duration of the event in minutes.
+        """
         return self.duration.total_seconds() // 60
 
-    # Get timeout value in minutes
     def get_timeout_minutes(self) -> float:
+        """Gets the event's time remaining until timeout in minutes.
+
+        Returns
+        --------
+        timeout: :class:`float`
+            The event's time remaining until timeout in minutes.
+        """
         return self.timeout_counter / 2
 
-    # Reset timeout counter
     def reset_timeout_counter(self) -> None:
+        """Resets the timeout counter to the default value.
+        """
         self.timeout_counter = EVENT_TIMEOUT
 
-    # Get start time string
     def get_start_time_string(self, index: int = 0) -> str:
+        """Gets the string for the start time at the provided index.
+
+        Arguments
+        ----------
+        index: :class:`int`
+            Optional. Index of the start time to get the string for.
+            Default: 0
+
+        Returns
+        --------
+        start_time: :class:`str`
+            The string for the start time.
+        """
         return f'{self.start_times[index].strftime("%a, %m/%d at %H:%M")} ET'
 
-    # Get availability request string
     def get_availability_request_string(self) -> str:
+        """Gets the content string for the availability message.
+
+        Returns
+        --------
+        output: :class:`str`
+            The content string for the availability message.
+        """
         output = self.avail_msg_content_pt1
         output += get_time_str_from_minutes(self.get_duration_minutes())
         output += self.avail_msg_content_pt2
@@ -552,8 +831,14 @@ class Event:
             output += '\n\nEveryone has responded.'
         return output
 
-    # Get latest start_time date response from participants
     def get_latest_date(self):
+        """Gets the latest date of all start times in all participants' availabilities.
+
+        Returns
+        --------
+        latest_date: :class:`datetime.date`
+            The latest date of all start times in all participants' availabilities.
+        """
         current_time = datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=START_TIME_DELAY)
         latest_date = current_time.date()
         for participant in self.participants:
@@ -561,8 +846,16 @@ class Event:
                 latest_date = max(timeblock.start_time.date(), latest_date)
         return latest_date
 
-    # All participants have responded
     def has_everyone_answered(self) -> bool:
+        """Indicates whether or not all participants have responded.
+
+        Returns
+        --------
+        True
+            If all participants have responded.
+        False
+            If at least one participant has not yet responded.
+        """
         latest_date = self.get_latest_date()
         for participant in self.participants:
             if participant.subscribed:
@@ -571,18 +864,38 @@ class Event:
                     return False
         return True
 
-    # Returns true if the event has an image
     def has_image_saved(self) -> bool:
+        """Indicates whether the event has an image saved.
+
+        Returns
+        --------
+        True
+            If an image is saved.
+        False
+            If an image is not saved.
+        """
         return os.path.exists(self.image_path)
 
-    # Restore availabilities for shared participants with other event
     def restore_availabilities(self, event) -> None:
+        """Restores availabilities that were modified by this event's creation.
+
+        Arguments
+        ----------
+        event: :class:`Event`
+            The event to restore availability for each shared participant in.
+        """
         if event is self:
             return
         [participant.restore_availability_for_event(event.name) for participant in self.shared_participants(event)]
 
-    # Make all participants with full availability have the same end time
     def update_availabilities_to(self, participant: Participant) -> None:
+        """Updates end time of full flag availabilities to the latest time.
+
+        Arguments
+        ----------
+        participant: :class:`Participant`
+            The participant to update all other participants to.
+        """
         if len(participant.availability) == 0:
             return
         for other_participant in self.participants:
@@ -595,8 +908,19 @@ class Event:
                         other_participant.availability[0].end_time = max(other_participant.availability[0].end_time, timeblock.end_time)
                         logger.info(f'[{self}] Updated {other_participant}\'s first timeblock\'s end time to {other_participant.availability[0].end_time.strftime("%a, %m/%d %H:%M")}')
 
-    # Set event_buttons_msg_content parts and get response message
     def get_event_buttons_message_string(self, end_time: datetime = None) -> str:
+        """Gets the content for the event buttons message.
+
+        Arguments
+        ----------
+        end_time: :class:`datetime`
+            The end time of the event to put in the message string.
+
+        Returns
+        --------
+        response: :class:`str`
+            The content for the event buttons message.
+        """
         if end_time is None:
             # Get time until start
             duration = f"{get_time_str_from_minutes(self.get_duration_minutes())}"
@@ -635,13 +959,22 @@ class Event:
         save()
         return response
 
-    # Update the appropriate message for whatever the state of the event is
     async def update_messages(self) -> None:
+        """Update the availability and event buttons messages.
+        """
         await self.update_availability_message()
         await self.update_event_buttons_message()
 
-    # Update the availability message to show duration changes and timeout countdown
     async def update_availability_message(self, rescheduler: Participant = None) -> None:
+        """Update the availability message.
+
+        Arguments
+        ----------
+        rescheduler: :class:`Participant`
+            Optional. The participant who rescheduled the event.
+            Default: None
+        """
+        # Delete the message if the event was created
         if self.created:
             if self.availability_message is not None:
                 await self.availability_message.delete()
@@ -651,6 +984,7 @@ class Event:
         self.rescheduler = rescheduler
         if self.avail_buttons is None:
             self.avail_buttons = AvailabilityButtons(event=self)
+        # Create the embed for the message
         description = self.get_scheduling_status()
         embed = Embed(title='Availabilities', description=description, color=Color.blue())
         if self.image_url is not None and self.image_url != "":
@@ -683,8 +1017,10 @@ class Event:
             except Exception as e:
                 logger.exception(f'[{self}] Failed to edit availability message in update: {e}')
 
-    # Update the event's event buttons message
     async def update_event_buttons_message(self) -> None:
+        """Updates the event buttons message.
+        """
+        # Delete the message if the event was rescheduled
         if not self.created:
             if self.event_buttons_message is not None:
                 await self.event_buttons_message.delete()
@@ -713,8 +1049,16 @@ class Event:
                 await self.event_buttons_message.edit(content=message,
                                                       view=self.event_buttons)
 
-    # Cancel the event
     async def cancel(self, reason: str = "", canceller: str = "") -> None:
+        """Cancels the event.
+
+        Arguments
+        ----------
+        reason: :class:`str`
+            The reason for the cancellation of the event.
+        canceller: :class:`str`
+            The name of the canceller of the event.
+        """
         content = f'**{self.name} has been cancelled'
         if canceller == "":
             content += '.**'
@@ -739,9 +1083,6 @@ class Event:
             if self.availability_message:
                 await self.availability_message.delete()
                 self.availability_message = None
-            if self.responded_message:
-                await self.responded_message.delete()
-                self.responded_message = None
             if self.event_buttons_message:
                 await self.event_buttons_message.delete()
                 self.event_buttons_message = None
@@ -762,14 +1103,28 @@ class Event:
             event.restore_availabilities(self)
         save()
 
-    # Remove event from event list
     def remove(self) -> None:
+        """Deletes the event's image file and removes the event from the client's event list.
+        """
         self.delete_image_file()
         client.events.remove(self)
+        save()
         logger.info(f"[{self}] Forgotten, reduced to atoms")
 
     @classmethod
     async def from_dict(cls, data):
+        """Constructs an :class:`Event` from a data dict.
+
+        Arguments
+        ----------
+        data: :class:`dict`
+            The data to create the :class:`Event` from.
+
+        Returns
+        --------
+        class: :class:`Event`
+            The :class:`Event` object.
+        """
         # Name
         event_name = data["name"]
         if event_name == '':
@@ -839,16 +1194,6 @@ class Event:
             logger.info(f'[{event_name}] no availability_message found')
         except HTTPException as e:
             logger.error(f'[{event_name}] error getting availability_message: {e}')
-
-        # Responded message
-        event_responded_message = None
-        try:
-            event_responded_message = await event_text_channel.fetch_message(data["responded_message_id"])
-            logger.info(f'[{event_name}] found responded_message: {event_responded_message.id}')
-        except NotFound:
-            logger.info(f'[{event_name}] no responded_message found')
-        except HTTPException as e:
-            logger.error(f'[{event_name}] error getting responded_message: {e}')
 
         # Event buttons message
         event_event_buttons = None
@@ -920,10 +1265,6 @@ class Event:
         else:
             logger.info(f'[{event_name}] no duration found')
 
-        # Unavailable
-        event_unavailable = data["unavailable"]
-        logger.info(f'[{event_name}] unavailable: {event_unavailable}')
-
         # Multi-event
         try:
             event_multi_event = data["multi_event"]
@@ -946,7 +1287,6 @@ class Event:
             text_channel=event_text_channel,
             availability_message=event_availability_message,
             avail_buttons=event_avail_buttons,
-            responded_message=event_responded_message,
             voice_channel=event_voice_channel,
             scheduler=event_scheduler,
             rescheduler=event_rescheduler,
@@ -965,20 +1305,22 @@ class Event:
             changed=event_changed,
             start_times=event_start_times,
             duration=event_duration,
-            unavailable=event_unavailable,
             multi_event=event_multi_event,
             timeout_counter=event_timeout_counter
         )
 
     def to_dict(self) -> dict:
+        """Packs the event into a dict for saving.
+
+        Returns
+        --------
+        data: :class:`dict`
+            The event data dict.
+        """
         try:
             availability_message_id = self.availability_message.id
         except Exception:
             availability_message_id = 0
-        try:
-            responded_message_id = self.responded_message.id
-        except Exception:
-            responded_message_id = 0
         try:
             scheduler_id = self.scheduler.member.id
         except Exception:
@@ -1015,7 +1357,6 @@ class Event:
             'guild_id': self.guild.id,
             'text_channel_id': self.text_channel.id,
             'availability_message_id': availability_message_id,
-            'responded_message_id': responded_message_id,
             'voice_channel_id': self.voice_channel.id,
             'scheduler_id': scheduler_id,
             'rescheduler_id': rescheduler_id,
@@ -1033,16 +1374,32 @@ class Event:
             'changed': self.changed,
             'start_times': start_times,
             'duration': self.get_duration_minutes(),
-            'unavailable': self.unavailable,
             'multi_event': self.multi_event,
             'timeout_counter': self.timeout_counter
         }
 
     def __repr__(self) -> str:
+        """Gets the name of the event for string formatting purposes.
+
+        Returns
+        --------
+        name: :class:`str`
+            The name of the event.
+        """
         return f'{self.name}'
 
 
 class CancelModal(Modal):
+    """Represents a modal for cancelling an event.
+
+    Attributes
+    -----------
+    event: :class:`Event`
+        The event that is being cancelled.
+    reason: :class:`TextInput`
+        The reason for the event's cancellation.
+    """
+
     def __init__(self, event: Event, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.event = event
@@ -1063,6 +1420,24 @@ class CancelModal(Modal):
 
 
 class AvailabilityModal(Modal):
+    """Represents a modal for inputting availability for an event.
+
+    Attributes
+    -----------
+    event: :class:`Event`
+        The event that the availability is being collected for.
+    timeslot1: :class`TextInput`
+        The first field for availability time input.
+    timeslot2: :class`TextInput`
+        The second field for availability time input.
+    timeslot3: :class`TextInput`
+        The third field for availability time input.
+    date: :class:`TextInput`
+        The date for the availability.
+    timezone: :class:`TextInput`
+        The timezone that the time input is in.
+    """
+
     def __init__(self, event, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.event = event
@@ -1111,6 +1486,34 @@ class AvailabilityModal(Modal):
 
 
 class AvailabilityButtons(View):
+    """Represents the availability buttons tied to an availability message.
+
+    Attributes
+    -----------
+    event: :class:`Event`
+        The event that the buttons are for.
+    respond_label: :class:`str`
+        The label for the Respond button.
+    full_label: :class:`str`
+        The label for the Full Availability button.
+    reuse_label: :class:`str`
+        The label for the Reuse Availability button.
+    unsub_label: :class:`str`
+        The label for the Unsubscribe button.
+    cancel_label: :class:`str`
+        The label for the Cancel button.
+    respond_button: :class:`callable`
+        The Respond button.
+    full_button: :class:`callable`
+        The Full Availability button.
+    reuse_button: :class:`callable`
+        The Reuse Availability button.
+    unsub_button: :class:`callable`
+        The Unsubscribe button.
+    cancel_button: :class:`callable`
+        The Cancel button.
+    """
+
     def __init__(self, event: Event) -> None:
         super().__init__(timeout=None)
         self.event = event
@@ -1125,8 +1528,14 @@ class AvailabilityButtons(View):
         self.unsub_button = self.add_unsub_button()
         self.cancel_button = self.add_cancel_button()
 
-    # Submit complex availability
     def add_respond_button(self) -> Button:
+        """Sets up and gets the Respond button.
+
+        Returns
+        --------
+        button: :class:`Button`
+            The Respond button.
+        """
         button = Button(label=self.respond_label, style=ButtonStyle.green)
 
         async def respond_button_callback(interaction: Interaction):
@@ -1142,8 +1551,14 @@ class AvailabilityButtons(View):
         self.add_item(button)
         return button
 
-    # Set yourself as available for the rest of the day
     def add_full_button(self) -> Button:
+        """Sets up and gets the Full Availability button.
+
+        Returns
+        --------
+        button: :class:`Button`
+            The Full Availability button.
+        """
         button = Button(label=self.full_label, style=ButtonStyle.green)
 
         async def full_button_callback(interaction: Interaction):
@@ -1178,8 +1593,14 @@ class AvailabilityButtons(View):
         self.add_item(button)
         return button
 
-    # Reuse availability from another event
     def add_reuse_button(self) -> Button:
+        """Sets up and gets the Reuse Availability button.
+
+        Returns
+        --------
+        button: :class:`Button`
+            The Reuse Availability button.
+        """
         button = Button(label=self.reuse_label, style=ButtonStyle.blurple)
 
         async def reuse_button_callback(interaction: Interaction):
@@ -1210,8 +1631,14 @@ class AvailabilityButtons(View):
         self.add_item(button)
         return button
 
-    # Unsubscribe from the event
     def add_unsub_button(self) -> Button:
+        """Sets up and gets the Unsubscribe button.
+
+        Returns
+        --------
+        button: :class:`Button`
+            The Unsubscribe button.
+        """
         button = Button(label=self.unsub_label, style=ButtonStyle.red)
 
         async def unsub_button_callback(interaction: Interaction):
@@ -1238,8 +1665,14 @@ class AvailabilityButtons(View):
         self.add_item(button)
         return button
 
-    # Cancel event scheduling
     def add_cancel_button(self) -> Button:
+        """Sets up and gets the Cancel button.
+
+        Returns
+        --------
+        button: :class:`Button`
+            The Cancel button.
+        """
         button = Button(label=self.cancel_label, style=ButtonStyle.red)
 
         async def cancel_button_callback(interaction: Interaction):
@@ -1254,25 +1687,44 @@ class AvailabilityButtons(View):
         self.add_item(button)
         return button
 
-    # Disable all buttons in the view (usually done when an event is created or cancelled)
-    async def disable_buttons(self):
-        self.respond_button.disabled = True
-        self.full_button.disabled = True
-        self.reuse_button.disabled = True
-        self.unsub_button.disabled = True
-        self.cancel_button.disabled = True
-        await self.event.availability_message.edit(view=self.event.avail_buttons)
-
 
 class EventButtons(View):
+    """Represents the event buttons attached to an event control message.
+
+    Attributes
+    -----------
+    event: :class:`Event`
+        The event that the buttons are for.
+    start_label: :class:`str`
+        The label for the Start button.
+    end_label: :class:`str`
+        The label for the End button.
+    unsubscribe_label: :class:`str`
+        The label for the Unsubscribe button.
+    reschedule_label: :class:`str`
+        The label for the Reschedule button.
+    cancel_label: :class:`str`
+        The label for the Cancel button.
+    start_button: :class:`Button`
+        The Start button.
+    end_button: :class:`Button`
+        The End button.
+    unsubscribe_button: :class:`Button`
+        The Unsubscribe button.
+    reschedule_button: :class:`Button`
+        The Reschedule button.
+    cancel_button: :class:`Button`
+        The Cancel button.
+    """
+
     def __init__(self, event: Event) -> None:
         super().__init__(timeout=None)
+        self.event = event
         self.start_label = "Start Event"
         self.end_label = "End Event"
         self.unsubscribe_label = "Unsubscribe"
         self.reschedule_label = "Reschedule Event"
         self.cancel_label = "Cancel Event"
-        self.event = event
         self.start_button = Button(label=self.start_label, style=ButtonStyle.blurple)
         self.end_button = Button(label=self.end_label, style=ButtonStyle.blurple)
         self.unsubscribe_button = Button(label=self.unsubscribe_label, style=ButtonStyle.red)
@@ -1284,8 +1736,14 @@ class EventButtons(View):
         self.add_reschedule_button()
         self.add_cancel_button()
 
-    # Start the event
     def add_start_button(self) -> None:
+        """Sets up the Start button.
+
+        Returns
+        --------
+        button: :class:`Button`
+            The Start button.
+        """
         async def start_button_callback(interaction: Interaction):
             logger.info(f'[{self.event}] {interaction.user} started by button press')
             try:
@@ -1341,8 +1799,14 @@ class EventButtons(View):
         self.start_button.callback = start_button_callback
         self.add_item(self.start_button)
 
-    # End the event
     def add_end_button(self) -> None:
+        """Sets up the End button.
+
+        Returns
+        --------
+        button: :class:`Button`
+            The End button.
+        """
         self.end_button.disabled = True
 
         async def end_button_callback(interaction: Interaction):
@@ -1395,8 +1859,14 @@ class EventButtons(View):
         self.end_button.callback = end_button_callback
         self.add_item(self.end_button)
 
-    # Unsubscribe from the event
     def add_unsubscribe_button(self) -> None:
+        """Sets up the Unsubscribe button.
+
+        Returns
+        --------
+        button: :class:`Button`
+            The Unsubscribe button.
+        """
         async def unsubscribe_button_callback(interaction: Interaction):
             participant = self.event.get_participant(interaction.user.name)
             if participant is None:
@@ -1415,8 +1885,14 @@ class EventButtons(View):
         self.unsubscribe_button.callback = unsubscribe_button_callback
         self.add_item(self.unsubscribe_button)
 
-    # Reschedule the event
     def add_reschedule_button(self) -> None:
+        """Sets up the Reschedule button.
+
+        Returns
+        --------
+        button: :class:`Button`
+            The Reschedule button.
+        """
         async def reschedule_button_callback(interaction: Interaction):
             member = self.event.guild.get_member(interaction.user.id)
             if member not in [participant.member for participant in self.event.participants]:
@@ -1459,8 +1935,14 @@ class EventButtons(View):
         self.reschedule_button.callback = reschedule_button_callback
         self.add_item(self.reschedule_button)
 
-    # Cancel the event
     def add_cancel_button(self) -> None:
+        """Sets up the Cancel button.
+
+        Returns
+        --------
+        button: :class:`Button`
+            The Cancel button.
+        """
         async def cancel_button_callback(interaction: Interaction):
             member = self.event.guild.get_member(interaction.user.id)
             if member not in [participant.member for participant in self.event.participants]:
@@ -1476,8 +1958,15 @@ class EventButtons(View):
         self.add_item(self.cancel_button)
 
 
-# Dropdown of existing guild scheduled events
 class ExistingGuildEventsSelect(Select):
+    """Represents a dropdown of existing guild scheduled events for a user to attach to.
+
+    Attributes
+    -----------
+    guild: :class:`Guild`
+        The guild to get the events from.
+    """
+
     def __init__(self, guild: Guild):
         self.guild = guild
         options = [
@@ -1539,23 +2028,26 @@ class ExistingGuildEventsSelect(Select):
             logger.exception(f'Error getting guild scheduled event selected by {interaction.user.name}')
 
 
-# View to house the existing guild events dropdown
 class ExistingGuildEventsSelectView(View):
+    """Represents a view to house the guild scheduled events dropdown."""
+
     def __init__(self, guild: Guild):
         super().__init__()
         self.add_item(ExistingGuildEventsSelect(guild))
 
 
-# Class for ease of tying availabilities to events for the Select dropdown
 class EventAvailability:
+    """Represents the pairing of an event with a user's availability."""
+
     def __init__(self, event: Event, avail: list, full_flag: bool):
         self.event = event
         self.avail = avail
         self.full_flag = full_flag
 
 
-# Dropdown to select previous availability options
 class ExistingAvailabilitiesSelect(Select):
+    """Represents a dropdown to allow a user to selection an existing availability from another event."""
+
     def __init__(self, event_avails: list, participant: Participant):
         self.event_avails = event_avails
         self.participant = participant
@@ -1582,19 +2074,20 @@ class ExistingAvailabilitiesSelect(Select):
         await interaction.response.send_message(content=response, ephemeral=True)
 
 
-# View to house the previous availability dropdown
 class ExistingAvailabilitiesSelectView(View):
+    """Represents a view to house the existing availability dropdown."""
+
     def __init__(self, event_avails: list, participant: Participant):
         super().__init__()
         self.add_item(ExistingAvailabilitiesSelect(event_avails, participant))
 
 
-# Wrapper
 def get_participants_from_interaction(event_name: str,
                                       interaction: Interaction,
                                       include_exclude: INCLUDE_EXCLUDE = None,
                                       usernames: str = None,
                                       roles: str = None) -> list:
+    """Wrapper function for getting participants from a channel of an interaction."""
     return get_participants_from_channel(event_name=event_name,
                                          guild=interaction.guild,
                                          channel=interaction.channel,
@@ -1603,14 +2096,38 @@ def get_participants_from_interaction(event_name: str,
                                          usernames=usernames,
                                          roles=roles)
 
-# Put participants into a list
 def get_participants_from_channel(event_name: str,
                                   guild: Guild,
-                                  channel,
+                                  channel: TextChannel,
                                   user: User = None,
-                                  include_exclude: INCLUDE_EXCLUDE = None,
+                                  include_exclude: INCLUDE_EXCLUDE = EXCLUDE,
                                   usernames: str = None,
                                   roles: str = None):
+    """Gets participants for an event from a channel using the included guidelines.
+
+    Arguments
+    ----------
+    event_name: :class:`str`
+        The name of the event for logging purposes.
+    guild: :class:`Guild`
+        The guild that the event is ocurring in.
+    channel: :class:`TextChannel`
+        The text channel that the event is occurring in.
+    user: :class:`User` or :class:`Member`
+        The user that is scheduling the event.
+    include_exclude: :class:`INCLUDE_EXCLUDE`
+        Whether to include or exclude the provided usernames/ids.
+        REQUIRES usernames or roles.
+    usernames: :class:`str` or :class:`int`
+        The comma separated usernames or ids to include/exclude.
+    roles: :class:`str`
+        A comma separated list of roles to include/exclude.
+
+    Returns
+    --------
+    participants: :class:`list`
+        The list of participants for the event.
+    """
     participants = []
     # Add the scheduler/creator as a participant
     if user is not None:
@@ -1679,16 +2196,40 @@ def get_participants_from_channel(event_name: str,
     return participants
 
 
-# Check if an event is active in the given location
 def location_has_active_event(location: VoiceChannel) -> bool:
+    """Indicates if the provided :class:`VoiceChannel` has an active event in it.
+
+    Arguments
+    ----------
+    location: :class:`VoiceChannel`
+        The location to check for an active event in.
+
+    Returns
+    --------
+    True
+        If the voice channel has an active event.
+    False
+        If the voice channel does not have an active event.
+    """
     for event in client.events:
         if event.voice_channel == location and event.started:
             return True
     return False
 
 
-# Return first start time of event for sorting
 def first_start_time(event):
+    """Gets the first start time of the event.
+
+    Arguments
+    ----------
+    event: :class:`Event`
+        The event to get the start time from.
+
+    Returns
+    --------
+    time: :class:`datetime`
+        The first start time of the event.
+    """
     time = None
     try:
         time = event.start_times[0]
@@ -1697,8 +2238,8 @@ def first_start_time(event):
     return time
 
 
-# Sort created events and then append uncreated events
 def sort_events() -> None:
+    """Sorts the created events by first start time and then append the uncreated events."""
     new_events = []
     for event in client.events:
         if event.created and event.start_times:
@@ -1715,8 +2256,11 @@ def sort_events() -> None:
     save()
 
 
-# Decrement event timeout counters, resend availability messages every RESEND_INTERVAL_HOURS hours, remove events that hit 0
 async def update_event_timeouts() -> None:
+    """Decrements the event timeout counters,
+    resends availability messages after RESEND_INTERVAL_HOURS,
+    and removes events that have timed out.
+    """
     new_events = []
     for event in client.events:
         if event.created:
@@ -1749,14 +2293,6 @@ async def update_event_timeouts() -> None:
             except Exception as e:
                 logger.error(f"[{event}] Couldn't delete availability_message: {e}")
             event.availability_message = None
-            try:
-                await event.responded_message.delete()
-                event.responded_message = None
-            except NotFound:
-                logger.warning(f"[{event}] Responded message not found")
-            except Exception as e:
-                logger.error(f"[{event}] Couldn't delete responded_message: {e}")
-            event.responded_message = None
     client.events = new_events
     save()
 
@@ -2166,13 +2702,6 @@ async def update():
         # Reset to ensure at least 30 seconds to finish answering
         if event.changed:
             event.changed = False
-            continue
-
-        # Cancel event if no common availability is found
-        if event.unavailable:
-            reason = f'{event.get_names_string(subscribed_only=True, mention=True)}'
-            reason += f'Scheduling for **{event}** has been cancelled; participants lack common availability.'
-            await event.cancel(reason=reason)
             continue
 
         # Countdown to start + 5 minute warning
