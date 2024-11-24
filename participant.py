@@ -426,7 +426,9 @@ class Participant:
                     new_availability.append(tb)
             self.availability = new_availability
         if self.availability and latest_date is not None:
+            print(f"{self}.answered pre confirm_answered: {self.answered}")
             self.answered = (self.availability[-1].start_time - timedelta(hours=HOURS_PAST_MIDNIGHT_CUTOFF)).date() >= latest_date
+            print(f"{self}.answered post confirm_answered: {self.answered}")
         if not self.availability:
             self.answered = False
             self.full_availability_flag = False

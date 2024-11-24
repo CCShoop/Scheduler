@@ -2724,13 +2724,9 @@ async def update():
             latest_date = event.get_latest_date()
             for participant in event.participants:
                 if participant.availability and participant.subscribed:
-                    logger.debug(f"{participant}.answered pre latest_date: {participant.answered}")
                     participant.answered = participant.availability[-1].start_time.date() >= latest_date
-                    logger.debug(f"{participant}.answered post latest_date: {participant.answered}")
             for participant in event.participants:
-                logger.debug(f"{participant}.answered pre confirm_answered: {participant.answered}")
                 participant.confirm_answered(duration=event.duration, latest_date=latest_date)
-                logger.debug(f"{participant}.answered post confirm_answered: {participant.answered}")
             await event.update_availability_message()
         # Remove this event from each participant's other availabilities
         else:
