@@ -59,7 +59,8 @@ class TimeBlock():
         }
 
     def __repr__(self):
-        return f'{self.start_time.strftime("%a, %m/%d %H:%M")} - {self.end_time.strftime("%a, %m/%d %H:%M")}'
+        # return f'{self.start_time.strftime("%a, %m/%d %H:%M")} - {self.end_time.strftime("%a, %m/%d %H:%M")}'
+        return f'{self.start_time.strftime("%a, %m/%d %H:%M")} - {self.end_time.strftime("%H:%M")}'
 
 
 class RemovedTime:
@@ -423,15 +424,10 @@ class Participant:
             cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
             for tb in self.availability:
                 if cur_time + duration <= tb.end_time:
-                    print(f"{self} keeping {tb}")
                     new_availability.append(tb)
-                else:
-                    print(f"{self} discarding {tb}")
             self.availability = new_availability
         if self.availability and latest_date is not None:
-            print(f"{self}.answered pre confirm_answered: {self.answered}")
-            self.answered = (self.availability[-1].start_time - timedelta(hours=HOURS_PAST_MIDNIGHT_CUTOFF)).date() >= latest_date
-            print(f"{self}.answered post confirm_answered: {self.answered}")
+            self.answered = self.availability[-1].start_time.date() >= latest_date
         if not self.availability:
             self.answered = False
             self.full_availability_flag = False
