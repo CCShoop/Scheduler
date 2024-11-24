@@ -994,8 +994,10 @@ class Event:
                 availString = ''
                 for timeblock in participant.availability:
                     if removed_index < len(participant.removed_times):
-                        if participant.removed_times[removed_index].timeblock.start_time < timeblock.start_time:
-                            availString += f'\n{participant.removed_times[removed_index].event_name[:35]}'
+                        removed_time = participant.removed_times[removed_index]
+                        if removed_time.timeblock.start_time < timeblock.start_time:
+                            availString += f'\n{removed_time.event_name[:20]}'
+                            availString += f' {removed_time.timeblock.start_time.strftime("%H:%M")} - {removed_time.timeblock.end_time.strftime("%H:%M")}'
                             removed_index += 1
                     availString += f'\n{timeblock}'
                 embed.add_field(name=participantName, value=availString, inline=False)
@@ -2099,7 +2101,7 @@ def get_participants_from_channel(event_name: str,
                                   guild: Guild,
                                   channel: TextChannel,
                                   user: User = None,
-                                  include_exclude: INCLUDE_EXCLUDE = EXCLUDE,
+                                  include_exclude: INCLUDE_EXCLUDE = INCLUDE,
                                   usernames: str = None,
                                   roles: str = None):
     """Gets participants for an event from a channel using the included guidelines.
@@ -2115,7 +2117,8 @@ def get_participants_from_channel(event_name: str,
     user: :class:`User` or :class:`Member`
         The user that is scheduling the event.
     include_exclude: :class:`INCLUDE_EXCLUDE`
-        Whether to include or exclude the provided usernames/ids.
+        Whether to include or exclude the provided usernames/ids/roles.
+        Default: INCLUDE
         REQUIRES usernames or roles.
     usernames: :class:`str` or :class:`int`
         The comma separated usernames or ids to include/exclude.
@@ -2520,7 +2523,7 @@ async def schedule_command(interaction: Interaction,
 
 async def schedule(eventName: str,
                    guild: Guild,
-                   textChannel,
+                   textChannel: TextChannel,
                    voiceChannel: VoiceChannel,
                    schedulerId: int = 0,
                    imageUrl: str = None,
@@ -2529,6 +2532,44 @@ async def schedule(eventName: str,
                    roles: str = None,
                    duration: int = 30,
                    multiEvent: bool = False):
+    """Starts the scheduling of an event.
+
+    Arguments
+    ----------
+    eventName: :class:`str`
+        The name of the event.
+    guild: :class:`Guild`
+        The guild that the event is occurring in.
+    textChannel: :class:`TextChannel`
+        The text channel that the event sends messages in.
+    voiceChannel: :class:`VoiceChannel`
+        The voice channel that the event occurs in.
+    schedulerId: :class:`int`
+        Optional. The ID of the member who scheduled the event.
+    imageUrl: :class:`str`
+        Optional. The URL for the image.
+    includeExclude: :class:`INCLUDE_EXCLUDE`
+        Optional. Whether to include or exclude the usernames/ids/roles.
+        Default: INCLUDE
+        REQUIRES usernames or roles.
+    usernames: :class:`str` or :class:`int`
+        Optional. Comma separated list of usernames or ids to include/exclude.
+    roles: :class:`str`
+        Optional. Comma separated list of roles to include/exclude.
+    duration: :class:`int`
+        Optional. The duration of the event in minutes.
+        Default: 30
+    multiEvent: :class:`bool`
+        Optional. Whether or not the event is a multi event.
+        Default: False
+
+    Returns
+    --------
+    content: :class:`str`
+        The content for the interaction response message.
+    ephemeral: :class:`bool`
+        Whether or not the interaction should be ephemeral.
+    """
     logger.info(f"[{eventName}] Scheduling event...")
     if not guild.voice_channels:
         logger.info(f"[{eventName}] Scheduling cancelled due to no voice channel in guild")
@@ -2683,9 +2724,13 @@ async def update():
             latest_date = event.get_latest_date()
             for participant in event.participants:
                 if participant.availability and participant.subscribed:
+                    logger.debug(f"{participant}.answered pre latest_date: {participant.answered}")
                     participant.answered = participant.availability[-1].start_time.date() >= latest_date
+                    logger.debug(f"{participant}.answered post latest_date: {participant.answered}")
             for participant in event.participants:
+                logger.debug(f"{participant}.answered pre confirm_answered: {participant.answered}")
                 participant.confirm_answered(duration=event.duration, latest_date=latest_date)
+                logger.debug(f"{participant}.answered post confirm_answered: {participant.answered}")
             await event.update_availability_message()
         # Remove this event from each participant's other availabilities
         else:

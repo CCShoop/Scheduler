@@ -9,6 +9,18 @@ HOURS_PAST_MIDNIGHT_CUTOFF = 2
 
 
 class TimeBlock():
+    """Represents a block of time.
+
+    Attributes
+    -----------
+    start_time: :class:`datetime`
+        The start time of the timeblock.
+    end_time: :class:`datetime`
+        The end time of the timeblock.
+    duration: :class:`timedelta`
+        The duration of the timeblock.
+    """
+
     def __init__(self, start_time: datetime, end_time: datetime) -> None:
         self.start_time: datetime = start_time
         self.end_time: datetime = end_time
@@ -16,12 +28,31 @@ class TimeBlock():
 
     @classmethod
     def from_dict(cls, data: dict):
+        """Creates a :class:`TimeBlock` from a data dict.
+
+        Arguments
+        ----------
+        data: :class:`dict`
+            The data to create the timeblock from.
+
+        Returns
+        --------
+        cls: :class:`TimeBlock`
+            The created timeblock object.
+        """
         return cls(
             start_time=datetime.fromisoformat(data["start_time"]),
             end_time=datetime.fromisoformat(data["end_time"])
         )
 
     def to_dict(self) -> dict:
+        """Stores the timeblock as a dict.
+
+        Returns
+        --------
+        data: :class:`dict`
+            The timeblock dict.
+        """
         return {
             'start_time': self.start_time.isoformat(),
             'end_time': self.end_time.isoformat()
@@ -32,6 +63,17 @@ class TimeBlock():
 
 
 class RemovedTime:
+    """Represents a combination of event name and timeblock
+    for time removed from a participant's availability for an event.
+
+    Attributes
+    -----------
+    event_name: :class:`str`
+        The name of the event that the timeblock represents.
+    timeblock: :class:`TimeBlock`
+        The timeblock representing the event.
+    """
+
     def __init__(self, event_name: str, timeblock: TimeBlock):
         self.event_name = event_name
         self.timeblock = timeblock
@@ -51,6 +93,24 @@ class RemovedTime:
 
 
 class Participant:
+    """Represents the participant of an event.
+
+    Attributes
+    -----------
+    member: :class:`Member`
+        The participant's Discord member object.
+    availability: :class:`list`
+        The participant's availability, a list of timeblocks.
+    subscribed: :class:`bool`
+        Whether or not the participant is subscribed to the event.
+    unavailable: :class:`bool`
+        Whether or not the participant is unavailable for the event.
+    removed_times: :class:`list`
+        The list of removed times for other events.
+    full_availability_flag: :class:`bool`
+        The full availability flag for the participant.
+    """
+
     def __init__(self,
                  member: Member,
                  availability: list = None,
@@ -378,7 +438,7 @@ class Participant:
             answered=data['answered'],
             subscribed=data['subscribed'],
             unavailable=data['unavailable'],
-            removed_times=[RemovedTime.from_dict(removed_time_data) for removed_time_data in data['removed_time']],
+            removed_times=[RemovedTime.from_dict(removed_time) for removed_time in data['removed_time']],
             full_availability_flag=data['full_availability_flag'],
             availability=[TimeBlock.from_dict(timeblock_data) for timeblock_data in data['availability']]
         )
