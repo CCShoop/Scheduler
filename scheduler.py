@@ -16,7 +16,7 @@ from discord.ui import View, Button, Modal, TextInput, Select
 from discord.ext import tasks
 
 from persistence import Persistence
-from participant import Participant, TimeBlock
+from participant import Participant, TimeBlock, HOURS_PAST_MIDNIGHT_CUTOFF
 from server import Server
 
 # .env
@@ -841,7 +841,7 @@ class Event:
         latest_date = current_time.date()
         for participant in self.participants:
             for timeblock in participant.availability:
-                latest_date = max(timeblock.start_time.date(), latest_date)
+                latest_date = max((timeblock.start_time - timedelta(hours=HOURS_PAST_MIDNIGHT_CUTOFF)).date(), latest_date)
         return latest_date
 
     def has_everyone_answered(self) -> bool:
@@ -1107,7 +1107,6 @@ class Event:
         self.delete_image_file()
         client.events.remove(self)
         save()
-        logger.info(f"[{self}] Forgotten, reduced to atoms")
 
     @classmethod
     async def from_dict(cls, data):
@@ -1570,7 +1569,7 @@ class AvailabilityButtons(View):
             if not participant.full_availability_flag:
                 logger.info(f'[{self.event}] {participant} selected full availability button')
                 participant.set_full_availability()
-                # self.event.update_availabilities_to(participant)
+                self.event.update_availabilities_to(participant)
                 for timeblock in participant.availability:
                     logger.info(f'[{self.event}] \t{timeblock}')
                 participant.answered = True
