@@ -528,8 +528,7 @@ class Event:
             return False
 
     async def make_scheduled_events(self) -> None:
-        """Creates a scheduled event for each start time and sets the guild event's image if appropriate.
-        """
+        """Creates a scheduled event for each start time and sets the guild event's image if appropriate."""
         for start_time in self.start_times:
             scheduled_event = await self.guild.create_scheduled_event(name=self.name,
                                                                       description='Bot-generated event',
@@ -576,7 +575,7 @@ class Event:
         image_bytes: :class:`bytes`
             The image file loaded as bytes.
         """
-        return open(self.image_path, 'rb')
+        return open(self.image_path, 'rb').read()
 
     def delete_image_file(self) -> None:
         """Deletes the image file if one has been downloaded for the event.
@@ -1114,6 +1113,7 @@ class Event:
         self.delete_image_file()
         client.events.remove(self)
         save()
+        logger.info(f'[{self}] Removed from client events list')
 
     @classmethod
     async def from_dict(cls, data):
