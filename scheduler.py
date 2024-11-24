@@ -824,7 +824,7 @@ class Event:
             if cur_date < latest_date:
                 output += f'\n\n**Input availability with start time on latest availability date: {latest_date.strftime("%m/%d")}**'
             mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
-            output += f'\nWaiting for a response from:\n{mentions}'
+            output += f'\n\nWaiting for a response from:{mentions}'
         else:
             output += '\n\nEveryone has responded.'
         return output
@@ -990,8 +990,13 @@ class Event:
         for participant in self.participants:
             participantName = f'{participant}'
             if participant.availability and participant.subscribed:
+                removed_index = 0
                 availString = ''
                 for timeblock in participant.availability:
+                    if removed_index < len(participant.removed_times):
+                        if participant.removed_times[removed_index].timeblock.start_time < timeblock.start_time:
+                            availString += f'\n{participant.removed_times[removed_index].event_name[:35]}'
+                            removed_index += 1
                     availString += f'\n{timeblock}'
                 embed.add_field(name=participantName, value=availString, inline=False)
             elif not participant.subscribed:
