@@ -389,7 +389,7 @@ class Participant:
             'answered': self.answered,
             'subscribed': self.subscribed,
             'unavailable': self.unavailable,
-            'removed_time_data': [removed_time.to_dict() for removed_time in self.removed_times],
+            'removed_time': [removed_time.to_dict() for removed_time in self.removed_times],
             'full_availability_flag': self.full_availability_flag,
             'availability': [timeblock.to_dict() for timeblock in self.availability]
         }
