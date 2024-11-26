@@ -55,8 +55,11 @@ MINUTES_PER_HOUR: int = 60
 HOURS_PER_DAY: int = 24
 EVENT_TIMEOUT_DAYS: int = 3
 EVENT_TIMEOUT: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * HOURS_PER_DAY * EVENT_TIMEOUT_DAYS
+
 RESEND_INTERVAL_HOURS: int = 23
 RESEND_INTERVAL: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * RESEND_INTERVAL_HOURS
+
+OFFSET = EVENT_TIMEOUT % RESEND_INTERVAL
 
 
 def save() -> None:
@@ -2263,7 +2266,7 @@ async def update_event_timeouts() -> None:
         if event.timeout_counter > 0:
             new_events.append(event)
             if not event.created:
-                if event.timeout_counter % RESEND_INTERVAL == 0:
+                if (event.timeout_counter - OFFSET) % RESEND_INTERVAL == 0:
                     if event.availability_message is not None:
                         await event.availability_message.delete()
                         event.availability_message = None
