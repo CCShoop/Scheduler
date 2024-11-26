@@ -132,6 +132,22 @@ class Participant:
 
     # Participant is available at the specified time for the specified duration
     def is_available_at(self, time: datetime, duration: timedelta) -> bool:
+        """Indicates whether or not the participant is available at a certain time with the provided duration.
+
+        Arguments
+        ----------
+        time: :class:`datetime`
+            The time to check for the participant's avilability.
+        duration: :class:`timedelta`
+            The duration for which to check the participant's availability.
+
+        Returns
+        --------
+        True
+            If the participant is available at the given time for the given duration.
+        False
+            If the participant is not available at that time for that duration.
+        """
         for timeblock in self.availability:
             if (timeblock.start_time <= time) and ((time + duration) <= timeblock.end_time):
                 return True
@@ -139,13 +155,43 @@ class Participant:
 
     # Get the participant's availability in string format
     def get_availability_string(self) -> str:
+        """Gets the availability string of the participant.
+
+        Returns
+        --------
+        response: :class:`str`
+            The participant's availability string
+        """
+        removed_index = 0
         response = ''
         for timeblock in self.availability:
-            response += f'{timeblock}\n'
+            if removed_index < len(self.removed_times):
+                removed_time = self.removed_times[removed_index]
+                if removed_time.timeblock.start_time < timeblock.start_time:
+                    response += f'\n{removed_time.event_name[:20]}'
+                    response += f' {removed_time.timeblock.start_time.strftime("%H:%M")} - {removed_time.timeblock.end_time.strftime("%H:%M")}'
+                    removed_index += 1
+            response += f'\n{timeblock}'
         return response
 
-    # Set the participant as available until midnight today
     def set_full_availability(self, month=None, day=None, year=None, end_time=None) -> None:
+        """Sets the aprticipant to have full deliver.
+
+        Arguments
+        ----------
+        month: :class:`int`
+            Optional. Current entered month.
+            Default: Current
+        day: :class:`int`
+            Optional. Current entered day.
+            Default: Current
+        year: :class:`int`
+            Optional. Current entered year.
+            Default: Current
+        end_time: class:`datetime`
+            Optional. Current end time.
+            Default: Current
+        """
         try:
             cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
             if not month:
@@ -164,14 +210,22 @@ class Participant:
         except Exception as e:
             raise e
 
-    # Remove the participant's availability for the specified day, otherwise today
     def set_no_availability(self) -> None:
+        """Sets the participant to have no availability."""
         self.availability.clear()
         self.answered = False
         self.full_availability_flag = False
 
-    # Complex availability input from the Availability Modal
     def set_specific_availability(self, avail_string: str, date_string: str) -> None:
+        """Sets a specific availability for the user with string parsing.
+
+        Arguments
+        ----------
+        avail_string: :class:`str`
+            The combined string from the Discord TextInputs.
+        date_string: :class:`str`
+            The date that the availability is for.
+        """
         # Blank input to view current availability
         if avail_string == '':
             return
@@ -359,8 +413,8 @@ class Participant:
             self.availability.append(TimeBlock(start_time, end_time))
             self.clean_availability()
 
-    # Combine intersecting/touching availability
     def clean_availability(self) -> None:
+        """Cleans the participant's availability by combining overlapping/touching timeblocks."""
         # Sort the availability by start time (and by end time if start times are the same)
         self.availability.sort(key=lambda x: (x.start_time, x.end_time))
 
@@ -379,8 +433,18 @@ class Participant:
         if self.availability:
             self.answered = True
 
-    # Remove the participant's availability for another event with its start time and duration
     def remove_availability_for_event(self, event_name: str, event_start_times: list, event_duration: timedelta) -> None:
+        """Removes availability for another event and stores it separately.
+
+        Arguments
+        ----------
+        event_name: :class:`str`
+            The event of the name that is occupying the availability.
+        event_start_times: :class:`list`
+            The list of event start times.
+        event_duration: :class:`timedelta`
+            The duration of the event.
+        """
         if not self.availability:
             return
         new_availability = []
@@ -408,8 +472,14 @@ class Participant:
             else:
                 self.full_availability_flag = False
 
-    # Restore the participant's availability for another event
     def restore_availability_for_event(self, event_name: str) -> None:
+        """Restores availability for an event for which it was removed.
+
+        Arguments
+        ----------
+        event_name: :class:`str`
+            The name of the event to restore availability from.
+        """
         for removed_time in self.removed_times.copy():
             if removed_time.name == event_name:
                 self.availability.append(removed_time.timeblock)
@@ -417,8 +487,17 @@ class Participant:
                 self.clean_availability()
                 break
 
-    # Confirm the participant's availability is still valid
     def confirm_answered(self, duration: timedelta = timedelta(minutes=30), latest_date=None) -> None:
+        """Confirms that the participant's availability is valid.
+
+        Arguments
+        ----------
+        duration: :class:`timedelta`
+            Optional. Duration of the event in minutes.
+            Default: 30 minutes
+        latest_date: :class:`datetime.date`
+            Optional: Latest date from other participants in the event.
+        """
         if self.availability:
             new_availability = []
             cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)

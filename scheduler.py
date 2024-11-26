@@ -989,16 +989,7 @@ class Event:
         for participant in self.participants:
             participantName = f'{participant}'
             if participant.availability and participant.subscribed:
-                removed_index = 0
-                availString = ''
-                for timeblock in participant.availability:
-                    if removed_index < len(participant.removed_times):
-                        removed_time = participant.removed_times[removed_index]
-                        if removed_time.timeblock.start_time < timeblock.start_time:
-                            availString += f'\n{removed_time.event_name[:20]}'
-                            availString += f' {removed_time.timeblock.start_time.strftime("%H:%M")} - {removed_time.timeblock.end_time.strftime("%H:%M")}'
-                            removed_index += 1
-                    availString += f'\n{timeblock}'
+                availString = participant.get_availability_string()
                 embed.add_field(name=participantName, value=availString, inline=False)
             elif not participant.subscribed:
                 embed.add_field(name=participantName, value="Unsubscribed", inline=False)
