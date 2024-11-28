@@ -164,6 +164,8 @@ class Participant:
         """
         removed_index = 0
         response = ''
+        if self.full_availability_flag:
+            response += "Full Availability"
         for timeblock in self.availability:
             if removed_index < len(self.removed_times):
                 removed_time = self.removed_times[removed_index]

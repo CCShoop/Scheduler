@@ -1464,7 +1464,7 @@ class AvailabilityModal(Modal):
             logger.info(f'[{self.event}] Received availability from {interaction.user.name}')
             participant.set_specific_availability(avail_string, self.date.value)
             # self.event.update_availabilities_to(participant)
-            response = f'**__Availability received for {self.event}!__**\n' + participant.get_availability_string()
+            response = f'**__Availability received for {self.event}:__**' + participant.get_availability_string()
             await interaction.response.send_message(response, ephemeral=True)
             for timeblock in participant.availability:
                 logger.info(f'[{self.event}] \t{timeblock}')
@@ -1574,7 +1574,7 @@ class AvailabilityButtons(View):
                 for timeblock in participant.availability:
                     logger.info(f'[{self.event}] \t{timeblock}')
                 participant.answered = True
-                response = f"**Availability for {self.event}:**\n"
+                response = f"__**Availability for {self.event}:**__"
                 response += participant.get_availability_string()
                 await interaction.response.send_message(response, ephemeral=True)
             else:
@@ -1610,14 +1610,14 @@ class AvailabilityButtons(View):
                 await self.event.update_availability_message()
             found_availabilities = self.event.get_other_availability(participant)
             if not found_availabilities:
-                logger.info(f'[{self.event}] \tNo existing availability found for {interaction.user.name}')
+                logger.info(f'[{self.event}] No existing availability found for {interaction.user.name}')
                 await interaction.response.send_message('No existing availability found.', ephemeral=True)
                 return
-            logger.info(f'[{self.event}] \tFound existing availability for {interaction.user.name}')
+            logger.info(f'[{self.event}] Found existing availability for {interaction.user.name}')
             if len(found_availabilities) == 1:
                 participant.availability = found_availabilities[0].avail.copy()
                 participant.answered = True
-                response = f'**__Availability for {self.event}:__**\n'
+                response = f"__**Availability for {self.event}:**__"
                 response += participant.get_availability_string()
                 await interaction.response.send_message(response, ephemeral=True)
             else:
@@ -2062,7 +2062,7 @@ class ExistingAvailabilitiesSelect(Select):
                 self.participant.full_availability_flag = event_avail.full_flag
                 self.participant.answered = True
                 self.participant.subscribed = True
-                response = f"**__Availability for {event_avail.event.name}:__**\n"
+                response = f"__**Availability for {event_avail.event.name}:**__"
                 response += self.participant.get_availability_string()
                 break
         await event_avail.event.update_availability_message()
