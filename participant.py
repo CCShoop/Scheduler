@@ -504,6 +504,8 @@ class Participant:
             new_availability = []
             cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
             for tb in self.availability:
+                if tb.start_time < cur_time:
+                    tb.start_time = cur_time
                 if cur_time + duration <= tb.end_time:
                     new_availability.append(tb)
             self.availability = new_availability
