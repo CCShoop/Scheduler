@@ -2294,23 +2294,20 @@ async def update_event_timeouts() -> None:
 
 
 async def update_client_presence() -> None:
-    """Updates the client's activity and status on Discord."""
+    """Updates the client's activity on Discord."""
     if client.events:
-        status = Status.online
         if client.events[0].started:
             activity = Activity(type=ActivityType.custom, name=f"Started {client.events[0]}")
         else:
             activity = Activity(type=ActivityType.custom, name=f"Waiting for {client.events[0]} to start")
     else:
         activity = Activity(type=ActivityType.custom, name="Ready to schedule some events")
-        status = Status.away
-    await client.change_presence(activity=activity, status=status)
+    await client.change_presence(activity=activity)
 
 
 @client.event
 async def on_ready():
     logger.info(f'{client.user} has connected to Discord!')
-    await client.change_presence(activity=Activity(type=ActivityType.custom, name="Ready to schedule some events"))
     await client.retrieve_events()
     if not client.server_is_running:
         await client.start_server()
@@ -2840,7 +2837,6 @@ async def update():
 
 @update.before_loop
 async def before_update():
-    await client.wait_until_ready()
     now: datetime = datetime.datetime.now().astimezone()
     if now.second < 30:
         next_half_minute = now.replace(second=0) + timedelta(seconds=30)
