@@ -2307,13 +2307,14 @@ async def update_client_presence() -> None:
 
 @client.event
 async def on_ready():
-    logger.info(f'{client.user} has connected to Discord!')
+    logger.info(f'[{client.user}] connected to Discord!')
     await client.retrieve_events()
     if not client.server_is_running:
         await client.start_server()
     if not update.is_running():
         update.start()
-    logger.info(f'{client.user} is ready!')
+        logger.info(f'[{client.user}] started update')
+    logger.info(f'[{client.user}] ready!')
 
 
 @client.event
