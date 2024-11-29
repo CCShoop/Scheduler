@@ -545,7 +545,12 @@ class Event:
         save()
 
     async def start_if_participants_in_vc(self) -> None:
-        """Starts the event if all of the participants are in the voice channel."""
+        """Starts the event if all of the participants are in the voice channel
+        and there are no active events in that voice channel.
+        """
+        for event in client.events:
+            if event is not self and event.voice_channel is self.voice_channel and event.started:
+                return
         if all(participant.member in self.voice_channel.members for participant in self.participants):
             await self.start(f'Event started by {client.user} because all users were in the voice channel.')
 
