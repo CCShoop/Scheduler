@@ -61,10 +61,6 @@ RESEND_INTERVAL: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * RESEND_INTERVAL_H
 
 OFFSET = EVENT_TIMEOUT % RESEND_INTERVAL
 
-# Presence tracking
-CURRENT_PRESENCE = Activity(type=ActivityType.custom, name="Ready to schedule some events")
-CURRENT_STATUS = Status.online
-
 
 def save() -> None:
     """Saves the bot's status by writing the client's events to a file."""
@@ -2297,11 +2293,24 @@ async def update_event_timeouts() -> None:
     save()
 
 
+async def update_client_presence() -> None:
+    """Updates the client's activity and status on Discord."""
+    if client.events:
+        status = Status.online
+        if client.events[0].started:
+            activity = Activity(type=ActivityType.custom, name=f"Started {client.events[0]}")
+        else:
+            activity = Activity(type=ActivityType.custom, name=f"Waiting for {client.events[0]} to start")
+    else:
+        activity = Activity(type=ActivityType.custom, name="Ready to schedule some events")
+        status = Status.away
+    await client.change_presence(activity=activity, status=status)
+
+
 @client.event
 async def on_ready():
     logger.info(f'{client.user} has connected to Discord!')
-    global CURRENT_PRESENCE
-    await client.change_presence(activity=CURRENT_PRESENCE)
+    await client.change_presence(activity=Activity(type=ActivityType.custom, name="Ready to schedule some events"))
     await client.retrieve_events()
     if not client.server_is_running:
         await client.start_server()
@@ -2715,21 +2724,7 @@ async def listevents_command(interaction: Interaction):
 async def update():
     sort_events()
     await update_event_timeouts()
-
-    # Update presence and status
-    global CURRENT_PRESENCE
-    global CURRENT_STATUS
-    if not client.events:
-        CURRENT_PRESENCE = Activity(type=ActivityType.custom, name="Ready to schedule some events")
-        CURRENT_STATUS = Status.away
-    if "Ended" in CURRENT_PRESENCE:
-        if client.events:
-            CURRENT_STATUS = Status.online
-            if client.events[0].started:
-                CURRENT_PRESENCE = Activity(type=ActivityType.custom, name=f"Started {client.events[0]}")
-            else:
-                CURRENT_PRESENCE = Activity(type=ActivityType.custom, name=f"Waiting for {client.events[0]} to start")
-    await client.change_presence(activity=CURRENT_PRESENCE, status=CURRENT_STATUS)
+    await update_client_presence()
 
     # Participant availability checks
     for event in client.events:
@@ -2847,8 +2842,11 @@ async def update():
 async def before_update():
     await client.wait_until_ready()
     now: datetime = datetime.datetime.now().astimezone()
-    next_minute = now.replace(second=0) + timedelta(minutes=1)
-    seconds_until_interval = (next_minute - now).total_seconds()
+    if now.second < 30:
+        next_half_minute = now.replace(second=0) + timedelta(seconds=30)
+    else:
+        next_half_minute = now.replace(second=30) + timedelta(seconds=30)
+    seconds_until_interval = (next_half_minute - now).total_seconds()
     logger.info(f'Sleeping for {seconds_until_interval} seconds until next minute')
     await asyncio.sleep(seconds_until_interval)
 
