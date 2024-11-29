@@ -2735,11 +2735,7 @@ async def update():
     for event in client.events:
         # If availability expires before the event is created, mark the participant as unanswered
         if not event.created:
-            # Mark participant as unanswered if their last timeblock isn't on the same date as the last entry
             latest_date = event.get_latest_date()
-            for participant in event.participants:
-                if participant.availability and participant.subscribed:
-                    participant.answered = participant.availability[-1].start_time.date() >= latest_date
             for participant in event.participants:
                 participant.confirm_answered(duration=event.duration, latest_date=latest_date)
             await event.update_availability_message()
