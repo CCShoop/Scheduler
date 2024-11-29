@@ -8,9 +8,9 @@ import aiohttp
 from typing import Literal
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
-from discord import (app_commands, Interaction, Intents, Client, Embed, Color,
-                     ButtonStyle, EventStatus, EntityType, TextChannel, File,
-                     VoiceChannel, Message, SelectOption, ScheduledEvent, Member,
+from discord import (app_commands, Interaction, Intents, Client, Embed, Color, Activity,
+                     ButtonStyle, EventStatus, EntityType, TextChannel, File, ActivityType,
+                     VoiceChannel, Message, SelectOption, ScheduledEvent, Member, Status,
                      Guild, PrivacyLevel, User, utils, NotFound, HTTPException)
 from discord.ui import View, Button, Modal, TextInput, Select
 from discord.ext import tasks
@@ -60,6 +60,10 @@ RESEND_INTERVAL_HOURS: int = 23
 RESEND_INTERVAL: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * RESEND_INTERVAL_HOURS
 
 OFFSET = EVENT_TIMEOUT % RESEND_INTERVAL
+
+# Presence tracking
+CURRENT_PRESENCE = Activity(type=ActivityType.custom, name="Ready to schedule some events")
+CURRENT_STATUS = Status.online
 
 
 def save() -> None:
@@ -2296,6 +2300,8 @@ async def update_event_timeouts() -> None:
 @client.event
 async def on_ready():
     logger.info(f'{client.user} has connected to Discord!')
+    global CURRENT_PRESENCE
+    await client.change_presence(activity=CURRENT_PRESENCE)
     await client.retrieve_events()
     if not client.server_is_running:
         await client.start_server()
@@ -2710,6 +2716,21 @@ async def update():
     sort_events()
     await update_event_timeouts()
 
+    # Update presence and status
+    global CURRENT_PRESENCE
+    global CURRENT_STATUS
+    if not client.events:
+        CURRENT_PRESENCE = Activity(type=ActivityType.custom, name="Ready to schedule some events")
+        CURRENT_STATUS = Status.away
+    if "Ended" in CURRENT_PRESENCE:
+        if client.events:
+            CURRENT_STATUS = Status.online
+            if client.events[0].started:
+                CURRENT_PRESENCE = Activity(type=ActivityType.custom, name=f"Started {client.events[0]}")
+            else:
+                CURRENT_PRESENCE = Activity(type=ActivityType.custom, name=f"Waiting for {client.events[0]} to start")
+    await client.change_presence(activity=CURRENT_PRESENCE, status=CURRENT_STATUS)
+
     # Participant availability checks
     for event in client.events:
         # If availability expires before the event is created, mark the participant as unanswered
@@ -2824,5 +2845,15 @@ async def update():
             if location_has_active_event(event.voice_channel):
                 event.event_buttons.start_button.disabled = True
     save()
+
+
+@update.before_loop
+async def before_update():
+    await client.wait_until_ready()
+    now: datetime = datetime.datetime.now().astimezone()
+    next_minute = now.replace(second=0) + timedelta(minutes=1)
+    seconds_until_interval = (next_minute - now).total_seconds()
+    logger.info(f'Sleeping for {seconds_until_interval} seconds until next minute')
+    await asyncio.sleep(seconds_until_interval)
 
 client.run(DISCORD_TOKEN)
