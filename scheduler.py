@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from discord import (app_commands, Interaction, Intents, Client, Embed, Color, Activity,
                      ButtonStyle, EventStatus, EntityType, TextChannel, File, ActivityType,
-                     VoiceChannel, Message, SelectOption, ScheduledEvent, Member, Status,
+                     VoiceChannel, Message, SelectOption, ScheduledEvent, Member,
                      Guild, PrivacyLevel, User, utils, NotFound, HTTPException)
 from discord.ui import View, Button, Modal, TextInput, Select
 from discord.ext import tasks
@@ -2297,24 +2297,25 @@ async def update_client_presence() -> None:
     """Updates the client's activity on Discord."""
     if client.events:
         if client.events[0].started:
-            activity = Activity(type=ActivityType.custom, name=f"Started {client.events[0]}")
+            activity = Activity(type=ActivityType.playing, name=f"{client.events[0]}")
+        elif client.events[0].created:
+            activity = Activity(type=ActivityType.watching, name=f"for the start of {client.events[0]}")
         else:
-            activity = Activity(type=ActivityType.custom, name=f"Waiting for {client.events[0]} to start")
+            activity = Activity(type=ActivityType.listening, name=f"availability for {client.events[0]}")
     else:
-        activity = Activity(type=ActivityType.custom, name="Ready to schedule some events")
+        activity = Activity(type=ActivityType.watching, name="for event scheduling commands")
     await client.change_presence(activity=activity)
 
 
 @client.event
 async def on_ready():
-    logger.info(f'[{client.user}] connected to Discord!')
+    logger.info(f'[{client.user}] Connected to Discord!')
     await client.retrieve_events()
     if not client.server_is_running:
         await client.start_server()
     if not update.is_running():
         update.start()
-        logger.info(f'[{client.user}] started update')
-    logger.info(f'[{client.user}] ready!')
+    logger.info(f'[{client.user}] Ready!')
 
 
 @client.event
@@ -2838,13 +2839,13 @@ async def update():
 
 @update.before_loop
 async def before_update():
-    now: datetime = datetime.datetime.now().astimezone()
+    now = datetime.now().astimezone()
     if now.second < 30:
         next_half_minute = now.replace(second=0) + timedelta(seconds=30)
     else:
         next_half_minute = now.replace(second=30) + timedelta(seconds=30)
     seconds_until_interval = (next_half_minute - now).total_seconds()
-    logger.info(f'Sleeping for {seconds_until_interval} seconds until next minute')
+    logger.info(f'[{client.user}] Sleeping for {seconds_until_interval} seconds before update')
     await asyncio.sleep(seconds_until_interval)
 
 client.run(DISCORD_TOKEN)
