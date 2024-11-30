@@ -409,8 +409,13 @@ class Participant:
                 end_min = int(end_time_string[2:])
                 end_time = datetime.now().astimezone().replace(month=month, day=day, hour=end_hr, minute=end_min, second=0, microsecond=0)
                 end_time += timedelta(hours=timezone_offset)
-                if end_time < start_time:
+                while end_time < start_time:
                     end_time += timedelta(days=1)
+
+            # Currency check
+            while end_time < datetime.now().astimezone():
+                start_time += timedelta(days=1)
+                end_time += timedelta(days=1)
 
             self.availability.append(TimeBlock(start_time, end_time))
             self.clean_availability()

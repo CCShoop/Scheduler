@@ -595,7 +595,7 @@ class Event:
 
     async def end_if_participants_leave_vc(self) -> None:
         """Ends the event if all of the participants have left the voice channel."""
-        if not self.voice_channel.members:
+        if not any(participant.member in self.voice_channel.members for participant in self.participants):
             await self.end(f'Event ended by {client.user} because no users were in the voice channel.')
 
     def number_of_responded(self) -> int:
@@ -655,11 +655,13 @@ class Event:
             logger.info(f'[{self}] Created event starting {start_time.strftime("%A, %m/%d/%Y: %H:%M")} ET')
         self.ready_to_create = False
         self.created = True
+        save()
 
     async def save_image_to_file(self) -> str:
         """Saves the image from the url to a file to allow for sending in messages."""
         if self.image_url == "":
             self.image_url = None
+            save()
         if self.image_url is None:
             return
         try:
@@ -912,7 +914,9 @@ class Event:
         start_time: :class:`str`
             The string for the start time.
         """
-        return f'{self.start_times[index].strftime("%A, %m/%d at %H:%M")} ET'
+        if index >= 0 and len(self.start_times) > index:
+            return f'{self.start_times[index].strftime("%A, %m/%d at %H:%M")} ET'
+        return ''
 
     def get_availability_request_string(self) -> str:
         """Gets the content string for the availability message.
@@ -2325,9 +2329,9 @@ async def update_client_presence() -> None:
     """Updates the client's activity on Discord."""
     if client.events:
         if client.events[0].started:
-            activity = Activity(type=ActivityType.playing, name=f"{client.events[0]}")
+            activity = Activity(type=ActivityType.playing, name=f"{client.events[0]} since {client.events[0].get_start_time_string()}")
         elif client.events[0].created:
-            activity = Activity(type=ActivityType.watching, name=f"for the start of {client.events[0]}")
+            activity = Activity(type=ActivityType.watching, name=f"for the start of {client.events[0]} in {get_time_str_from_minutes(client.events[0].get_duration_minutes())}")
         else:
             activity = Activity(type=ActivityType.listening, name=f"availability for {client.events[0]}")
     else:
