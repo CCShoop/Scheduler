@@ -204,7 +204,7 @@ class Participant:
                 year = cur_time.year
             start_time = cur_time.replace(month=month, day=day, year=year)
             if not end_time:
-                end_time = cur_time.replace(month=month, day=day + 1, year=year, hour=HOURS_PAST_MIDNIGHT_CUTOFF, minute=0)
+                end_time = cur_time.replace(month=month, day=day, year=year, hour=HOURS_PAST_MIDNIGHT_CUTOFF, minute=0) + timedelta(days=1)
             self.availability.append(TimeBlock(start_time, end_time))
             self.answered = True
             self.full_availability_flag = True
