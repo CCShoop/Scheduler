@@ -171,7 +171,7 @@ class SchedulerClient(Client):
             if client.events[self.cur_presence_index].started:
                 activity = Activity(type=ActivityType.playing, name=f"{client.events[self.cur_presence_index]} since {client.events[self.cur_presence_index].get_start_time_string()}")
             elif client.events[self.cur_presence_index].created:
-                activity = Activity(type=ActivityType.watching, name=f"for the start of {client.events[self.cur_presence_index]} at {client.events[self.cur_presence_index].get_start_time_string()}")
+                activity = Activity(type=ActivityType.watching, name=f"for the start of {client.events[self.cur_presence_index]} on {client.events[self.cur_presence_index].get_start_time_string()}")
             else:
                 activity = Activity(type=ActivityType.listening, name=f"availability for {client.events[self.cur_presence_index]}")
         else:
