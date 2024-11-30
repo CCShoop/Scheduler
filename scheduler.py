@@ -1701,7 +1701,7 @@ class AvailabilityButtons(View):
                 for timeblock in participant.availability:
                     logger.info(f'[{self.event}] \t{timeblock}')
                 participant.answered = True
-                response = f"__**Availability for {self.event}:**__"
+                response = f"__**Availability for {self.event}:**__\n"
                 response += participant.get_availability_string()
                 await interaction.response.send_message(response, ephemeral=True)
             else:
@@ -1744,7 +1744,7 @@ class AvailabilityButtons(View):
             if len(found_availabilities) == 1:
                 participant.availability = found_availabilities[0].avail.copy()
                 participant.answered = True
-                response = f"__**Availability for {self.event}:**__"
+                response = f"__**Availability for {self.event}:**__\n"
                 response += participant.get_availability_string()
                 await interaction.response.send_message(response, ephemeral=True)
             else:
@@ -2111,7 +2111,7 @@ class ExistingAvailabilitiesSelect(Select):
                 self.participant.full_availability_flag = event_avail.full_flag
                 self.participant.answered = True
                 self.participant.subscribed = True
-                response = f"__**Availability for {event_avail.event.name}:**__"
+                response = f"__**Availability for {event_avail.event.name}:**__\n"
                 response += self.participant.get_availability_string()
                 break
         await event_avail.event.update_availability_message()
