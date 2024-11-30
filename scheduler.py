@@ -154,12 +154,29 @@ class SchedulerClient(Client):
         self.server = Server()
         self.server.callback = self.schedule_from_dict
         self.events = []
+        self.cur_presence_index = -1
 
     async def start_server(self):
         """Starts the client's server for accepting event scheduling json packets.
         """
         self.server_is_running = True
         asyncio.create_task(self.server.start_server())
+
+    async def update_presence(self) -> None:
+        """Updates the client's activity on Discord."""
+        if client.events:
+            self.cur_presence_index += 1
+            if self.cur_presence_index >= len(client.events):
+                self.cur_presence_index = 0
+            if client.events[self.cur_presence_index].started:
+                activity = Activity(type=ActivityType.playing, name=f"{client.events[self.cur_presence_index]} since {client.events[self.cur_presence_index].get_start_time_string()}")
+            elif client.events[self.cur_presence_index].created:
+                activity = Activity(type=ActivityType.watching, name=f"for the start of {client.events[self.cur_presence_index]} at {client.events[self.cur_presence_index].get_start_time_string()}")
+            else:
+                activity = Activity(type=ActivityType.listening, name=f"availability for {client.events[self.cur_presence_index]}")
+        else:
+            activity = Activity(type=ActivityType.watching, name="for event scheduling commands")
+        await client.change_presence(activity=activity)
 
     async def schedule_from_dict(self, data: dict) -> None:
         """The callback to process an event scheduling json packet.
@@ -2325,20 +2342,6 @@ async def update_event_timeouts() -> None:
     save()
 
 
-async def update_client_presence() -> None:
-    """Updates the client's activity on Discord."""
-    if client.events:
-        if client.events[0].started:
-            activity = Activity(type=ActivityType.playing, name=f"{client.events[0]} since {client.events[0].get_start_time_string()}")
-        elif client.events[0].created:
-            activity = Activity(type=ActivityType.watching, name=f"for the start of {client.events[0]} in {get_time_str_from_minutes(client.events[0].get_duration_minutes())}")
-        else:
-            activity = Activity(type=ActivityType.listening, name=f"availability for {client.events[0]}")
-    else:
-        activity = Activity(type=ActivityType.watching, name="for event scheduling commands")
-    await client.change_presence(activity=activity)
-
-
 @client.event
 async def on_ready():
     logger.info(f'[{client.user}] Connected to Discord!')
@@ -2755,7 +2758,7 @@ async def listevents_command(interaction: Interaction):
 async def update():
     sort_events()
     await update_event_timeouts()
-    await update_client_presence()
+    await client.update_presence()
 
     # Participant availability checks
     for event in client.events:
