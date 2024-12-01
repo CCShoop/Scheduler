@@ -63,12 +63,15 @@ OFFSET = EVENT_TIMEOUT % RESEND_INTERVAL
 
 
 def save() -> None:
-    """Saves the bot's status by writing the client's events to a file."""
+    """
+    Saves the bot's status by writing the client's events to a file.
+    """
     persist.write(client.get_events_dict())
 
 
 def get_time_str_from_minutes(minutes: int) -> str:
-    """Makes a formatted string including weeks, days, hours, and minutes.
+    """
+    Makes a formatted string including weeks, days, hours, and minutes.
 
     Arguments
     ----------
@@ -77,27 +80,28 @@ def get_time_str_from_minutes(minutes: int) -> str:
     """
     if minutes < 0:
         minutes *= -1
-    output = ''
+    output = []
     weeks = int(minutes // 60 // 24 // 7)
     if weeks != 0:
-        output += f'{weeks} weeks ' if weeks != 1 else '1 week '
+        output.append(f"{weeks} weeks" if weeks != 1 else "1 week")
     days = int(minutes // 60 // 24 % 7)
     if days != 0:
-        output += f'{days} days ' if days != 1 else '1 day '
+        output.append(f"{days} days" if days != 1 else "1 day")
     hours = int(minutes // 60 % 24)
     if hours != 0:
-        output += f'{hours} hours ' if hours != 1 else '1 hour '
+        output.append(f"{hours} hours" if hours != 1 else "1 hour")
     mins = int(minutes % 60)
     if mins != 0:
-        output += f'{mins} minutes ' if mins != 1 else '1 minute '
+        output.append(f"{mins} minutes" if mins != 1 else "1 minute")
     if mins == 0 and hours == 0 and days == 0 and weeks == 0:
-        output = '0 minutes'
-    return output
+        output.append("0 minutes")
+    return ", ".join(output)
 
 
 # Add a 0 if the digit is < 10
 def double_digit_string(digit_string: str) -> str:
-    """Adds 0 if a digit string is < 10.
+    """
+    Adds 0 if a digit string is < 10.
 
     Arguments
     ----------
@@ -125,7 +129,8 @@ def double_digit_string(digit_string: str) -> str:
 
 
 class SchedulerClient(Client):
-    """Represents the Scheduler Client.
+    """
+    Represents the Scheduler Client.
 
     This client assists guild members in scheduling an event
     using slash commands and accepting json packets on udp.
@@ -157,13 +162,16 @@ class SchedulerClient(Client):
         self.cur_presence_index = -1
 
     async def start_server(self):
-        """Starts the client's server for accepting event scheduling json packets.
+        """
+        Starts the client's server for accepting event scheduling json packets.
         """
         self.server_is_running = True
         asyncio.create_task(self.server.start_server())
 
     async def update_presence(self) -> None:
-        """Updates the client's activity on Discord."""
+        """
+        Updates the client's activity on Discord.
+        """
         if client.events:
             self.cur_presence_index += 1
             if self.cur_presence_index >= len(client.events):
@@ -179,7 +187,8 @@ class SchedulerClient(Client):
         await client.change_presence(activity=activity)
 
     async def schedule_from_dict(self, data: dict) -> None:
-        """The callback to process an event scheduling json packet.
+        """
+        The callback to process an event scheduling json packet.
 
         Arguments
         ----------
@@ -203,7 +212,8 @@ class SchedulerClient(Client):
                        multiEvent=data["multiEvent"])
 
     async def retrieve_events(self) -> None:
-        """Load event data from the data file to resume operations after a restart.
+        """
+        Load event data from the data file to resume operations after a restart.
 
         If an event has an invalid field, it will receive a default value or be discarded
         dependant on which field. Availability and event control buttons are reconfigured from scratch.
@@ -265,7 +275,8 @@ class SchedulerClient(Client):
 
     # Return all events as a dict
     def get_events_dict(self) -> dict:
-        """Shove all events into a dictionary for writing to the data file.
+        """
+        Shove all events into a dictionary for writing to the data file.
 
         Returns
         --------
@@ -277,7 +288,9 @@ class SchedulerClient(Client):
         return events_data
 
     async def setup_hook(self):
-        """Syncs the command tree with the guilds the client is in."""
+        """
+        Syncs the command tree with the guilds the client is in.
+        """
         await self.tree.sync()
 
 
@@ -287,7 +300,8 @@ client = SchedulerClient(intents=Intents.all())
 
 
 class Event:
-    """Represents an event that the bot will manage.
+    """
+    Represents an event that the bot will manage.
 
     Events can be scheduled through slash commands or network json packets.
     They can be also be manually created for a specific time.
@@ -328,14 +342,6 @@ class Event:
     event_buttons: :class:`EventButtons`
         The event control buttons attached to the event_buttons_message. These allow
         for starting, ending, unsubscribing from, rescheduling, and cancelling the event.
-    event_buttons_msg_content_pt1: :class:`str`
-        The first segment of the event buttons message. The duration comes after.
-    event_buttons_msg_content_pt2: :class:`str`
-        The second segment of the event buttons message. The timeout counter comes after.
-    event_buttons_msg_content_pt3: :class:`str`
-        The third segment of the event buttons message. The participant mentions come after.
-    event_buttons_msg_content_pt4: :class:`str`
-        The fourth segment of the event buttons message. It contains the unsubscribed users.
     ready_to_create: :class:`bool`
         Indicator of whether (a) start time(s) has been set and the event(s) is(/are) ready to create.
     created: :class:`bool`
@@ -366,10 +372,6 @@ class Event:
                  avail_buttons=None,
                  event_buttons_message=None,
                  event_buttons=None,
-                 event_buttons_msg_content_pt1: str = '',
-                 event_buttons_msg_content_pt2: str = '',
-                 event_buttons_msg_content_pt3: str = '',
-                 event_buttons_msg_content_pt4: str = '',
                  ready_to_create: bool = False,
                  created: bool = False,
                  started: bool = False,
@@ -399,10 +401,6 @@ class Event:
         self.avail_buttons: AvailabilityButtons = avail_buttons
         self.event_buttons_message: Message = event_buttons_message
         self.event_buttons: EventButtons = event_buttons
-        self.event_buttons_msg_content_pt1: str = event_buttons_msg_content_pt1
-        self.event_buttons_msg_content_pt2: str = event_buttons_msg_content_pt2
-        self.event_buttons_msg_content_pt3: str = event_buttons_msg_content_pt3
-        self.event_buttons_msg_content_pt4: str = event_buttons_msg_content_pt4
         self.five_minute_warning_flag = False
         self.ready_to_create = ready_to_create
         self.created = created
@@ -430,7 +428,8 @@ class Event:
         self.avail_msg_content_pt3 += '\n**Cancel** will cancel scheduling.'
 
     def intersect_time_blocks(self, timeblocks1: list, timeblocks2: list) -> list:
-        """Gets all timeblocks in the two availabilities that intersect.
+        """
+        Gets all timeblocks in the two availabilities that intersect.
 
         Arguments
         ----------
@@ -454,7 +453,9 @@ class Event:
         return intersected_time_blocks
 
     def compare_availabilities(self) -> None:
-        """Compares availabilites of all subscribed participants to select (a) start time(s) for the event."""
+        """
+        Compares availabilites of all subscribed participants to select (a) start time(s) for the event.
+        """
         if self.created or self.ready_to_create:
             return
         subbed_participants = []
@@ -524,7 +525,6 @@ class Event:
         except Exception as e:
             logger.warning(f'[{self}] Error getting start time: {e}')
             self.start_times.append(datetime.now().astimezone().replace(second=0, microsecond=0))
-        self.event_buttons_msg_content_pt2 = f'\n**Started at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
         self.started = True
         self.event_buttons.start_button.style = ButtonStyle.green
         self.event_buttons.start_button.disabled = True
@@ -562,7 +562,8 @@ class Event:
         save()
 
     async def start_if_participants_in_vc(self) -> None:
-        """Starts the event if all of the participants are in the voice channel
+        """
+        Starts the event if all of the participants are in the voice channel
         and there are no active events in that voice channel.
         """
         for event in client.events:
@@ -572,7 +573,9 @@ class Event:
             await self.start(f'Event started by {client.user} because all users were in the voice channel.')
 
     async def end(self, reason: str = f"Event ended by {client.user}.") -> None:
-        """Ends the event. If there are more scheduled events in this event, shift them forward and prep them."""
+        """
+        Ends the event. If there are more scheduled events in this event, shift them forward and prep them.
+        """
         logger.info(f"[{self}] ending, reason: {reason}")
         # Delete scheduled event
         try:
@@ -581,10 +584,11 @@ class Event:
             logger.error(f"[{self}] Error in event control end button callback while ending scheduled event: {e}")
         # Update event buttons message
         end_time: datetime = datetime.now().astimezone().replace(second=0, microsecond=0)
-        content = self.get_event_buttons_message_string(end_time)
+        content = self.get_event_buttons_message_content(end_time)
+        embed = self.get_event_buttons_message_embed(end_time)
         try:
             self.event_buttons = None
-            await self.event_buttons_message.edit(content=content, view=None)
+            await self.event_buttons_message.edit(content=content, embed=embed, view=None)
         except Exception as e:
             logger.error(f"[{self}] Error in event control end button callback while editing event buttons message: {e}")
         # Remove start_time and scheduled event from lists
@@ -611,12 +615,15 @@ class Event:
         save()
 
     async def end_if_participants_leave_vc(self) -> None:
-        """Ends the event if all of the participants have left the voice channel."""
+        """
+        Ends the event if all of the participants have left the voice channel.
+        """
         if not any(participant.member in self.voice_channel.members for participant in self.participants):
             await self.end(f'Event ended by {client.user} because no users were in the voice channel.')
 
     def number_of_responded(self) -> int:
-        """Gets the number of participants who are subscribed and have responded to the event.
+        """
+        Gets the number of participants who are subscribed and have responded to the event.
 
         Returns
         --------
@@ -630,7 +637,8 @@ class Event:
         return responded
 
     async def prep_next_scheduled_event(self) -> bool:
-        """Preps the next guild scheduled event and update the event control buttons message.
+        """
+        Preps the next guild scheduled event and update the event control buttons message.
 
         Returns
         --------
@@ -657,7 +665,9 @@ class Event:
             return False
 
     async def make_scheduled_events(self) -> None:
-        """Creates a scheduled event for each start time and sets the guild event's image if appropriate."""
+        """
+        Creates a scheduled event for each start time and sets the guild event's image if appropriate.
+        """
         for start_time in self.start_times:
             scheduled_event = await self.guild.create_scheduled_event(name=self.name,
                                                                       description='Bot-generated event',
@@ -675,7 +685,9 @@ class Event:
         save()
 
     async def save_image_to_file(self) -> str:
-        """Saves the image from the url to a file to allow for sending in messages."""
+        """
+        Saves the image from the url to a file to allow for sending in messages.
+        """
         if self.image_url == "":
             self.image_url = None
             save()
@@ -698,7 +710,8 @@ class Event:
             self.image_url = None
 
     def get_image(self) -> bytes:
-        """Gets the image from the file as bytes for use in messages.
+        """
+        Gets the image from the file as bytes for use in messages.
 
         Returns
         --------
@@ -708,7 +721,9 @@ class Event:
         return open(self.image_path, 'rb').read()
 
     def delete_image_file(self) -> None:
-        """Deletes the image file if one has been downloaded for the event."""
+        """
+        Deletes the image file if one has been downloaded for the event.
+        """
         if not self.has_image_saved():
             return
         try:
@@ -718,7 +733,8 @@ class Event:
             logger.exception(f"[{self}] Failed to delete image: {e}")
 
     def get_scheduling_status(self) -> str:
-        """Gets the current event status.
+        """
+        Gets the current event status.
 
         Returns
         --------
@@ -737,8 +753,14 @@ class Event:
             return "Preparing to create event"
         return "Awaiting availability"
 
-    def get_names_string(self, subscribed_only: bool = False, unsubscribed_only: bool = False, unanswered_only: bool = False, mention: bool = False) -> str:
-        """Gets a string of names meeting the criteria provided through arguments.
+    def get_names_string(self,
+                         subscribed_only: bool = False,
+                         unsubscribed_only: bool = False,
+                         unanswered_only: bool = False,
+                         mention: bool = False,
+                         not_in_voice_channel_only: bool = False) -> str:
+        """
+        Gets a string of names meeting the criteria provided through arguments.
 
         Arguments
         ----------
@@ -750,6 +772,8 @@ class Event:
             Only include unanswered participants in the string.
         mention: :class:`bool`
             Use mentions instead of nicknames or usernames.
+        not_in_voice_channel_only: :class:`bool`
+            Only include users who are not in the event's voice channel.
         """
         names = []
         mentions = ''
@@ -757,6 +781,7 @@ class Event:
         if subscribed_only and unsubscribed_only:
             subscribed_only = False
             unsubscribed_only = False
+        voice_channel_members = self.voice_channel.members
 
         for participant in self.participants:
             if mention:
@@ -766,34 +791,41 @@ class Event:
 
             # No conditions are true
             if (not subscribed_only) and (not unsubscribed_only) and (not unanswered_only):
-                mentions += name_string
-                names.append(name_string)
+                if not not_in_voice_channel_only or (not_in_voice_channel_only and participant.member not in voice_channel_members):
+                    mentions += name_string
+                    names.append(name_string)
 
             # One condition is true
             if (subscribed_only and participant.subscribed) and (not unsubscribed_only) and (not unanswered_only):
-                mentions += name_string
-                names.append(name_string)
+                if not not_in_voice_channel_only or (not_in_voice_channel_only and participant.member not in voice_channel_members):
+                    mentions += name_string
+                    names.append(name_string)
             if (not subscribed_only) and (unsubscribed_only and not participant.subscribed) and (not unanswered_only):
-                mentions += name_string
-                names.append(name_string)
+                if not not_in_voice_channel_only or (not_in_voice_channel_only and participant.member not in voice_channel_members):
+                    mentions += name_string
+                    names.append(name_string)
             if (not subscribed_only) and (not unsubscribed_only) and (unanswered_only and not participant.answered):
-                mentions += name_string
-                names.append(name_string)
+                if not not_in_voice_channel_only or (not_in_voice_channel_only and participant.member not in voice_channel_members):
+                    mentions += name_string
+                    names.append(name_string)
 
             # Two conditions are true
             if (subscribed_only and participant.subscribed) and (unanswered_only and not participant.answered):
-                mentions += name_string
-                names.append(name_string)
+                if not not_in_voice_channel_only or (not_in_voice_channel_only and participant.member not in voice_channel_members):
+                    mentions += name_string
+                    names.append(name_string)
             if (unsubscribed_only and not participant.subscribed) and (unanswered_only and not participant.answered):
-                mentions += name_string
-                names.append(name_string)
+                if not not_in_voice_channel_only or (not_in_voice_channel_only and participant.member not in voice_channel_members):
+                    mentions += name_string
+                    names.append(name_string)
 
         if mention:
             return f'\n{mentions}'
         return ", ".join(names)
 
     def add_user_as_participant(self, user: User) -> None:
-        """Adds the user to the event as a participant if they are not one already.
+        """
+        Adds the user to the event as a participant if they are not one already.
 
         Arguments
         ----------
@@ -806,7 +838,8 @@ class Event:
             self.participants.append(participant)
 
     def get_participant(self, username_or_id) -> Participant:
-        """Gets a participant with their nickname, username, or id.
+        """
+        Gets a participant with their nickname, username, or id.
 
         Arguments
         ----------
@@ -828,7 +861,8 @@ class Event:
         return None
 
     def shares_participants(self, event) -> bool:
-        """Indicates whether this event shares participants with the event provided.
+        """
+        Indicates whether this event shares participants with the event provided.
 
         Arguments
         ----------
@@ -849,7 +883,8 @@ class Event:
         return False
 
     def shared_participants(self, event) -> list:
-        """Gets the list of participants shared with the provided event.
+        """
+        Gets the list of participants shared with the provided event.
 
         Arguments
         ----------
@@ -871,7 +906,8 @@ class Event:
         return other_participants
 
     def get_other_availability(self, participant: Participant) -> list:
-        """Gets availability of a participant from another event that they are in.
+        """
+        Gets availability of a participant from another event that they are in.
 
         Arguments
         ----------
@@ -893,7 +929,8 @@ class Event:
         return event_availabilities
 
     def get_duration_minutes(self) -> int:
-        """Gets the duration of the event in minutes.
+        """
+        Gets the duration of the event in minutes.
 
         Returns
         --------
@@ -903,7 +940,8 @@ class Event:
         return self.duration.total_seconds() // 60
 
     def get_timeout_minutes(self) -> float:
-        """Gets the event's time remaining until timeout in minutes.
+        """
+        Gets the event's time remaining until timeout in minutes.
 
         Returns
         --------
@@ -913,12 +951,14 @@ class Event:
         return self.timeout_counter / 2
 
     def reset_timeout_counter(self) -> None:
-        """Resets the timeout counter to the default value.
+        """
+        Resets the timeout counter to the default value.
         """
         self.timeout_counter = EVENT_TIMEOUT
 
     def get_start_time_string(self, index: int = 0) -> str:
-        """Gets the string for the start time at the provided index.
+        """
+        Gets the string for the start time at the provided index.
 
         Arguments
         ----------
@@ -935,8 +975,9 @@ class Event:
             return f'{self.start_times[index].strftime("%A, %m/%d at %H:%M")} ET'
         return ''
 
-    def get_availability_request_string(self) -> str:
-        """Gets the content string for the availability message.
+    def get_availability_request_content(self) -> str:
+        """
+        Gets the content string for the availability message.
 
         Returns
         --------
@@ -959,8 +1000,40 @@ class Event:
             output += '\n\nEveryone has responded.'
         return output
 
+    def get_availability_request_embed(self) -> Embed:
+        """
+        Gets the embed for the availability message.
+
+        Returns
+        --------
+        embed: :class:`Embed`
+            The embed for the availability message.
+        """
+        description = self.get_scheduling_status()
+        embed = Embed(title='Availabilities', description=description, color=Color.blue())
+        if self.image_url is not None and self.image_url != "":
+            embed.set_thumbnail(url=self.image_url)
+        for participant in self.participants:
+            participantName = f'{participant}'
+            if participant.availability and participant.subscribed:
+                availString = participant.get_availability_string()
+                embed.add_field(name=participantName, value=availString, inline=False)
+            elif not participant.subscribed:
+                embed.add_field(name=participantName, value="Unsubscribed", inline=False)
+        if self.scheduler:
+            if self.scheduler.member.avatar:
+                embed.set_footer(text=f"Scheduled by {self.scheduler}", icon_url=self.scheduler.member.avatar.url)
+            else:
+                embed.set_footer(text=f"Scheduled by {self.scheduler}")
+        if self.rescheduler:
+            if self.rescheduler.member.avatar:
+                embed.set_footer(text=f"Rescheduled by {self.rescheduler}", icon_url=self.rescheduler.member.avatar.url)
+            else:
+                embed.set_footer(text=f"Rescheduled by {self.rescheduler}")
+
     def get_latest_date(self):
-        """Gets the latest date of all start times in all participants' availabilities.
+        """
+        Gets the latest date of all start times in all participants' availabilities.
 
         Returns
         --------
@@ -975,7 +1048,8 @@ class Event:
         return latest_date
 
     def has_everyone_answered(self) -> bool:
-        """Indicates whether or not all participants have responded.
+        """
+        Indicates whether or not all participants have responded.
 
         Returns
         --------
@@ -993,7 +1067,8 @@ class Event:
         return True
 
     def has_image_saved(self) -> bool:
-        """Indicates whether the event has an image saved.
+        """
+        Indicates whether the event has an image saved.
 
         Returns
         --------
@@ -1005,7 +1080,8 @@ class Event:
         return os.path.exists(self.image_path)
 
     def restore_availabilities(self, event) -> None:
-        """Restores availabilities that were modified by this event's creation.
+        """
+        Restores availabilities that were modified by this event's creation.
 
         Arguments
         ----------
@@ -1017,7 +1093,8 @@ class Event:
         [participant.restore_availability_for_event(event.name) for participant in self.shared_participants(event)]
 
     def update_availabilities_to(self, participant: Participant) -> None:
-        """Updates end time of full flag availabilities to the latest time.
+        """
+        Updates end time of full flag availabilities to the latest time.
 
         Arguments
         ----------
@@ -1036,18 +1113,30 @@ class Event:
                         other_participant.availability[0].end_time = max(other_participant.availability[0].end_time, timeblock.end_time)
                         logger.info(f'[{self}] Updated {other_participant}\'s first timeblock\'s end time to {other_participant.availability[0].end_time.strftime("%a, %m/%d %H:%M")}')
 
-    def get_event_buttons_message_string(self, end_time: datetime = None) -> str:
-        """Gets the content for the event buttons message.
+    def get_event_buttons_message_content(self, end_time: datetime = None) -> str:
+        """
+        Gets the content for the event buttons message.
+
+        Returns
+        --------
+        content: :class:`str`
+            The content for the event buttons message.
+        """
+        return self.get_names_string(subscribed_only=True, mention=True, not_in_voice_channel_only=True)
+
+    def get_event_buttons_message_embed(self, end_time: datetime = None) -> list[Embed]:
+        """
+        Gets the embed for the event buttons message.
 
         Arguments
         ----------
         end_time: :class:`datetime`
-            The end time of the event to put in the message string.
+            The end time of the event to put in the embed.
 
         Returns
         --------
-        response: :class:`str`
-            The content for the event buttons message.
+        embed: :class:`Embed`
+            The embed for the event buttons message.
         """
         if end_time is None:
             # Get time until start
@@ -1058,42 +1147,70 @@ class Event:
             # Replace duration with actual duration
             real_duration: timedelta = end_time - self.start_times[0]
             duration = f"{get_time_str_from_minutes(real_duration.total_seconds() // 60)}"
-        unsubbed = self.get_names_string(unsubscribed_only=True)
-        if unsubbed != "":
-            unsubbed = f"\n**Unsubscribed:** {unsubbed}"
-
-        # List subscribed people and list unsubscribed people
-        self.event_buttons_msg_content_pt1  = f"**Event name:** {self.name}"
-        self.event_buttons_msg_content_pt1 += f"\n**Scheduled:** {self.get_start_time_string(0)}"
-        self.event_buttons_msg_content_pt1 += f"\n**Duration:** {duration}"
-        self.event_buttons_msg_content_pt1 += f"\n**Multi-event:** {self.multi_event}"
-        # Event has not started
+        embed = Embed(title=f"{self}",
+                      description=f"Event at {self.get_start_time_string()}",
+                      color=Color.red(),
+                      timestamp=self.start_times[0])
+        if self.image_url:
+            embed.set_thumbnail(self.image_url)
+        embed.add_field(name="Duration",
+                        value=duration,
+                        inline=False)
+        embed.add_field(name="Multi Event",
+                        value=f"{self.multi_event}",
+                        inline=False)
         if end_time is None and not self.started:
             if self.mins_until_start > 0:
-                self.event_buttons_msg_content_pt2 = f"\n**Starts in:** {get_time_str_from_minutes(self.mins_until_start + 1)}"
+                embed.add_field(name="Starts in",
+                                value=f"{get_time_str_from_minutes(self.mins_until_start + 1)}",
+                                inline=False)
             elif self.mins_until_start == 0:
-                self.event_buttons_msg_content_pt2 = "\n**Starting now**"
+                embed.add_field(name="Starting now", value="", inline=False)
             else:
-                self.event_buttons_msg_content_pt2 = f"\n**Overdue by:** {get_time_str_from_minutes(self.mins_until_start)}"
+                embed.add_field(name="Overdue by",
+                                value=f"{get_time_str_from_minutes(self.mins_until_start)}",
+                                inline=False)
         # Event is in progress
         elif end_time is None and self.started:
-            self.event_buttons_msg_content_pt2 = f"\n**Started:** {self.get_start_time_string(0)}"
+            embed.timestamp = self.start_times[0]
+            embed.add_field(name="Started",
+                            value=f"{self.get_start_time_string()}",
+                            inline=False)
         # Event has ended
         else:
-            self.event_buttons_msg_content_pt2 = f'\n**Ended:** {end_time.strftime("%A, %m/%d at %H:%M")} ET'
-        self.event_buttons_msg_content_pt3 = f"\n{self.get_names_string(subscribed_only=True, mention=True)}"
-        self.event_buttons_msg_content_pt4 = f"\n{unsubbed}"
-        save()
-        response = f"{self.event_buttons_msg_content_pt1} {self.event_buttons_msg_content_pt2} {self.event_buttons_msg_content_pt3} {self.event_buttons_msg_content_pt4}"
-        return response
+            embed.timestamp = end_time
+            embed.add_field(name="Ended",
+                            value=f'{end_time.strftime("%A, %m/%d at %H:%M")} ET',
+                            inline=False)
+        unsubscribed = self.get_names_string(unsubscribed_only=True).replace(', ', '\n')
+        if unsubscribed != "":
+            embed.add_field(name="Unsubscribed",
+                            value=unsubscribed,
+                            inline=False)
+        if self.scheduler:
+            if self.scheduler.member.avatar:
+                embed.set_footer(text=f"Scheduled by {self.scheduler}",
+                                 icon_url=self.scheduler.member.avatar.url)
+            else:
+                embed.set_footer(text=f"Scheduled by {self.scheduler}")
+        if self.rescheduler:
+            if self.rescheduler.member.avatar:
+                embed.set_footer(text=f"Rescheduled by {self.rescheduler}",
+                                 icon_url=self.rescheduler.member.avatar.url)
+            else:
+                embed.set_footer(text=f"Rescheduled by {self.rescheduler}")
+        return embed
 
     async def update_messages(self) -> None:
-        """Update the availability and event buttons messages."""
+        """
+        Update the availability and event buttons messages.
+        """
         await self.update_availability_message()
         await self.update_event_buttons_message()
 
     async def update_availability_message(self, rescheduler: Participant = None) -> None:
-        """Update the availability message.
+        """
+        Update the availability message.
 
         Arguments
         ----------
@@ -1112,39 +1229,30 @@ class Event:
         if self.avail_buttons is None:
             self.avail_buttons = AvailabilityButtons(event=self)
         save()
-        # Create the embed for the message
-        description = self.get_scheduling_status()
-        embed = Embed(title='Availabilities', description=description, color=Color.blue())
-        if self.image_url is not None and self.image_url != "":
-            embed.set_image(url=self.image_url)
-        for participant in self.participants:
-            participantName = f'{participant}'
-            if participant.availability and participant.subscribed:
-                availString = participant.get_availability_string()
-                embed.add_field(name=participantName, value=availString, inline=False)
-            elif not participant.subscribed:
-                embed.add_field(name=participantName, value="Unsubscribed", inline=False)
+        embed = self.get_availability_request_embed()
         # Send a new message
         if self.availability_message is None:
             if self.rescheduler is None:
                 self.avail_msg_content_pt3 += '\n\nThe event will be either created or cancelled within a minute after the last person responds.️'
             else:
                 self.rescheduler.set_no_availability()
-            response = self.get_availability_request_string()
-            self.availability_message = await self.text_channel.send(content=response,
+            content = self.get_availability_request_content()
+            self.availability_message = await self.text_channel.send(content=content,
                                                                      view=self.avail_buttons,
                                                                      embed=embed)
         # Update existing message
         else:
             try:
-                await self.availability_message.edit(content=self.get_availability_request_string(),
+                await self.availability_message.edit(content=self.get_availability_request_content(),
                                                      view=self.avail_buttons,
                                                      embed=embed)
             except Exception as e:
                 logger.exception(f'[{self}] Failed to edit availability message in update: {e}')
 
     async def update_event_buttons_message(self) -> None:
-        """Updates the event buttons message."""
+        """
+        Updates the event buttons message.
+        """
         # Delete the message if the event was rescheduled
         if not self.created:
             if self.event_buttons_message is not None:
@@ -1155,28 +1263,34 @@ class Event:
         if not self.event_buttons:
             self.event_buttons = EventButtons(self)
         save()
-        message = self.get_event_buttons_message_string()
+        message = self.get_event_buttons_message_content()
+        embed = self.get_event_buttons_message_embed()
         # Send a new message
         if self.event_buttons_message is None:
             if self.has_image_saved():
                 self.event_buttons_message = await self.text_channel.send(content=message,
                                                                           view=self.event_buttons,
+                                                                          embed=embed,
                                                                           file=File(self.image_path))
             else:
                 self.event_buttons_message = await self.text_channel.send(content=message,
+                                                                          embed=embed,
                                                                           view=self.event_buttons)
         # Edit existing message
         else:
             if self.has_image_saved():
                 await self.event_buttons_message.edit(content=message,
                                                       view=self.event_buttons,
+                                                      embed=embed,
                                                       attachments=[File(self.image_path)])
             else:
                 await self.event_buttons_message.edit(content=message,
+                                                      embed=embed,
                                                       view=self.event_buttons)
 
     async def cancel(self, reason: str = "", canceller: str = "") -> None:
-        """Cancels the event.
+        """
+        Cancels the event.
 
         Arguments
         ----------
@@ -1230,7 +1344,9 @@ class Event:
         save()
 
     def remove(self) -> None:
-        """Deletes the event's image file and removes the event from the client's event list."""
+        """
+        Deletes the event's image file and removes the event from the client's event list.
+        """
         self.delete_image_file()
         client.events.remove(self)
         save()
@@ -1238,7 +1354,8 @@ class Event:
 
     @classmethod
     async def from_dict(cls, data):
-        """Constructs an :class:`Event` from a data dict.
+        """
+        Constructs an :class:`Event` from a data dict.
 
         Arguments
         ----------
@@ -1335,16 +1452,6 @@ class Event:
         event_image_url = data["image_url"]
         logger.info(f'[{event_name}] image url: {event_image_url}')
 
-        # Event buttons msg content
-        event_event_buttons_msg_content_pt1 = data["event_buttons_msg_content_pt1"]
-        logger.info(f'[{event_name}] event_buttons_msg_content_pt1: ' + r'{event_event_buttons_msg_content_pt1}')
-        event_event_buttons_msg_content_pt2 = data["event_buttons_msg_content_pt2"]
-        logger.info(f'[{event_name}] event_buttons_msg_content_pt2: ' + r'{event_event_buttons_msg_content_pt2}')
-        event_event_buttons_msg_content_pt3 = data["event_buttons_msg_content_pt3"]
-        logger.info(f'[{event_name}] event_buttons_msg_content_pt3: ' + r'{event_event_buttons_msg_content_pt3}')
-        event_event_buttons_msg_content_pt4 = data["event_buttons_msg_content_pt4"]
-        logger.info(f'[{event_name}] event_buttons_msg_content_pt4: ' + r'{event_event_buttons_msg_content_pt4}')
-
         # Ready to create
         event_ready_to_create = data["ready_to_create"]
         logger.info(f'[{event_name}] ready_to_create: {event_ready_to_create}')
@@ -1419,10 +1526,6 @@ class Event:
             image_url=event_image_url,
             event_buttons_message=event_event_buttons_message,
             event_buttons=event_event_buttons,
-            event_buttons_msg_content_pt1=event_event_buttons_msg_content_pt1,
-            event_buttons_msg_content_pt2=event_event_buttons_msg_content_pt2,
-            event_buttons_msg_content_pt3=event_event_buttons_msg_content_pt3,
-            event_buttons_msg_content_pt4=event_event_buttons_msg_content_pt4,
             ready_to_create=event_ready_to_create,
             created=event_created,
             started=event_started,
@@ -1435,7 +1538,8 @@ class Event:
         )
 
     def to_dict(self) -> dict:
-        """Packs the event into a dict for saving.
+        """
+        Packs the event into a dict for saving.
 
         Returns
         --------
@@ -1488,10 +1592,6 @@ class Event:
             'participants': participants,
             'image_url': image_url,
             'event_buttons_message_id': event_buttons_message_id,
-            'event_buttons_msg_content_pt1': self.event_buttons_msg_content_pt1,
-            'event_buttons_msg_content_pt2': self.event_buttons_msg_content_pt2,
-            'event_buttons_msg_content_pt3': self.event_buttons_msg_content_pt3,
-            'event_buttons_msg_content_pt4': self.event_buttons_msg_content_pt4,
             'ready_to_create': self.ready_to_create,
             'created': self.created,
             'started': self.started,
@@ -1504,7 +1604,8 @@ class Event:
         }
 
     def __repr__(self) -> str:
-        """Gets the name of the event for string formatting purposes.
+        """
+        Gets the name of the event for string formatting purposes.
 
         Returns
         --------
@@ -1515,7 +1616,8 @@ class Event:
 
 
 class CancelModal(Modal):
-    """Represents a modal for cancelling an event.
+    """
+    Represents a modal for cancelling an event.
 
     Attributes
     -----------
@@ -1545,7 +1647,8 @@ class CancelModal(Modal):
 
 
 class AvailabilityModal(Modal):
-    """Represents a modal for inputting availability for an event.
+    """
+    Represents a modal for inputting availability for an event.
 
     Attributes
     -----------
@@ -1590,7 +1693,6 @@ class AvailabilityModal(Modal):
         try:
             logger.info(f'[{self.event}] Received availability from {interaction.user.name}')
             participant.set_specific_availability(avail_string, self.date.value)
-            # self.event.update_availabilities_to(participant)
             response = f'**__Availability received for {self.event}:__**' + participant.get_availability_string()
             await interaction.response.send_message(response, ephemeral=True)
             for timeblock in participant.availability:
@@ -1610,7 +1712,8 @@ class AvailabilityModal(Modal):
 
 
 class AvailabilityButtons(View):
-    """Represents the availability buttons tied to an availability message.
+    """
+    Represents the availability buttons tied to an availability message.
 
     Attributes
     -----------
@@ -1653,7 +1756,8 @@ class AvailabilityButtons(View):
         self.cancel_button = self.add_cancel_button()
 
     def add_respond_button(self) -> Button:
-        """Sets up and gets the Respond button.
+        """
+        Sets up and gets the Respond button.
 
         Returns
         --------
@@ -1676,7 +1780,8 @@ class AvailabilityButtons(View):
         return button
 
     def add_full_button(self) -> Button:
-        """Sets up and gets the Full Availability button.
+        """
+        Sets up and gets the Full Availability button.
 
         Returns
         --------
@@ -1718,7 +1823,8 @@ class AvailabilityButtons(View):
         return button
 
     def add_reuse_button(self) -> Button:
-        """Sets up and gets the Reuse Availability button.
+        """
+        Sets up and gets the Reuse Availability button.
 
         Returns
         --------
@@ -1756,7 +1862,8 @@ class AvailabilityButtons(View):
         return button
 
     def add_unsub_button(self) -> Button:
-        """Sets up and gets the Unsubscribe button.
+        """
+        Sets up and gets the Unsubscribe button.
 
         Returns
         --------
@@ -1789,7 +1896,8 @@ class AvailabilityButtons(View):
         return button
 
     def add_cancel_button(self) -> Button:
-        """Sets up and gets the Cancel button.
+        """
+        Sets up and gets the Cancel button.
 
         Returns
         --------
@@ -1811,7 +1919,8 @@ class AvailabilityButtons(View):
 
 
 class EventButtons(View):
-    """Represents the event buttons attached to an event control message.
+    """
+    Represents the event buttons attached to an event control message.
 
     Attributes
     -----------
@@ -1859,7 +1968,8 @@ class EventButtons(View):
         self.add_cancel_button()
 
     def add_start_button(self) -> None:
-        """Sets up the Start button.
+        """
+        Sets up the Start button.
 
         Returns
         --------
@@ -1872,14 +1982,17 @@ class EventButtons(View):
             await self.event.start(f'Event started by {interaction.user} pressing start button.')
             # Interaction response
             try:
-                await interaction.response.edit_message(content=f'{self.event.event_buttons_msg_content_pt1} {self.event.event_buttons_msg_content_pt2} {self.event.event_buttons_msg_content_pt3} {self.event.event_buttons_msg_content_pt4}', view=self.event.event_buttons)
+                content = self.event.get_event_buttons_message_content()
+                embed = self.event.get_event_buttons_message_embed()
+                await interaction.response.edit_message(content=content, embed=embed, view=self.event.event_buttons)
             except Exception as e:
                 logger.error(f'[{self.event}] Error responding to START button interaction: {e}')
         self.start_button.callback = start_button_callback
         self.add_item(self.start_button)
 
     def add_end_button(self) -> None:
-        """Sets up the End button.
+        """
+        Sets up the End button.
 
         Returns
         --------
@@ -1904,7 +2017,8 @@ class EventButtons(View):
         self.add_item(self.end_button)
 
     def add_unsubscribe_button(self) -> None:
-        """Sets up the Unsubscribe button.
+        """
+        Sets up the Unsubscribe button.
 
         Returns
         --------
@@ -1930,7 +2044,8 @@ class EventButtons(View):
         self.add_item(self.unsubscribe_button)
 
     def add_reschedule_button(self) -> None:
-        """Sets up the Reschedule button.
+        """
+        Sets up the Reschedule button.
 
         Returns
         --------
@@ -1961,7 +2076,6 @@ class EventButtons(View):
                 logger.error(f"[{self.event}] Error removing start time from list: {e}")
             self.event.created = False
             self.event.five_minute_warning_flag = False
-            self.event.event_buttons_msg_content_pt2 = f'\n**Rescheduled at:** {datetime.now().astimezone().strftime("%H:%M")} ET'
             await self.event.update_event_buttons_message()
             try:
                 participant = self.event.get_participant(interaction.user.name)
@@ -1980,7 +2094,8 @@ class EventButtons(View):
         self.add_item(self.reschedule_button)
 
     def add_cancel_button(self) -> None:
-        """Sets up the Cancel button.
+        """
+        Sets up the Cancel button.
 
         Returns
         --------
@@ -2003,7 +2118,8 @@ class EventButtons(View):
 
 
 class ExistingGuildEventsSelect(Select):
-    """Represents a dropdown of existing guild scheduled events for a user to attach to.
+    """
+    Represents a dropdown of existing guild scheduled events for a user to attach to.
 
     Attributes
     -----------
@@ -2073,7 +2189,9 @@ class ExistingGuildEventsSelect(Select):
 
 
 class ExistingGuildEventsSelectView(View):
-    """Represents a view to house the guild scheduled events dropdown."""
+    """
+    Represents a view to house the guild scheduled events dropdown.
+    """
 
     def __init__(self, guild: Guild):
         super().__init__()
@@ -2081,7 +2199,9 @@ class ExistingGuildEventsSelectView(View):
 
 
 class EventAvailability:
-    """Represents the pairing of an event with a user's availability."""
+    """
+    Represents the pairing of an event with a user's availability.
+    """
 
     def __init__(self, event: Event, avail: list, full_flag: bool):
         self.event = event
@@ -2090,7 +2210,9 @@ class EventAvailability:
 
 
 class ExistingAvailabilitiesSelect(Select):
-    """Represents a dropdown to allow a user to selection an existing availability from another event."""
+    """
+    Represents a dropdown to allow a user to selection an existing availability from another event.
+    """
 
     def __init__(self, event_avails: list, participant: Participant):
         self.event_avails = event_avails
@@ -2119,7 +2241,9 @@ class ExistingAvailabilitiesSelect(Select):
 
 
 class ExistingAvailabilitiesSelectView(View):
-    """Represents a view to house the existing availability dropdown."""
+    """
+    Represents a view to house the existing availability dropdown.
+    """
 
     def __init__(self, event_avails: list, participant: Participant):
         super().__init__()
@@ -2131,7 +2255,9 @@ def get_participants_from_interaction(event_name: str,
                                       include_exclude: INCLUDE_EXCLUDE = None,
                                       usernames: str = None,
                                       roles: str = None) -> list:
-    """Wrapper function for getting participants from a channel of an interaction."""
+    """
+    Wrapper function for getting participants from a channel of an interaction.
+    """
     return get_participants_from_channel(event_name=event_name,
                                          guild=interaction.guild,
                                          channel=interaction.channel,
@@ -2147,7 +2273,8 @@ def get_participants_from_channel(event_name: str,
                                   include_exclude: INCLUDE_EXCLUDE = INCLUDE,
                                   usernames: str = None,
                                   roles: str = None):
-    """Gets participants for an event from a channel using the included guidelines.
+    """
+    Gets participants for an event from a channel using the included guidelines.
 
     Arguments
     ----------
@@ -2242,7 +2369,8 @@ def get_participants_from_channel(event_name: str,
 
 
 def location_has_active_event(location: VoiceChannel) -> bool:
-    """Indicates if the provided :class:`VoiceChannel` has an active event in it.
+    """
+    Indicates if the provided :class:`VoiceChannel` has an active event in it.
 
     Arguments
     ----------
@@ -2263,7 +2391,8 @@ def location_has_active_event(location: VoiceChannel) -> bool:
 
 
 def first_start_time(event):
-    """Gets the first start time of the event.
+    """
+    Gets the first start time of the event.
 
     Arguments
     ----------
@@ -2284,7 +2413,9 @@ def first_start_time(event):
 
 
 def sort_events() -> None:
-    """Sorts the created events by first start time and then append the uncreated events."""
+    """
+    Sorts the created events by first start time and then append the uncreated events.
+    """
     new_events = []
     for event in client.events:
         if event.created and event.start_times:
@@ -2302,7 +2433,8 @@ def sort_events() -> None:
 
 
 async def update_event_timeouts() -> None:
-    """Decrements the event timeout counters,
+    """
+    Decrements the event timeout counters,
     resends availability messages after RESEND_INTERVAL_HOURS,
     and removes events that have timed out.
     """
@@ -2575,7 +2707,8 @@ async def schedule(eventName: str,
                    roles: str = None,
                    duration: int = 30,
                    multiEvent: bool = False):
-    """Starts the scheduling of an event.
+    """
+    Starts the scheduling of an event.
 
     Arguments
     ----------

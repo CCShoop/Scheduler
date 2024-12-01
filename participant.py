@@ -9,7 +9,8 @@ HOURS_PAST_MIDNIGHT_CUTOFF = 2
 
 
 class TimeBlock():
-    """Represents a block of time.
+    """
+    Represents a block of time.
 
     Attributes
     -----------
@@ -28,7 +29,8 @@ class TimeBlock():
 
     @classmethod
     def from_dict(cls, data: dict):
-        """Creates a :class:`TimeBlock` from a data dict.
+        """
+        Creates a :class:`TimeBlock` from a data dict.
 
         Arguments
         ----------
@@ -46,7 +48,8 @@ class TimeBlock():
         )
 
     def to_dict(self) -> dict:
-        """Stores the timeblock as a dict.
+        """
+        Stores the timeblock as a dict.
 
         Returns
         --------
@@ -64,7 +67,8 @@ class TimeBlock():
 
 
 class RemovedTime:
-    """Represents a combination of event name and timeblock
+    """
+    Represents a combination of event name and timeblock
     for time removed from a participant's availability for an event.
 
     Attributes
@@ -94,7 +98,8 @@ class RemovedTime:
 
 
 class Participant:
-    """Represents the participant of an event.
+    """
+    Represents the participant of an event.
 
     Attributes
     -----------
@@ -132,7 +137,8 @@ class Participant:
 
     # Participant is available at the specified time for the specified duration
     def is_available_at(self, time: datetime, duration: timedelta) -> bool:
-        """Indicates whether or not the participant is available at a certain time with the provided duration.
+        """
+        Indicates whether or not the participant is available at a certain time with the provided duration.
 
         Arguments
         ----------
@@ -155,7 +161,8 @@ class Participant:
 
     # Get the participant's availability in string format
     def get_availability_string(self) -> str:
-        """Gets the availability string of the participant.
+        """
+        Gets the availability string of the participant.
 
         Returns
         --------
@@ -177,7 +184,8 @@ class Participant:
         return response
 
     def set_full_availability(self, month=None, day=None, year=None, end_time=None) -> None:
-        """Sets the aprticipant to have full deliver.
+        """
+        Sets the aprticipant to have full deliver.
 
         Arguments
         ----------
@@ -213,13 +221,16 @@ class Participant:
             raise e
 
     def set_no_availability(self) -> None:
-        """Sets the participant to have no availability."""
+        """
+        Sets the participant to have no availability.
+        """
         self.availability.clear()
         self.answered = False
         self.full_availability_flag = False
 
     def set_specific_availability(self, avail_string: str, date_string: str) -> None:
-        """Sets a specific availability for the user with string parsing.
+        """
+        Sets a specific availability for the user with string parsing.
 
         Arguments
         ----------
@@ -421,7 +432,9 @@ class Participant:
             self.clean_availability()
 
     def clean_availability(self) -> None:
-        """Cleans the participant's availability by combining overlapping/touching timeblocks."""
+        """
+        Cleans the participant's availability by combining overlapping/touching timeblocks.
+        """
         # Sort the availability by start time (and by end time if start times are the same)
         self.availability.sort(key=lambda x: (x.start_time, x.end_time))
 
@@ -441,7 +454,8 @@ class Participant:
             self.answered = True
 
     def remove_availability_for_event(self, event_name: str, event_start_times: list, event_duration: timedelta) -> None:
-        """Removes availability for another event and stores it separately.
+        """
+        Removes availability for another event and stores it separately.
 
         Arguments
         ----------
@@ -480,7 +494,8 @@ class Participant:
                 self.full_availability_flag = False
 
     def restore_availability_for_event(self, event_name: str) -> None:
-        """Restores availability for an event for which it was removed.
+        """
+        Restores availability for an event for which it was removed.
 
         Arguments
         ----------
@@ -495,7 +510,8 @@ class Participant:
                 break
 
     def confirm_answered(self, duration: timedelta = timedelta(minutes=30), latest_date=None) -> None:
-        """Confirms that the participant's availability is valid.
+        """
+        Confirms that the participant's availability is valid.
 
         Arguments
         ----------
