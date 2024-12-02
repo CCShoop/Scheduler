@@ -1148,7 +1148,7 @@ class Event:
             real_duration: timedelta = end_time - self.start_times[0]
             duration = f"{get_time_str_from_minutes(real_duration.total_seconds() // 60)}"
         embed = Embed(title=f"{self}",
-                      description=f"Event at {self.get_start_time_string()}",
+                      description=f"Event on {self.get_start_time_string()}",
                       color=Color.red(),
                       timestamp=self.start_times[0])
         if self.image_url:
