@@ -62,7 +62,6 @@ class TimeBlock():
         }
 
     def __repr__(self):
-        # return f'{self.start_time.strftime("%a, %m/%d %H:%M")} - {self.end_time.strftime("%a, %m/%d %H:%M")}'
         return f'{self.start_time.strftime("%a, %m/%d %H:%M")} - {self.end_time.strftime("%H:%M")}'
 
 

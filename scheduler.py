@@ -330,11 +330,15 @@ class Event:
         Whether or not this :class:`Event` will have multiple guild events.
     start_times: :class:`list`
         The list of guild event start times.
+    availability_message_lock: :class:`asyncio.Lock`
+        The lock to prevent the availability message update from being called twice simultaneously.
     availability_message: :class:`Message`
         The message object that is requesting availability from participants.
     avail_buttons: :class:`AvailabilityButtons`
         The availability buttons attached to the availability_message that users can
         use to submit their availability, unsubscribe, or cancel.
+    event_buttons_message_lock: :class:`asyncio.Lock`
+        The lock to prevent the event buttons message update from being called twice simultaneously.
     event_buttons_message: :class:`Message`
         The event control buttons message. States the start time, time remaining until
         the start time, when the event was started, when the event was rescheduled,
@@ -383,6 +387,7 @@ class Event:
         self.guild = guild
         self.entity_type = EntityType.voice
         self.text_channel = text_channel
+        self.availability_message_lock: asyncio.Lock = asyncio.Lock()
         self.availability_message = availability_message
         if voice_channel:
             self.voice_channel = voice_channel
@@ -399,6 +404,7 @@ class Event:
         self.image_url = image_url
         self.image_path = f'{self.name}.png'
         self.avail_buttons: AvailabilityButtons = avail_buttons
+        self.event_buttons_message_lock: asyncio.Lock = asyncio.Lock()
         self.event_buttons_message: Message = event_buttons_message
         self.event_buttons: EventButtons = event_buttons
         self.five_minute_warning_flag = False
@@ -680,6 +686,8 @@ class Event:
                 await scheduled_event.edit(image=self.get_image())
             self.scheduled_events.append(scheduled_event)
             logger.info(f'[{self}] Created event starting {start_time.strftime("%A, %m/%d/%Y: %H:%M")} ET')
+            if not self.multi_event:
+                break
         self.ready_to_create = False
         self.created = True
         save()
@@ -1157,6 +1165,9 @@ class Event:
         embed.add_field(name="Duration",
                         value=duration,
                         inline=False)
+        embed.add_field(name="Location",
+                        value=self.voice_channel.name,
+                        inline=False)
         embed.add_field(name="Multi Event",
                         value=f"{self.multi_event}",
                         inline=False)
@@ -1219,75 +1230,98 @@ class Event:
             Optional. The participant who rescheduled the event.
             Default: None
         """
-        # Delete the message if the event was created
-        if self.created:
-            if self.availability_message is not None:
-                await self.availability_message.delete()
-                self.availability_message = None
-            self.avail_buttons = None
-            return
-        self.rescheduler = rescheduler
-        if self.avail_buttons is None:
-            self.avail_buttons = AvailabilityButtons(event=self)
-        save()
-        embed = self.get_availability_request_embed()
-        # Send a new message
-        if self.availability_message is None:
-            if self.rescheduler is None:
-                self.avail_msg_content_pt3 += '\n\nThe event will be either created or cancelled within a minute after the last person responds.️'
+        async with self.availability_message_lock:
+            # Delete the message if the event was created
+            if self.created:
+                if self.availability_message is not None:
+                    await self.availability_message.delete()
+                    self.availability_message = None
+                self.avail_buttons = None
+                return
+            self.rescheduler = rescheduler
+            if self.avail_buttons is None:
+                self.avail_buttons = AvailabilityButtons(event=self)
+            save()
+            embed = self.get_availability_request_embed()
+            # Send a new message
+            if self.availability_message is None:
+                if self.rescheduler is None:
+                    self.avail_msg_content_pt3 += '\n\nThe event will be either created or cancelled within a minute after the last person responds.️'
+                else:
+                    self.rescheduler.set_no_availability()
+                content = self.get_availability_request_content()
+                self.availability_message = await self.text_channel.send(content=content,
+                                                                         view=self.avail_buttons,
+                                                                         embed=embed)
+            # Update existing message
             else:
-                self.rescheduler.set_no_availability()
-            content = self.get_availability_request_content()
-            self.availability_message = await self.text_channel.send(content=content,
-                                                                     view=self.avail_buttons,
-                                                                     embed=embed)
-        # Update existing message
-        else:
-            try:
-                await self.availability_message.edit(content=self.get_availability_request_content(),
-                                                     view=self.avail_buttons,
-                                                     embed=embed)
-            except Exception as e:
-                logger.exception(f'[{self}] Failed to edit availability message in update: {e}')
+                try:
+                    await self.availability_message.edit(content=self.get_availability_request_content(),
+                                                         view=self.avail_buttons,
+                                                         embed=embed)
+                except Exception as e:
+                    logger.exception(f'[{self}] Failed to edit availability message in update: {e}')
 
     async def update_event_buttons_message(self) -> None:
         """
         Updates the event buttons message.
         """
-        # Delete the message if the event was rescheduled
-        if not self.created:
-            if self.event_buttons_message is not None:
-                await self.event_buttons_message.delete()
-                self.event_buttons_message = None
-            self.event_buttons = None
-            return
-        if not self.event_buttons:
-            self.event_buttons = EventButtons(self)
-        save()
-        message = self.get_event_buttons_message_content()
-        embed = self.get_event_buttons_message_embed()
-        # Send a new message
-        if self.event_buttons_message is None:
-            if self.has_image_saved():
-                self.event_buttons_message = await self.text_channel.send(content=message,
-                                                                          view=self.event_buttons,
-                                                                          embed=embed,
-                                                                          file=File(self.image_path))
-            else:
+        async with self.event_buttons_message_lock:
+            # Delete the message if the event was rescheduled
+            if not self.created:
+                if self.event_buttons_message is not None:
+                    await self.event_buttons_message.delete()
+                    self.event_buttons_message = None
+                self.event_buttons = None
+                return
+            if not self.event_buttons:
+                self.event_buttons = EventButtons(self)
+            save()
+            message = self.get_event_buttons_message_content()
+            embed = self.get_event_buttons_message_embed()
+            # Send a new message
+            if self.event_buttons_message is None:
                 self.event_buttons_message = await self.text_channel.send(content=message,
                                                                           embed=embed,
                                                                           view=self.event_buttons)
-        # Edit existing message
-        else:
-            if self.has_image_saved():
-                await self.event_buttons_message.edit(content=message,
-                                                      view=self.event_buttons,
-                                                      embed=embed,
-                                                      attachments=[File(self.image_path)])
+            # Edit existing message
             else:
                 await self.event_buttons_message.edit(content=message,
                                                       embed=embed,
                                                       view=self.event_buttons)
+
+    def get_cancel_embed(self, reason: str = "", canceller: str = "") -> Embed:
+        """
+        Get the embed for the cancel message.
+
+        Arguments
+        ----------
+        reason: :class:`str`
+            The reason the event is being cancelled.
+        canceller: :class:`str`
+            The name of the canceller of the event.
+
+        Returns
+        --------
+        embed: :class:`Embed`
+            The cancel message embed.
+        """
+        embed = Embed(title="Event Cancelled",
+                      description=f"{self} has been cancelled.",
+                      color=Color.red())
+        if self.image_url:
+            embed.set_thumbnail(url=self.image_url)
+        if reason != "":
+            embed.add_field(name="Reason for Cancellation", value=reason, inline=False)
+        if canceller != "":
+            for participant in self.participants:
+                if participant.member.name == canceller:
+                    if participant.member.avatar:
+                        embed.set_footer(text=f"Cancelled by {participant}", icon_url=participant.member.avatar.url)
+                    else:
+                        embed.set_footer(text=f"Cancelled by {participant}")
+                    break
+        return embed
 
     async def cancel(self, reason: str = "", canceller: str = "") -> None:
         """
@@ -1300,26 +1334,14 @@ class Event:
         canceller: :class:`str`
             The name of the canceller of the event.
         """
-        content = f'**{self.name} has been cancelled'
-        if canceller == "":
-            content += '.**'
-        else:
-            content += f' by {canceller}.**'
-        if reason != "":
-            content += f'\n**Reason:** "{reason}"'
-        content += f'\n{self.get_names_string(subscribed_only=True, mention=True)}'
+        content = self.get_names_string(subscribed_only=True, mention=True)
+        embed = self.get_cancel_embed(reason, canceller)
         if self.text_channel:
-            if self.has_image_saved():
-                await self.text_channel.send(content=content, file=File(self.image_path))
-            else:
-                await self.text_channel.send(content=content)
+            await self.text_channel.send(content=content, embed=embed)
         else:
             for participant in self.participants:
                 async with participant.msg_lock:
-                    if self.has_image_saved():
-                        await participant.member.send(content=content, file=File(self.image_path))
-                    else:
-                        await participant.member.send(content=content)
+                    await participant.member.send(content=content, embed=embed)
         try:
             if self.availability_message:
                 await self.availability_message.delete()
@@ -1331,7 +1353,7 @@ class Event:
             logger.error(f'Error in event cancel while deleting a message: {e}')
         try:
             if len(self.scheduled_events) > 0:
-                await self.scheduled_events[0].delete(reason=f'Cancel button pressed by {canceller}.')
+                await self.scheduled_events[0].delete(reason=f'Cancel button pressed by {canceller}: {reason}')
         except Exception as e:
             logger.error(f'Error in event cancel while deleting scheduled event: {e}')
         try:
@@ -2820,6 +2842,105 @@ async def schedule(eventName: str,
     content = f"Event scheduling started for {eventName}."
     ephemeral = True
     return content, ephemeral
+
+
+@client.tree.command(name='edit', description='Edit an existing event.')
+@app_commands.describe(voice_channel='Voice channel for the event.')
+@app_commands.describe(image_url="URL to an image for the event.")
+@app_commands.describe(duration="Event duration in minutes (30 minutes default).")
+@app_commands.describe(multi_event='Create an event on each date that everyone is available.')
+async def edit_command(interaction: Interaction,
+                       voice_channel: VoiceChannel = None,
+                       image_url: str = None,
+                       duration: int = None,
+                       multi_event: bool = None):
+    await interaction.response.defer(ephemeral=True)
+    events = []
+    for event in client.events:
+        if event.guild == interaction.guild:
+            events.append(event)
+    options = [SelectOption(label=event.name, value=event.name)
+               for event in events]
+    select = Select(placeholder="Select an event to edit", options=options)
+
+    async def select_callback(interaction: Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        for event in events:
+            if event.name == select.values[0]:
+                embed = Embed(title=f"{event} Edited",
+                              description=f"{event} has been edited.",
+                              color=Color.orange())
+                # Voice Channel
+                if voice_channel is not None:
+                    old_vc = event.voice_channel
+                    event.voice_channel = voice_channel
+                    if old_vc == event.voice_channel:
+                        embed.add_field(name="Voice Channel",
+                                        value="Unchanged",
+                                        inline=False)
+                    else:
+                        embed.add_field(name="Voice Channel",
+                                        value=f"{old_vc.name}\n->\n{event.voice_channel.name}",
+                                        inline=False)
+                # Image URL
+                if image_url is not None:
+                    old_image_url = event.image_url
+                    event.delete_image_file()
+                    event.image_url = image_url
+                    await event.save_image_to_file()
+                    if event.image_url:
+                        if old_image_url == event.image_url:
+                            embed.add_field(name="Image",
+                                            value="Unchanged",
+                                            inline=False)
+                        else:
+                            embed.add_field(name="Image",
+                                            value=f"{old_image_url}\n->\n{event.image_url}",
+                                            inline=False)
+                    else:
+                        event.image_url = old_image_url
+                        embed.add_field(name="ERROR: Image",
+                                        value="The new image could not be downloaded.\nThe old one was kept.",
+                                        inline=False)
+                # Duration
+                if duration is not None:
+                    old_duration = event.duration
+                    event.duration = timedelta(minutes=duration)
+                    if old_duration.total_seconds() == event.duration.total_seconds():
+                        embed.add_field(name="Duration",
+                                        value="Unchanged",
+                                        inline=False)
+                    else:
+                        embed.add_field(name="Duration",
+                                        value=f"{old_duration}\n->\n{get_time_str_from_minutes(event.duration.total_seconds() // 60)}",
+                                        inline=False)
+                # Multi event
+                if multi_event is not None:
+                    old_multi_event = event.multi_event
+                    event.multi_event = multi_event
+                    if old_multi_event == event.multi_event:
+                        embed.add_field(name="Multi Event",
+                                        value="Unchanged",
+                                        inline=False)
+                    else:
+                        embed.add_field(name="Multi Event",
+                                        value=f"{old_multi_event}\n->\n{event.multi_event}",
+                                        inline=False)
+                if event.image_url:
+                    embed.set_thumbnail(url=event.image_url)
+                if interaction.user.avatar:
+                    embed.set_footer(text=f"Edited by {interaction.user}", icon_url=interaction.user.avatar.url)
+                else:
+                    embed.set_footer(text=f"Edited by {interaction.user}")
+                save()
+                await interaction.followup.send(embed=embed)
+                return
+
+    select.callback = select_callback
+    view = View()
+    view.add_item(select)
+
+    await interaction.followup.send(view=view, ephemeral=True)
 
 
 @client.tree.command(name='attach', description='Create an event message for an existing guild event.')
