@@ -692,6 +692,64 @@ class Event:
         self.created = True
         save()
 
+    def get_general_embed(self, end_time: datetime = None) -> Embed:
+        embed = Embed(title=f"{self}",
+                      description=self.get_scheduling_status(),
+                      color=Color.dark_green())
+        if self.image_url:
+            embed.set_thumbnail(url=self.image_url)
+        embed.add_field(name="Duration",
+                        value=get_time_str_from_minutes(self.duration),
+                        inline=False)
+        embed.add_field(name="Location",
+                        value=self.voice_channel.name,
+                        inline=False)
+        embed.add_field(name="Multi Event",
+                        value=f"{self.multi_event}",
+                        inline=False)
+        if self.created:
+            if end_time is None and not self.started:
+                if self.mins_until_start > 0:
+                    embed.add_field(name="Starts in",
+                                    value=f"{get_time_str_from_minutes(self.mins_until_start + 1)}",
+                                    inline=False)
+                elif self.mins_until_start == 0:
+                    embed.add_field(name="Starting now", value="", inline=False)
+                else:
+                    embed.add_field(name="Overdue by",
+                                    value=f"{get_time_str_from_minutes(self.mins_until_start)}",
+                                    inline=False)
+            # Event is in progress
+            elif end_time is None and self.started:
+                embed.timestamp = self.start_times[0]
+                embed.add_field(name="Started",
+                                value=f"{self.get_start_time_string()}",
+                                inline=False)
+            # Event has ended
+            else:
+                embed.add_field(name="Ended",
+                                value=f'{end_time.strftime("%A, %m/%d at %H:%M")} ET',
+                                inline=False)
+        unsubscribed = self.get_names_string(unsubscribed_only=True).replace(', ', '\n')
+        if unsubscribed != "":
+            embed.add_field(name="Unsubscribed",
+                            value=unsubscribed,
+                            inline=False)
+        if self.created:
+            embed.timestamp = self.start_times[0]
+        if self.scheduler:
+            if self.scheduler.member.avatar:
+                embed.set_footer(text=f"Scheduled by {self.scheduler}",
+                                 icon_url=self.scheduler.member.avatar.url)
+            else:
+                embed.set_footer(text=f"Scheduled by {self.scheduler}")
+        if self.rescheduler:
+            if self.rescheduler.member.avatar:
+                embed.set_footer(text=f"Rescheduled by {self.rescheduler}",
+                                 icon_url=self.rescheduler.member.avatar.url)
+            else:
+                embed.set_footer(text=f"Rescheduled by {self.rescheduler}")
+
     async def save_image_to_file(self) -> str:
         """
         Saves the image from the url to a file to allow for sending in messages.
@@ -1018,6 +1076,7 @@ class Event:
             The embed for the availability message.
         """
         description = self.get_scheduling_status()
+        embed = self.get_general_embed()
         embed = Embed(title='Availabilities', description=description, color=Color.blue())
         if self.image_url is not None and self.image_url != "":
             embed.set_thumbnail(url=self.image_url)
@@ -1149,68 +1208,12 @@ class Event:
         """
         if end_time is None:
             # Get time until start
-            duration = f"{get_time_str_from_minutes(self.get_duration_minutes())}"
             time_until_start: timedelta = self.start_times[0] - datetime.now().astimezone()
             self.mins_until_start = int(time_until_start.total_seconds() // 60)
         else:
             # Replace duration with actual duration
-            real_duration: timedelta = end_time - self.start_times[0]
-            duration = f"{get_time_str_from_minutes(real_duration.total_seconds() // 60)}"
-        embed = Embed(title=f"{self}",
-                      description=f"Event on {self.get_start_time_string()}",
-                      color=Color.red(),
-                      timestamp=self.start_times[0])
-        if self.image_url:
-            embed.set_thumbnail(url=self.image_url)
-        embed.add_field(name="Duration",
-                        value=duration,
-                        inline=False)
-        embed.add_field(name="Location",
-                        value=self.voice_channel.name,
-                        inline=False)
-        embed.add_field(name="Multi Event",
-                        value=f"{self.multi_event}",
-                        inline=False)
-        if end_time is None and not self.started:
-            if self.mins_until_start > 0:
-                embed.add_field(name="Starts in",
-                                value=f"{get_time_str_from_minutes(self.mins_until_start + 1)}",
-                                inline=False)
-            elif self.mins_until_start == 0:
-                embed.add_field(name="Starting now", value="", inline=False)
-            else:
-                embed.add_field(name="Overdue by",
-                                value=f"{get_time_str_from_minutes(self.mins_until_start)}",
-                                inline=False)
-        # Event is in progress
-        elif end_time is None and self.started:
-            embed.timestamp = self.start_times[0]
-            embed.add_field(name="Started",
-                            value=f"{self.get_start_time_string()}",
-                            inline=False)
-        # Event has ended
-        else:
-            embed.timestamp = end_time
-            embed.add_field(name="Ended",
-                            value=f'{end_time.strftime("%A, %m/%d at %H:%M")} ET',
-                            inline=False)
-        unsubscribed = self.get_names_string(unsubscribed_only=True).replace(', ', '\n')
-        if unsubscribed != "":
-            embed.add_field(name="Unsubscribed",
-                            value=unsubscribed,
-                            inline=False)
-        if self.scheduler:
-            if self.scheduler.member.avatar:
-                embed.set_footer(text=f"Scheduled by {self.scheduler}",
-                                 icon_url=self.scheduler.member.avatar.url)
-            else:
-                embed.set_footer(text=f"Scheduled by {self.scheduler}")
-        if self.rescheduler:
-            if self.rescheduler.member.avatar:
-                embed.set_footer(text=f"Rescheduled by {self.rescheduler}",
-                                 icon_url=self.rescheduler.member.avatar.url)
-            else:
-                embed.set_footer(text=f"Rescheduled by {self.rescheduler}")
+            self.duration: timedelta = end_time - self.start_times[0]
+        embed = self.get_general_embed(end_time=end_time)
         return embed
 
     async def update_messages(self) -> None:
@@ -2187,7 +2190,7 @@ class ExistingGuildEventsSelect(Select):
                 if selected_guild_event.cover_image is not None:
                     image_url = selected_guild_event.cover_image.url
                 event = Event(name=selected_guild_event.name,
-                              voice_channel=selected_guild_event.location,
+                              voice_channel=selected_guild_event.channel,
                               guild=self.guild,
                               text_channel=interaction.channel,
                               image_url=image_url,
@@ -2996,16 +2999,16 @@ async def listevents_command(interaction: Interaction):
     logger.info(f"Received list events command request from {interaction.user.name}")
     foundEvents = False
     content = ""
-    embed = Embed(title=f"All events in {interaction.guild.name}", color=Color.blue())
+    embeds = [Embed(title=f"All events in {interaction.guild.name}", color=Color.blue())]
     for event in client.events:
         if event.guild == interaction.guild:
             foundEvents = True
-            eventStatus = event.get_scheduling_status()
-            embed.add_field(name=event.name, value=eventStatus, inline=True)
+            embed = event.get_general_embed()
+            embeds.append(embed)
     if foundEvents:
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embeds=embeds, ephemeral=True)
     else:
-        content = "No events found for this server."
+        content = "**No events found for this server.**"
         await interaction.response.send_message(content=content, ephemeral=True)
 
 
