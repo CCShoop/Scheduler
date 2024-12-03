@@ -515,8 +515,14 @@ class Event:
         self.five_minute_warning_flag = True
         try:
             message = f'{self.get_names_string(subscribed_only=True, mention=True)}'
-            message += f'\n**5 minute warning!** {self} is scheduled to start in 5 minutes.'
-            await self.text_channel.send(content=message, reference=self.event_buttons_message)
+            embed = Embed(title="5 Minute Warning!",
+                          description=f"{self} is scheduled to start in 5 minutes.",
+                          color=Color.orange())
+            embed.timestamp = self.start_times[0]
+            if self.image_url:
+                embed.set_thumbnail(self.image_url)
+            embed.set_footer(text="Courtesy of Event Scheduler", icon_url=client.user.avatar.url)
+            await self.text_channel.send(content=message, embed=embed, reference=self.event_buttons_message)
         except Exception as e:
             logger.error(f'Error sending 5 minute warning: {e}')
 
@@ -695,11 +701,11 @@ class Event:
     def get_general_embed(self, end_time: datetime = None) -> Embed:
         embed = Embed(title=f"{self}",
                       description=self.get_scheduling_status(),
-                      color=Color.dark_green())
+                      color=Color.green())
         if self.image_url:
             embed.set_thumbnail(url=self.image_url)
         embed.add_field(name="Duration",
-                        value=get_time_str_from_minutes(self.duration),
+                        value=get_time_str_from_minutes(self.duration_minutes),
                         inline=False)
         embed.add_field(name="Location",
                         value=self.voice_channel.name,
@@ -749,6 +755,7 @@ class Event:
                                  icon_url=self.rescheduler.member.avatar.url)
             else:
                 embed.set_footer(text=f"Rescheduled by {self.rescheduler}")
+        return embed
 
     async def save_image_to_file(self) -> str:
         """
@@ -1005,17 +1012,6 @@ class Event:
         """
         return self.duration.total_seconds() // 60
 
-    def get_timeout_minutes(self) -> float:
-        """
-        Gets the event's time remaining until timeout in minutes.
-
-        Returns
-        --------
-        timeout: :class:`float`
-            The event's time remaining until timeout in minutes.
-        """
-        return self.timeout_counter / 2
-
     def reset_timeout_counter(self) -> None:
         """
         Resets the timeout counter to the default value.
@@ -1051,9 +1047,9 @@ class Event:
             The content string for the availability message.
         """
         output = self.avail_msg_content_pt1
-        output += get_time_str_from_minutes(self.get_duration_minutes())
+        output += get_time_str_from_minutes(self.duration_minutes)
         output += self.avail_msg_content_pt2
-        output += get_time_str_from_minutes(self.get_timeout_minutes())
+        output += get_time_str_from_minutes(self.timeout_minutes)
         output += self.avail_msg_content_pt3
         if not self.has_everyone_answered():
             cur_date = datetime.now().astimezone().date()
@@ -1241,7 +1237,9 @@ class Event:
                     self.availability_message = None
                 self.avail_buttons = None
                 return
-            self.rescheduler = rescheduler
+            if rescheduler is not None:
+                self.scheduler = None
+                self.rescheduler = rescheduler
             if self.avail_buttons is None:
                 self.avail_buttons = AvailabilityButtons(event=self)
             save()
@@ -1377,6 +1375,14 @@ class Event:
         client.events.remove(self)
         save()
         logger.info(f'[{self}] Removed from client events list')
+
+    @property
+    def duration_minutes(self) -> int:
+        return self.duration.total_seconds() // 60
+
+    @property
+    def timeout_minutes(self) -> int:
+        return self.timeout_counter // UPDATES_PER_MINUTE
 
     @classmethod
     async def from_dict(cls, data):
@@ -1624,7 +1630,7 @@ class Event:
             'scheduled_event_ids': scheduled_event_ids,
             'changed': self.changed,
             'start_times': start_times,
-            'duration': self.get_duration_minutes(),
+            'duration': self.duration_minutes,
             'multi_event': self.multi_event,
             'timeout_counter': self.timeout_counter
         }
@@ -2003,6 +2009,8 @@ class EventButtons(View):
             The Start button.
         """
         async def start_button_callback(interaction: Interaction):
+            if self.event not in client.events:
+                client.events.append(self.event)
             logger.info(f'[{self.event}] {interaction.user} started by button press')
             self.event.add_user_as_participant(interaction.user)
             await self.event.start(f'Event started by {interaction.user} pressing start button.')
@@ -2028,6 +2036,8 @@ class EventButtons(View):
         self.end_button.disabled = True
 
         async def end_button_callback(interaction: Interaction):
+            if self.event not in client.events:
+                client.events.append(self.event)
             member = self.event.guild.get_member(interaction.user.id)
             if member not in [participant.member for participant in self.event.participants]:
                 logger.info(f"[{self.event}] {member.name} tried to end event but is not a member")
@@ -2039,6 +2049,7 @@ class EventButtons(View):
                 await interaction.response.edit_message(view=None)
             except Exception as e:
                 logger.exception(f'[{self.event}] Error responding to END button interaction: {e}')
+            save()
         self.end_button.callback = end_button_callback
         self.add_item(self.end_button)
 
@@ -2052,6 +2063,8 @@ class EventButtons(View):
             The Unsubscribe button.
         """
         async def unsubscribe_button_callback(interaction: Interaction):
+            if self.event not in client.events:
+                client.events.append(self.event)
             participant = self.event.get_participant(interaction.user.name)
             if participant is None:
                 await interaction.response.send_message('You are already not part of this event.', ephemeral=True)
@@ -2079,6 +2092,8 @@ class EventButtons(View):
             The Reschedule button.
         """
         async def reschedule_button_callback(interaction: Interaction):
+            if self.event not in client.events:
+                client.events.append(self.event)
             member = self.event.guild.get_member(interaction.user.id)
             if member not in [participant.member for participant in self.event.participants]:
                 logger.info(f"[{self.event}] {member.name} tried to reschedule event but is not a member")
@@ -2109,9 +2124,9 @@ class EventButtons(View):
                 participant.subscribed = True
                 participant.full_availability_flag = False
                 await self.event.update_availability_message(rescheduler=participant)
-                await interaction.followup.send(f"Event rescheduling started for {self.event.name}.", ephemeral=True)
+                await interaction.followup.send(f"Event rescheduling started for {self.event}.", ephemeral=True)
             except Exception as e:
-                logger.error(f"[{self.event}] Error with RESCHEDULE button requesting availability: {e}")
+                logger.exception(f"[{self.event}] Error with RESCHEDULE button requesting availability: {e}")
             # Restore removed availabilities
             for other_event in client.events:
                 other_event.restore_availabilities(self.event)
@@ -2129,6 +2144,8 @@ class EventButtons(View):
             The Cancel button.
         """
         async def cancel_button_callback(interaction: Interaction):
+            if self.event not in client.events:
+                client.events.append(self.event)
             member = self.event.guild.get_member(interaction.user.id)
             if member not in [participant.member for participant in self.event.participants]:
                 logger.info(f"[{self.event}] {member.name} tried to cancel event but is not a member")
@@ -2292,6 +2309,7 @@ def get_participants_from_interaction(event_name: str,
                                          usernames=usernames,
                                          roles=roles)
 
+
 def get_participants_from_channel(event_name: str,
                                   guild: Guild,
                                   channel: TextChannel,
@@ -2440,17 +2458,20 @@ def first_start_time(event):
 
 def sort_events() -> None:
     """
-    Sorts the created events by first start time and then append the uncreated events.
+    Sorts the created events by first start time and then appends the uncreated events.
     """
     new_events = []
+    # Get created events
     for event in client.events:
         if event.created and event.start_times:
             new_events.append(event)
+    # Sort created events
     if new_events:
         try:
             new_events.sort(key=first_start_time)
         except Exception as e:
             logger.error(f'Failed to sort created events: {e}')
+    # Append uncreated events
     for event in client.events:
         if not event.created and not event.start_times:
             new_events.append(event)
@@ -2976,7 +2997,7 @@ async def attach_command(interaction: Interaction):
             if guild_event.cover_image is not None:
                 image_url = guild_event.cover_image.url
             event = Event(name=guild_event.name,
-                          voice_channel=guild_event.location,
+                          voice_channel=guild_event.channel,
                           guild=interaction.guild,
                           text_channel=interaction.channel,
                           image_url=image_url,
@@ -2988,7 +3009,10 @@ async def attach_command(interaction: Interaction):
             await event.save_image_to_file()
             event.scheduled_events.append(guild_event)
             event.start_times.append(guild_event.start_time)
+            save()
+            logger.info(f'[{event.name}] attached to event')
         await event.update_event_buttons_message()
+        save()
         await interaction.followup.send('Success!', ephemeral=True)
     else:
         await interaction.response.send_message('Select an existing guild event from the dropdown menu.', view=ExistingGuildEventsSelectView(interaction.guild), ephemeral=True)
@@ -3004,6 +3028,7 @@ async def listevents_command(interaction: Interaction):
         if event.guild == interaction.guild:
             foundEvents = True
             embed = event.get_general_embed()
+            embed.color = Color.dark_green()
             embeds.append(embed)
     if foundEvents:
         await interaction.response.send_message(embeds=embeds, ephemeral=True)
