@@ -1030,6 +1030,7 @@ class Event:
                 embed.set_footer(text=f"Rescheduled by {self.rescheduler}", icon_url=self.rescheduler.member.avatar.url)
             else:
                 embed.set_footer(text=f"Rescheduled by {self.rescheduler}")
+        return embed
 
     def get_latest_date(self):
         """
@@ -1152,7 +1153,7 @@ class Event:
                       color=Color.red(),
                       timestamp=self.start_times[0])
         if self.image_url:
-            embed.set_thumbnail(self.image_url)
+            embed.set_thumbnail(url=self.image_url)
         embed.add_field(name="Duration",
                         value=duration,
                         inline=False)
