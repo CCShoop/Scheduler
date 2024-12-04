@@ -2956,6 +2956,7 @@ async def edit_command(interaction: Interaction,
                     embed.set_footer(text=f"Edited by {interaction.user}", icon_url=interaction.user.avatar.url)
                 else:
                     embed.set_footer(text=f"Edited by {interaction.user}")
+                await event.update_messages()
                 save()
                 await interaction.followup.send(embed=embed)
                 return
