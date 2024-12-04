@@ -1186,7 +1186,10 @@ class Event:
         content: :class:`str`
             The content for the event buttons message.
         """
-        return self.get_names_string(subscribed_only=True, mention=True, not_in_voice_channel_only=True)
+        if not self.started:
+            return self.get_names_string(subscribed_only=True, mention=True, not_in_voice_channel_only=True)
+        else:
+            return ""
 
     def get_event_buttons_message_embed(self, end_time: datetime = None) -> list[Embed]:
         """
