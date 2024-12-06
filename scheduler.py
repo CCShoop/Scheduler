@@ -418,20 +418,6 @@ class Event:
         self.mins_until_start: int = 0
         self.multi_event = multi_event
         self.timeout_counter: int = timeout_counter
-        self.avail_msg_content_pt1 = f'**Event name:** {self.name}'
-        self.avail_msg_content_pt1 += '\n**Duration:** '
-        self.avail_msg_content_pt2 = ''
-        if self.scheduler is not None:
-            self.avail_msg_content_pt2 += f'\n**Scheduled by:** {self.scheduler}'
-        if self.rescheduler is not None:
-            self.avail_msg_content_pt2 += f'\n**Rescheduled by:** {self.rescheduler}'
-        self.avail_msg_content_pt2 += f'\n**Multi-event:** {self.multi_event}'
-        self.avail_msg_content_pt2 += '\n**Times out in:** '
-        self.avail_msg_content_pt3 = '\n\nSelect **Respond** to enter your availability.'
-        self.avail_msg_content_pt3 += '\n**Full** will mark you as available from now until midnight tonight.'
-        self.avail_msg_content_pt3 += '\n**Use Existing** will attempt to grab your availability from another event.'
-        self.avail_msg_content_pt3 += '\n**Unsubscribe** will allow the event to occur without you; however, you can still respond and participate.'
-        self.avail_msg_content_pt3 += '\n**Cancel** will cancel scheduling.'
 
     def intersect_time_blocks(self, timeblocks1: list, timeblocks2: list) -> list:
         """
@@ -705,7 +691,7 @@ class Event:
         if self.image_url:
             embed.set_thumbnail(url=self.image_url)
         embed.add_field(name="Duration",
-                        value=get_time_str_from_minutes(self.duration_minutes),
+                        value=self.duration_string,
                         inline=False)
         embed.add_field(name="Location",
                         value=self.voice_channel.name,
@@ -1001,17 +987,6 @@ class Event:
                         event_availabilities.append(event_avail)
         return event_availabilities
 
-    def get_duration_minutes(self) -> int:
-        """
-        Gets the duration of the event in minutes.
-
-        Returns
-        --------
-        duration: :class:`int`
-            The duration of the event in minutes.
-        """
-        return self.duration.total_seconds() // 60
-
     def reset_timeout_counter(self) -> None:
         """
         Resets the timeout counter to the default value.
@@ -1046,11 +1021,7 @@ class Event:
         output: :class:`str`
             The content string for the availability message.
         """
-        output = self.avail_msg_content_pt1
-        output += get_time_str_from_minutes(self.duration_minutes)
-        output += self.avail_msg_content_pt2
-        output += get_time_str_from_minutes(self.timeout_minutes)
-        output += self.avail_msg_content_pt3
+        output = ""
         if not self.has_everyone_answered():
             cur_date = datetime.now().astimezone().date()
             latest_date = self.get_latest_date()
@@ -1062,38 +1033,65 @@ class Event:
             output += '\n\nEveryone has responded.'
         return output
 
-    def get_availability_request_embed(self) -> Embed:
+    def get_availability_request_embeds(self) -> Embed:
         """
-        Gets the embed for the availability message.
+        Gets the embeds for the availability message.
 
         Returns
         --------
-        embed: :class:`Embed`
-            The embed for the availability message.
+        embeds: :class:`list[Embed]`
+            The list of embeds for the availability message.
         """
         description = self.get_scheduling_status()
-        embed = self.get_general_embed()
-        embed = Embed(title='Availabilities', description=description, color=Color.blue())
+        embeds = []
+        # Event info embed
+        event_embed = self.get_general_embed()
+        embeds.append(event_embed)
+        # Instructions embed
+        instructions_embed = Embed(title='Instructions',
+                                   description='How to respond with your availability:',
+                                   color=Color.purple())
+        instructions_embed.add_field(name='Respond',
+                                     value="Set the date and enter the periods of time you are available."
+                                     "\nAllows for some keyword inputs: full, all, clear, none, empty"
+                                     "\nRequires 24 hour time (e.g. \"21-2\" is 9pm - 2am)."
+                                     "\nSeparate multiple periods of time with commas (e.g. \"9-12, 13-17\")."
+                                     "\nSet your timezone if you use your local time and it will be shifted to Eastern Time."
+                                     "\nCurrently supported timezones: ET, CT, MT, PT",
+                                     inline=False)
+        instructions_embed.add_field(name='Full',
+                                     value="Sets a \"full availability flag\" and adds a time period from now until midnight."
+                                     "\nIf someone else puts availability extending past midnight, yours will be extended to the same time.",
+                                     inline=False)
+        instructions_embed.add_field(name='Use Existing',
+                                     value="Grabs your availability from another event."
+                                     "\nIf you are in more than one other event, you will have to choose which event's availability to reuse.",
+                                     inline=False)
+        instructions_embed.add_field(name='Unsubscribe',
+                                     value=f"Unsubscribe from {self}."
+                                     "\nYou will still be a participant, but you will not be mentioned.",
+                                     inline=False)
+        instructions_embed.add_field(name='Cancel',
+                                     value=f"Cancel scheduling of {self}.",
+                                     inline=False)
+        instructions_embed.add_field(name='Note:',
+                                     value="The event will be either created or cancelled within a minute after the last person responds.",
+                                     inline=False)
+
+        embeds.append(instructions_embed)
+        # Availabilities embed
+        avail_embed = Embed(title='Availabilities', description=description, color=Color.blue())
         if self.image_url is not None and self.image_url != "":
-            embed.set_thumbnail(url=self.image_url)
+            avail_embed.set_thumbnail(url=self.image_url)
         for participant in self.participants:
             participantName = f'{participant}'
             if participant.availability and participant.subscribed:
                 availString = participant.get_availability_string()
-                embed.add_field(name=participantName, value=availString, inline=False)
+                avail_embed.add_field(name=participantName, value=availString, inline=False)
             elif not participant.subscribed:
-                embed.add_field(name=participantName, value="Unsubscribed", inline=False)
-        if self.scheduler:
-            if self.scheduler.member.avatar:
-                embed.set_footer(text=f"Scheduled by {self.scheduler}", icon_url=self.scheduler.member.avatar.url)
-            else:
-                embed.set_footer(text=f"Scheduled by {self.scheduler}")
-        if self.rescheduler:
-            if self.rescheduler.member.avatar:
-                embed.set_footer(text=f"Rescheduled by {self.rescheduler}", icon_url=self.rescheduler.member.avatar.url)
-            else:
-                embed.set_footer(text=f"Rescheduled by {self.rescheduler}")
-        return embed
+                avail_embed.add_field(name=participantName, value="Unsubscribed", inline=False)
+        embeds.append(avail_embed)
+        return embeds
 
     def get_latest_date(self):
         """
@@ -1246,23 +1244,21 @@ class Event:
             if self.avail_buttons is None:
                 self.avail_buttons = AvailabilityButtons(event=self)
             save()
-            embed = self.get_availability_request_embed()
+            embeds = self.get_availability_request_embeds()
             # Send a new message
             if self.availability_message is None:
-                if self.rescheduler is None:
-                    self.avail_msg_content_pt3 += '\n\nThe event will be either created or cancelled within a minute after the last person responds.️'
-                else:
+                if self.rescheduler is not None:
                     self.rescheduler.set_no_availability()
                 content = self.get_availability_request_content()
                 self.availability_message = await self.text_channel.send(content=content,
                                                                          view=self.avail_buttons,
-                                                                         embed=embed)
+                                                                         embeds=embeds)
             # Update existing message
             else:
                 try:
                     await self.availability_message.edit(content=self.get_availability_request_content(),
                                                          view=self.avail_buttons,
-                                                         embed=embed)
+                                                         embeds=embeds)
                 except Exception as e:
                     logger.exception(f'[{self}] Failed to edit availability message in update: {e}')
 
@@ -1382,6 +1378,10 @@ class Event:
     @property
     def duration_minutes(self) -> int:
         return self.duration.total_seconds() // 60
+
+    @property
+    def duration_string(self) -> str:
+        return get_time_str_from_minutes(self.duration_minutes)
 
     @property
     def timeout_minutes(self) -> int:

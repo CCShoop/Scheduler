@@ -318,7 +318,7 @@ class Participant:
         if 'full' in avail_string or 'all' in avail_string:
             self.set_full_availability(month=month, day=day, year=year)
             return
-        if 'clear' in avail_string or 'empty' in avail_string:
+        if 'clear' in avail_string or 'none' in avail_string or 'empty' in avail_string:
             self.set_no_availability()
             return
 
