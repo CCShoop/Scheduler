@@ -694,7 +694,7 @@ class Event:
                         value=self.duration_string,
                         inline=False)
         embed.add_field(name="Location",
-                        value=self.voice_channel.name,
+                        value=self.voice_channel.mention,
                         inline=False)
         embed.add_field(name="Multi Event",
                         value=f"{self.multi_event}",
