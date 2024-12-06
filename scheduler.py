@@ -1081,8 +1081,6 @@ class Event:
         embeds.append(instructions_embed)
         # Availabilities embed
         avail_embed = Embed(title='Availabilities', description=description, color=Color.blue())
-        if self.image_url is not None and self.image_url != "":
-            avail_embed.set_thumbnail(url=self.image_url)
         for participant in self.participants:
             participantName = f'{participant}'
             if participant.availability and participant.subscribed:
