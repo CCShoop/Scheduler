@@ -1042,7 +1042,6 @@ class Event:
         embeds: :class:`list[Embed]`
             The list of embeds for the availability message.
         """
-        description = self.get_scheduling_status()
         embeds = []
         # Event info embed
         event_embed = self.get_general_embed()
@@ -1080,7 +1079,7 @@ class Event:
 
         embeds.append(instructions_embed)
         # Availabilities embed
-        avail_embed = Embed(title='Availabilities', description=description, color=Color.blue())
+        avail_embed = Embed(title='Availabilities', color=Color.blue())
         for participant in self.participants:
             participantName = f'{participant}'
             if participant.availability and participant.subscribed:
