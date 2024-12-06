@@ -1308,7 +1308,7 @@ class Event:
         """
         embed = Embed(title="Event Cancelled",
                       description=f"{self} has been cancelled.",
-                      color=Color.red())
+                      color=0xFF0000)
         if self.image_url:
             embed.set_thumbnail(url=self.image_url)
         if reason != "":
