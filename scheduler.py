@@ -506,7 +506,7 @@ class Event:
                           color=Color.orange())
             embed.timestamp = self.start_times[0]
             if self.image_url:
-                embed.set_thumbnail(self.image_url)
+                embed.set_thumbnail(url=self.image_url)
             embed.set_footer(text="Courtesy of Event Scheduler", icon_url=client.user.avatar.url)
             await self.text_channel.send(content=message, embed=embed, reference=self.event_buttons_message)
         except Exception as e:
