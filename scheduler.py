@@ -1056,7 +1056,9 @@ class Event:
                                      "\nRequires 24 hour time (e.g. \"21-2\" is 9pm - 2am)."
                                      "\nSeparate multiple periods of time with commas (e.g. \"9-12, 13-17\")."
                                      "\nSet your timezone if you use your local time and it will be shifted to Eastern Time."
-                                     "\nCurrently supported timezones: ET, CT, MT, PT",
+                                     "\nCurrently supported timezones: ET, CT, MT, PT"
+                                     "\nNote: Allows you to leave a note in the availability embed, with or without availability."
+                                     "\nLeaving the note field blank when resubmitting the form will clear your note.",
                                      inline=False)
         instructions_embed.add_field(name='Full',
                                      value="Sets a \"full availability flag\" and adds a time period from now until midnight."
@@ -1083,10 +1085,12 @@ class Event:
         for participant in self.participants:
             participantName = f'{participant}'
             if participant.availability and participant.subscribed:
-                availString = participant.get_availability_string()
+                availString = participant.availability_string
                 avail_embed.add_field(name=participantName, value=availString, inline=False)
             elif not participant.subscribed:
                 avail_embed.add_field(name=participantName, value="Unsubscribed", inline=False)
+            elif participant.note:
+                avail_embed.add_field(name=participantName, value=f"Note: \"{participant.note}\"", inline=False)
         embeds.append(avail_embed)
         return embeds
 
@@ -1702,14 +1706,14 @@ class AvailabilityModal(Modal):
         super().__init__(*args, **kwargs)
         self.event = event
         date = datetime.now().astimezone().strftime('%m/%d/%Y')
-        self.timeslot1 = TextInput(label='Timeslot 1', placeholder='8-11, 1pm-3pm (i.e. Available 0800-1100, 1300-1500)', default='')
+        self.timeslot1 = TextInput(label='Timeslot 1', placeholder='8-11, 1pm-3pm (i.e. Available 0800-1100, 1300-1500)', default='', required=False)
         self.timeslot2 = TextInput(label='Timeslot 2', placeholder='15:30-17 (i.e. Available 1530-1700)', default='', required=False)
-        self.timeslot3 = TextInput(label='Timeslot 3', placeholder='-2030, 22- (i.e. Available now-2030, 2200-0000)', default='', required=False)
+        self.note = TextInput(label='Note', placeholder='A note to show with your availability', default='', required=False)
         self.date = TextInput(label='Date', placeholder='MM/DD/YYYY', default=date)
         self.timezone = TextInput(label='Timezone', placeholder='ET|EST|EDT|CT|CST|CDT|MT|MST|MDT|PT|PST|PDT', default='ET')
         self.add_item(self.timeslot1)
         self.add_item(self.timeslot2)
-        self.add_item(self.timeslot3)
+        self.add_item(self.note)
         self.add_item(self.date)
         self.add_item(self.timezone)
 
@@ -1721,11 +1725,12 @@ class AvailabilityModal(Modal):
             participant = Participant(member=member)
             self.event.participants.append(participant)
         participant.subscribed = True
-        avail_string = f'{self.timeslot1.value}, {self.timeslot2.value}, {self.timeslot3.value} {self.timezone.value}'
+        avail_string = f'{self.timeslot1.value}, {self.timeslot2.value} {self.timezone.value}'
         try:
             logger.info(f'[{self.event}] Received availability from {interaction.user.name}')
-            participant.set_specific_availability(avail_string, self.date.value)
-            response = f'**__Availability received for {self.event}:__**' + participant.get_availability_string()
+            participant.set_specific_availability(avail_string, self.date.value, self.note.value)
+            response = f'**__Availability received for {self.event}:__**\n'
+            response += participant.availability_string
             await interaction.response.send_message(response, ephemeral=True)
             for timeblock in participant.availability:
                 logger.info(f'[{self.event}] \t{timeblock}')
@@ -1839,7 +1844,7 @@ class AvailabilityButtons(View):
                     logger.info(f'[{self.event}] \t{timeblock}')
                 participant.answered = True
                 response = f"__**Availability for {self.event}:**__\n"
-                response += participant.get_availability_string()
+                response += participant.availability_string
                 await interaction.response.send_message(response, ephemeral=True)
             else:
                 logger.info(f'[{self.event}] {participant} deselected full availability')
@@ -1883,7 +1888,7 @@ class AvailabilityButtons(View):
                 participant.availability = found_availabilities[0].avail.copy()
                 participant.answered = True
                 response = f"__**Availability for {self.event}:**__\n"
-                response += participant.get_availability_string()
+                response += participant.availability_string
                 await interaction.response.send_message(response, ephemeral=True)
             else:
                 await interaction.response.send_message('Select another event to grab your availability from.', view=ExistingAvailabilitiesSelectView(found_availabilities, participant), ephemeral=True)
@@ -2277,7 +2282,7 @@ class ExistingAvailabilitiesSelect(Select):
                 self.participant.answered = True
                 self.participant.subscribed = True
                 response = f"__**Availability for {event_avail.event.name}:**__\n"
-                response += self.participant.get_availability_string()
+                response += self.participant.availability_string
                 break
         await event_avail.event.update_availability_message()
         await interaction.response.send_message(content=response, ephemeral=True)

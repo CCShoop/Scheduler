@@ -123,8 +123,8 @@ class Participant:
                  subscribed: bool = True,
                  unavailable: bool = False,
                  removed_times: list = None,
-                 full_availability_flag: bool = False
-                 ) -> None:
+                 full_availability_flag: bool = False,
+                 note: str = None) -> None:
         self.member = member
         self.availability = availability or []
         self.answered = answered
@@ -132,9 +132,9 @@ class Participant:
         self.unavailable = unavailable
         self.removed_times = removed_times or []
         self.full_availability_flag = full_availability_flag
+        self.note = note
         self.msg_lock = Lock()
 
-    # Participant is available at the specified time for the specified duration
     def is_available_at(self, time: datetime, duration: timedelta) -> bool:
         """
         Indicates whether or not the participant is available at a certain time with the provided duration.
@@ -157,30 +157,6 @@ class Participant:
             if (timeblock.start_time <= time) and ((time + duration) <= timeblock.end_time):
                 return True
         return False
-
-    # Get the participant's availability in string format
-    def get_availability_string(self) -> str:
-        """
-        Gets the availability string of the participant.
-
-        Returns
-        --------
-        response: :class:`str`
-            The participant's availability string
-        """
-        removed_index = 0
-        response = ''
-        if self.full_availability_flag:
-            response += "Full Availability"
-        for timeblock in self.availability:
-            if removed_index < len(self.removed_times):
-                removed_time = self.removed_times[removed_index]
-                if removed_time.timeblock.start_time < timeblock.start_time:
-                    response += f'\n{removed_time.event_name[:20]}'
-                    response += f' {removed_time.timeblock.start_time.strftime("%H:%M")} - {removed_time.timeblock.end_time.strftime("%H:%M")}'
-                    removed_index += 1
-            response += f'\n{timeblock}'
-        return response
 
     def set_full_availability(self, month=None, day=None, year=None, end_time=None) -> None:
         """
@@ -227,7 +203,7 @@ class Participant:
         self.answered = False
         self.full_availability_flag = False
 
-    def set_specific_availability(self, avail_string: str, date_string: str) -> None:
+    def set_specific_availability(self, avail_string: str, date_string: str, note: str) -> None:
         """
         Sets a specific availability for the user with string parsing.
 
@@ -237,11 +213,19 @@ class Participant:
             The combined string from the Discord TextInputs.
         date_string: :class:`str`
             The date that the availability is for.
+        note: :class:`str`
+            A note to place with availability.
         """
-        # Blank input to view current availability
-        if avail_string == '':
+        if avail_string == '' and note == '':
             return
 
+        if note != '':
+            self.note = note
+        else:
+            self.note = None
+
+        if avail_string == '':
+            return
         avail_string = avail_string.lower()
 
         # Date parsing
@@ -535,8 +519,39 @@ class Participant:
             self.answered = False
             self.full_availability_flag = False
 
+    @property
+    def availability_string(self) -> str:
+        """
+        Gets the availability string of the participant.
+
+        Returns
+        --------
+        response: :class:`str`
+            The participant's availability string
+        """
+        removed_index = 0
+        response = ''
+        if self.note:
+            response += f"Note: \"{self.note}\"\n"
+        if self.full_availability_flag:
+            response += "Full Availability\n"
+        for timeblock in self.availability:
+            if removed_index < len(self.removed_times):
+                removed_time = self.removed_times[removed_index]
+                if removed_time.timeblock.start_time < timeblock.start_time:
+                    response += f'{removed_time.event_name[:20]}'
+                    response += f' {removed_time.timeblock.start_time.strftime("%H:%M")}'
+                    response += f' - {removed_time.timeblock.end_time.strftime("%H:%M")}\n'
+                    removed_index += 1
+            response += f'{timeblock}'
+        return response
+
     @classmethod
     def from_dict(cls, guild: Guild, data: dict):
+        try:
+            note = data['note']
+        except Exception:
+            note = None
         return cls(
             member=guild.get_member(data['member_id']),
             answered=data['answered'],
@@ -544,6 +559,7 @@ class Participant:
             unavailable=data['unavailable'],
             removed_times=[RemovedTime.from_dict(removed_time) for removed_time in data['removed_time']],
             full_availability_flag=data['full_availability_flag'],
+            note=note,
             availability=[TimeBlock.from_dict(timeblock_data) for timeblock_data in data['availability']]
         )
 
@@ -555,6 +571,7 @@ class Participant:
             'unavailable': self.unavailable,
             'removed_time': [removed_time.to_dict() for removed_time in self.removed_times],
             'full_availability_flag': self.full_availability_flag,
+            'note': self.note,
             'availability': [timeblock.to_dict() for timeblock in self.availability]
         }
 
