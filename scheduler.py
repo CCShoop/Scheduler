@@ -1050,7 +1050,7 @@ class Event:
         instructions_embed = Embed(title='Instructions',
                                    description='How to respond with your availability:',
                                    color=Color.purple())
-        instructions_embed.add_field(name='Respond',
+        instructions_embed.add_field(name='Respond Button',
                                      value="Set the date and enter the periods of time you are available."
                                      "\nAllows for some keyword inputs: full, all, clear, none, empty"
                                      "\nRequires 24 hour time (e.g. \"21-2\" is 9pm - 2am)."
@@ -1060,23 +1060,23 @@ class Event:
                                      "\nNote: Allows you to leave a note in the availability embed, with or without availability."
                                      "\nLeaving the note field blank when resubmitting the form will clear your note.",
                                      inline=False)
-        instructions_embed.add_field(name='Full',
+        instructions_embed.add_field(name='Full Availability Button',
                                      value="Sets a \"full availability flag\" and adds a time period from now until midnight."
                                      "\nIf someone else puts availability extending past midnight, yours will be extended to the same time.",
                                      inline=False)
-        instructions_embed.add_field(name='Use Existing',
+        instructions_embed.add_field(name='Use Existing Button',
                                      value="Grabs your availability from another event."
                                      "\nIf you are in more than one other event, you will have to choose which event's availability to reuse.",
                                      inline=False)
-        instructions_embed.add_field(name='Unsubscribe',
+        instructions_embed.add_field(name='Unsubscribe Button',
                                      value=f"Unsubscribe from {self}."
                                      "\nYou will still be a participant, but you will not be mentioned.",
                                      inline=False)
-        instructions_embed.add_field(name='Cancel',
+        instructions_embed.add_field(name='Cancel Button',
                                      value=f"Cancel scheduling of {self}.",
                                      inline=False)
-        instructions_embed.add_field(name='Note:',
-                                     value="The event will be either created or cancelled within a minute after the last person responds.",
+        instructions_embed.add_field(name='General Information',
+                                     value=f"{self} will be either created or cancelled within a minute after the last person responds.",
                                      inline=False)
 
         embeds.append(instructions_embed)
