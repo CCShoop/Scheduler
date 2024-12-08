@@ -49,8 +49,11 @@ INCLUDE_EXCLUDE: Literal = Literal[INCLUDE, EXCLUDE]
 # Time in minutes to delay "immediate" start
 START_TIME_DELAY = 10
 
+# Time in seconds between updates
+UPDATE_INTERVAL: int = 10
+
 # Number of updates before an event is cleared
-UPDATES_PER_MINUTE: int = 2
+UPDATES_PER_MINUTE: int = 60 // UPDATE_INTERVAL
 MINUTES_PER_HOUR: int = 60
 HOURS_PER_DAY: int = 24
 EVENT_TIMEOUT_DAYS: int = 3
@@ -66,7 +69,7 @@ def save() -> None:
     """
     Saves the bot's status by writing the client's events to a file.
     """
-    persist.write(client.get_events_dict())
+    persist.write(client.events_dict)
 
 
 def get_time_str_from_minutes(minutes: int) -> str:
@@ -273,8 +276,8 @@ class SchedulerClient(Client):
             else:
                 logger.info('No json data found')
 
-    # Return all events as a dict
-    def get_events_dict(self) -> dict:
+    @property
+    def events_dict(self) -> dict:
         """
         Shove all events into a dictionary for writing to the data file.
 
@@ -610,6 +613,8 @@ class Event:
             logger.info(f"[{self}] last event ended, removed from memory")
         else:
             logger.info(f"[{self}] next event starts at {self.start_times[0]}")
+        for event in client.events:
+            event.restore_availabilities(self)
         save()
 
     async def end_if_participants_leave_vc(self) -> None:
@@ -618,21 +623,6 @@ class Event:
         """
         if not any(participant.member in self.voice_channel.members for participant in self.participants):
             await self.end(f'Event ended by {client.user} because no users were in the voice channel.')
-
-    def number_of_responded(self) -> int:
-        """
-        Gets the number of participants who are subscribed and have responded to the event.
-
-        Returns
-        --------
-        responded: :class:`int`
-            The number of participants who are subscribed and have responded to the event.
-        """
-        responded = 0
-        for participant in self.participants:
-            if participant.subscribed and participant.answered:
-                responded += 1
-        return responded
 
     async def prep_next_scheduled_event(self) -> bool:
         """
@@ -674,7 +664,7 @@ class Event:
                                                                       channel=self.voice_channel,
                                                                       privacy_level=self.privacy_level)
             await self.save_image_to_file()
-            if self.has_image_saved():
+            if self.has_image_saved:
                 await scheduled_event.edit(image=self.get_image())
             self.scheduled_events.append(scheduled_event)
             logger.info(f'[{self}] Created event starting {start_time.strftime("%A, %m/%d/%Y: %H:%M")} ET')
@@ -686,7 +676,7 @@ class Event:
 
     def get_general_embed(self, end_time: datetime = None) -> Embed:
         embed = Embed(title=f"{self}",
-                      description=self.get_scheduling_status(),
+                      description=self.scheduling_status,
                       color=Color.green())
         if self.image_url:
             embed.set_thumbnail(url=self.image_url)
@@ -703,10 +693,10 @@ class Event:
             if end_time is None and not self.started:
                 if self.mins_until_start > 0:
                     embed.add_field(name="Starts in",
-                                    value=f"{get_time_str_from_minutes(self.mins_until_start + 1)}",
+                                    value=f"{get_time_str_from_minutes(self.mins_until_start)}",
                                     inline=False)
                 elif self.mins_until_start == 0:
-                    embed.add_field(name="Starting now", value="", inline=False)
+                    embed.add_field(name="Starting soon", value="", inline=False)
                 else:
                     embed.add_field(name="Overdue by",
                                     value=f"{get_time_str_from_minutes(self.mins_until_start)}",
@@ -783,34 +773,13 @@ class Event:
         """
         Deletes the image file if one has been downloaded for the event.
         """
-        if not self.has_image_saved():
+        if not self.has_image_saved:
             return
         try:
             os.remove(self.image_path)
             logger.info(f"[{self}] Deleted image file")
         except Exception as e:
             logger.exception(f"[{self}] Failed to delete image: {e}")
-
-    def get_scheduling_status(self) -> str:
-        """
-        Gets the current event status.
-
-        Returns
-        --------
-        status: :class:`str`
-            A string describing the current status of the event.
-        """
-        if self.started:
-            return "Started event"
-        if self.created:
-            return "Created event"
-        if self.ready_to_create:
-            return "Creating event"
-        if self.changed:
-            return "Availability input cooldown"
-        if self.has_everyone_answered():
-            return "Preparing to create event"
-        return "Awaiting availability"
 
     def get_names_string(self,
                          subscribed_only: bool = False,
@@ -961,7 +930,6 @@ class Event:
             for other_participant in event.participants:
                 if self_participant.member.id == other_participant.member.id:
                     other_participants.append(other_participant)
-                    logger.info(f"Found shared participant {self_participant} in {self.name} and {event}")
         return other_participants
 
     def get_other_availability(self, participant: Participant) -> list:
@@ -1022,9 +990,9 @@ class Event:
             The content string for the availability message.
         """
         output = ""
-        if not self.has_everyone_answered():
+        if not self.everyone_answered:
             cur_date = datetime.now().astimezone().date()
-            latest_date = self.get_latest_date()
+            latest_date = self.latest_date
             if cur_date < latest_date:
                 output += f'\n\n**Input availability with start time on latest availability date: {latest_date.strftime("%m/%d")}**'
             mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
@@ -1084,63 +1052,13 @@ class Event:
         avail_embed = Embed(title='Availabilities', color=Color.blue())
         for participant in self.participants:
             participantName = f'{participant}'
-            if participant.availability and participant.subscribed:
-                availString = participant.availability_string
+            availString = participant.availability_string
+            if availString != "":
                 avail_embed.add_field(name=participantName, value=availString, inline=False)
-            elif not participant.subscribed:
+            if not participant.subscribed:
                 avail_embed.add_field(name=participantName, value="Unsubscribed", inline=False)
-            elif participant.note:
-                avail_embed.add_field(name=participantName, value=f"Note: \"{participant.note}\"", inline=False)
         embeds.append(avail_embed)
         return embeds
-
-    def get_latest_date(self):
-        """
-        Gets the latest date of all start times in all participants' availabilities.
-
-        Returns
-        --------
-        latest_date: :class:`datetime.date`
-            The latest date of all start times in all participants' availabilities.
-        """
-        current_time = datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=START_TIME_DELAY)
-        latest_date = current_time.date()
-        for participant in self.participants:
-            for timeblock in participant.availability:
-                latest_date = max((timeblock.start_time - timedelta(hours=HOURS_PAST_MIDNIGHT_CUTOFF)).date(), latest_date)
-        return latest_date
-
-    def has_everyone_answered(self) -> bool:
-        """
-        Indicates whether or not all participants have responded.
-
-        Returns
-        --------
-        True
-            If all participants have responded.
-        False
-            If at least one participant has not yet responded.
-        """
-        latest_date = self.get_latest_date()
-        for participant in self.participants:
-            if participant.subscribed:
-                participant.confirm_answered(duration=self.duration, latest_date=latest_date)
-                if not participant.answered:
-                    return False
-        return True
-
-    def has_image_saved(self) -> bool:
-        """
-        Indicates whether the event has an image saved.
-
-        Returns
-        --------
-        True
-            If an image is saved.
-        False
-            If an image is not saved.
-        """
-        return os.path.exists(self.image_path)
 
     def restore_availabilities(self, event) -> None:
         """
@@ -1153,7 +1071,9 @@ class Event:
         """
         if event is self:
             return
+        logger.info(f"[{self}] Restored availabilities for {event}")
         [participant.restore_availability_for_event(event.name) for participant in self.shared_participants(event)]
+        [participant.confirm_answered(duration=event.duration, latest_date=event.latest_date) for participant in self.shared_participants(event)]
 
     def update_availabilities_to(self, participant: Participant) -> None:
         """
@@ -1375,6 +1295,95 @@ class Event:
         client.events.remove(self)
         save()
         logger.info(f'[{self}] Removed from client events list')
+
+    @property
+    def scheduling_status(self) -> str:
+        """
+        Gets the current event status.
+
+        Returns
+        --------
+        status: :class:`str`
+            A string describing the current status of the event.
+        """
+        if self.started:
+            return "Started event"
+        if self.created:
+            return "Created event"
+        if self.ready_to_create:
+            return "Creating event"
+        if self.changed:
+            return "Availability input cooldown"
+        if self.everyone_answered:
+            return "Preparing to create event"
+        return "Awaiting availability"
+
+    @property
+    def everyone_answered(self) -> bool:
+        """
+        Indicates whether or not all participants have responded.
+
+        Returns
+        --------
+        True
+            If all participants have responded.
+        False
+            If at least one participant has not yet responded.
+        """
+        latest_date = self.latest_date
+        for participant in self.participants:
+            if participant.subscribed:
+                participant.confirm_answered(duration=self.duration, latest_date=latest_date)
+                if not participant.answered:
+                    return False
+        return True
+
+    @property
+    def has_image_saved(self) -> bool:
+        """
+        Indicates whether the event has an image saved.
+
+        Returns
+        --------
+        True
+            If an image is saved.
+        False
+            If an image is not saved.
+        """
+        return os.path.exists(self.image_path)
+
+    @property
+    def number_of_responded(self) -> int:
+        """
+        Gets the number of participants who are subscribed and have responded to the event.
+
+        Returns
+        --------
+        responded: :class:`int`
+            The number of participants who are subscribed and have responded to the event.
+        """
+        responded = 0
+        for participant in self.participants:
+            if participant.subscribed and participant.answered:
+                responded += 1
+        return responded
+
+    @property
+    def latest_date(self):
+        """
+        Gets the latest date of all start times in all participants' availabilities.
+
+        Returns
+        --------
+        latest_date: :class:`datetime.date`
+            The latest date of all start times in all participants' availabilities.
+        """
+        current_time = datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=START_TIME_DELAY)
+        latest_date = current_time.date()
+        for participant in self.participants:
+            for timeblock in participant.availability:
+                latest_date = max((timeblock.start_time - timedelta(hours=HOURS_PAST_MIDNIGHT_CUTOFF)).date(), latest_date)
+        return latest_date
 
     @property
     def duration_minutes(self) -> int:
@@ -1729,6 +1738,9 @@ class AvailabilityModal(Modal):
         try:
             logger.info(f'[{self.event}] Received availability from {interaction.user.name}')
             participant.set_specific_availability(avail_string, self.date.value, self.note.value)
+            participant.confirm_answered(duration=self.event.duration, latest_date=self.event.latest_date)
+            remove_availabilities_for_events()
+            await self.event.update_availability_message()
             response = f'**__Availability received for {self.event}:__**\n'
             response += participant.availability_string
             await interaction.response.send_message(response, ephemeral=True)
@@ -1740,8 +1752,6 @@ class AvailabilityModal(Modal):
             except Exception as e:
                 logger.error(f'[{self.event}] Failed sending interaction response: {e}')
             logger.exception(f'[{self.event}] Error setting specific availability: {e}')
-        finally:
-            await self.event.update_availability_message()
 
     async def on_error(self, interaction: Interaction, error: Exception) -> None:
         await interaction.response.send_message(f'Error getting availability: {error}', ephemeral=True)
@@ -2225,7 +2235,7 @@ class ExistingGuildEventsSelect(Select):
             for guild_event in self.guild.scheduled_events:
                 if guild_event.name == selected_guild_event.name and guild_event.location == selected_guild_event.location:
                     event.start_times.append(guild_event.start_time.astimezone())
-                    if event.has_image_saved():
+                    if event.has_image_saved:
                         guild_event.edit(image=event.get_image())
                     event.scheduled_events.append(guild_event)
             await event.update_event_buttons_message()
@@ -2526,6 +2536,35 @@ async def update_event_timeouts() -> None:
     save()
 
 
+def remove_availabilities_for_events() -> None:
+    """
+    Removes and saves timeblocks from uncreated events for created events.
+    Also cleans removed availabilities of forgotten events.
+    """
+    # Remove blocks of time from participant availability for events
+    for event in client.events:
+        if not event.created:
+            continue
+        for other_event in client.events:
+            if other_event == event or other_event.created:
+                continue
+            for participant in event.participants:
+                for other_participant in other_event.participants:
+                    if participant.member.id == other_participant.member.id:
+                        other_participant.remove_availability_for_event(event_name=event.name,
+                                                                        event_start_times=event.start_times,
+                                                                        event_duration=event.duration)
+                        break
+    # Clean removed availabilities
+    for event in client.events:
+        for participant in event.participants:
+            new_removed_times = []
+            for removed_time in participant.removed_times:
+                if removed_time.event_name in [event.name for event in client.events]:
+                    new_removed_times.append(removed_time)
+            participant.removed_times = new_removed_times
+
+
 @client.event
 async def on_ready():
     logger.info(f'[{client.user}] Connected to Discord!')
@@ -2572,7 +2611,7 @@ async def on_message(message: Message):
         logger.info(f"User {message.author.name} listed all events")
         embed = Embed(title="All events", color=Color.blue())
         for event in client.events:
-            eventStatus = event.get_scheduling_status()
+            eventStatus = event.scheduling_status
             embed.add_field(name=event.name, value=eventStatus, inline=True)
         await message.channel.send(embed=embed, reference=message)
 
@@ -2643,7 +2682,15 @@ async def on_message(message: Message):
 @app_commands.describe(usernames='Comma separated usernames of users to include/exclude.')
 @app_commands.describe(roles='Comma separated roles of users to include/exclude.')
 @app_commands.describe(duration='Event duration in minutes (30 minutes default).')
-async def create_command(interaction: Interaction, event_name: str, voice_channel: VoiceChannel, start_time: str, image_url: str = None, include_exclude: INCLUDE_EXCLUDE = INCLUDE, usernames: str = None, roles: str = None, duration: int = 30):
+async def create_command(interaction: Interaction,
+                         event_name: str,
+                         voice_channel: VoiceChannel,
+                         start_time: str,
+                         image_url: str = None,
+                         include_exclude: INCLUDE_EXCLUDE = INCLUDE,
+                         usernames: str = None,
+                         roles: str = None,
+                         duration: int = 30):
     logger.info(f'[{event_name}] Received event creation request from {interaction.user.name}')
     if not interaction.guild.voice_channels:
         raise Exception('The server must have at least one voice channel to schedule an event.')
@@ -2697,6 +2744,7 @@ async def create_command(interaction: Interaction, event_name: str, voice_channe
     client.events.append(event)
     await event.save_image_to_file()
     await event.make_scheduled_events()
+    remove_availabilities_for_events()
 
     try:
         await interaction.response.send_message(content='Event created!', ephemeral=True)
@@ -3043,7 +3091,7 @@ async def listevents_command(interaction: Interaction):
         await interaction.response.send_message(content=content, ephemeral=True)
 
 
-@tasks.loop(seconds=30)
+@tasks.loop(seconds=UPDATE_INTERVAL)
 async def update():
     sort_events()
     await update_event_timeouts()
@@ -3051,21 +3099,12 @@ async def update():
 
     # Participant availability checks
     for event in client.events:
-        # If availability expires before the event is created, mark the participant as unanswered
+        for participant in event.participants:
+            participant.confirm_answered(duration=event.duration, latest_date=event.latest_date)
+    remove_availabilities_for_events()
+    for event in client.events:
         if not event.created:
-            latest_date = event.get_latest_date()
-            for participant in event.participants:
-                participant.confirm_answered(duration=event.duration, latest_date=latest_date)
             await event.update_availability_message()
-        # Remove this event from each participant's other availabilities
-        else:
-            for participant in event.participants:
-                for other_event in client.events:
-                    if other_event != event and not other_event.created:
-                        for other_participant in other_event.participants:
-                            if other_participant.member.id == participant.member.id:
-                                other_participant.remove_availability_for_event(event_name=event.name, event_start_times=event.start_times, event_duration=event.duration)
-                                break
 
     for event in client.events.copy():
         # Countdown to start + 5 minute warning
@@ -3074,7 +3113,7 @@ async def update():
             await event.update_event_buttons_message()
             # Send 5 minute warning
             if not event.five_minute_warning_flag:
-                if datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=5) == event.start_times[0] and event.scheduled_events[0].status == EventStatus.scheduled and not event.started:
+                if datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=6) == event.start_times[0] and event.scheduled_events[0].status == EventStatus.scheduled and not event.started:
                     await event.send_five_minute_warning()
             await event.start_if_participants_in_vc()
             continue
@@ -3083,7 +3122,7 @@ async def update():
         if event.created:
             await event.end_if_participants_leave_vc()
             continue
-        elif not event.has_everyone_answered():
+        elif not event.everyone_answered:
             continue
 
         await event.update_availability_message()
@@ -3130,6 +3169,7 @@ async def update():
             # Create event
             try:
                 await event.make_scheduled_events()
+                remove_availabilities_for_events()
             except Exception as e:
                 logger.error(f'[{event}] Error creating scheduled event: {e}')
                 continue
@@ -3141,21 +3181,25 @@ async def update():
             for other_event in client.events:
                 if other_event != event:
                     for participant in other_event.participants:
-                        participant.remove_availability_for_event(event_name=event.name, event_start_times=event.start_times, event_duration=event.duration)
+                        participant.remove_availability_for_event(event_name=event.name,
+                                                                  event_start_times=event.start_times,
+                                                                  event_duration=event.duration)
 
             # If there is an active event in the same location, disable the start button
             if location_has_active_event(event.voice_channel):
                 event.event_buttons.start_button.disabled = True
+
+        await event.update_messages()
     save()
 
 
 @update.before_loop
 async def before_update():
     now = datetime.now().astimezone()
-    if now.second < 30:
-        next_half_minute = now.replace(second=0) + timedelta(seconds=30)
+    if now.second < UPDATE_INTERVAL:
+        next_half_minute = now.replace(second=0) + timedelta(seconds=UPDATE_INTERVAL)
     else:
-        next_half_minute = now.replace(second=30) + timedelta(seconds=30)
+        next_half_minute = now.replace(second=UPDATE_INTERVAL) + timedelta(seconds=UPDATE_INTERVAL)
     seconds_until_interval = (next_half_minute - now).total_seconds()
     logger.info(f'[{client.user}] Sleeping for {seconds_until_interval} seconds before update')
     await asyncio.sleep(seconds_until_interval)

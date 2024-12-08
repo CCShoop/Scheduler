@@ -449,20 +449,19 @@ class Participant:
         event_duration: :class:`timedelta`
             The duration of the event.
         """
-        if not self.availability:
-            return
         new_availability = []
         changed = False
         for event_start_time in event_start_times:
             changed = True
             event_end_time = event_start_time + event_duration
+            if event_name not in [removed_time.event_name for removed_time in self.removed_times]:
+                self.removed_times.append(RemovedTime(event_name, TimeBlock(event_start_time, event_end_time)))
             for timeblock in self.availability:
                 # Timeblock does not overlap with event
                 if timeblock.end_time <= event_start_time or event_end_time <= timeblock.start_time:
                     new_availability.append(timeblock)
                 # Timeblock overlaps with event
                 else:
-                    self.removed_times.append(RemovedTime(event_name, TimeBlock(event_start_time, event_end_time)))
                     # Timeblock starts before event
                     if timeblock.start_time < event_start_time:
                         new_availability.append(TimeBlock(timeblock.start_time, event_start_time))
@@ -486,7 +485,7 @@ class Participant:
             The name of the event to restore availability from.
         """
         for removed_time in self.removed_times.copy():
-            if removed_time.name == event_name:
+            if removed_time.event_name == event_name:
                 self.availability.append(removed_time.timeblock)
                 self.removed_times.remove(removed_time)
                 self.clean_availability()
@@ -504,13 +503,18 @@ class Participant:
         latest_date: :class:`datetime.date`
             Optional: Latest date from other participants in the event.
         """
+        cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
+        new_removed_times = []
+        for removed_time in self.removed_times:
+            if cur_time < removed_time.timeblock.end_time:
+                removed_time.timeblock.start_time = max(removed_time.timeblock.start_time, cur_time)
+                new_removed_times.append(removed_time)
+        self.removed_times = new_removed_times
         if self.availability:
             new_availability = []
-            cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
             for tb in self.availability:
-                if tb.start_time < cur_time:
-                    tb.start_time = cur_time
                 if cur_time + duration <= tb.end_time:
+                    tb.start_time = max(tb.start_time, cur_time)
                     new_availability.append(tb)
             self.availability = new_availability
         if self.availability and latest_date is not None:
@@ -535,15 +539,21 @@ class Participant:
             response += f"Note: \"{self.note}\"\n"
         if self.full_availability_flag:
             response += "Full Availability\n"
-        for timeblock in self.availability:
-            if removed_index < len(self.removed_times):
-                removed_time = self.removed_times[removed_index]
-                if removed_time.timeblock.start_time < timeblock.start_time:
-                    response += f'{removed_time.event_name[:20]}'
-                    response += f' {removed_time.timeblock.start_time.strftime("%H:%M")}'
-                    response += f' - {removed_time.timeblock.end_time.strftime("%H:%M")}\n'
-                    removed_index += 1
-            response += f'{timeblock}'
+        if self.availability:
+            for timeblock in self.availability:
+                if removed_index < len(self.removed_times):
+                    removed_time = self.removed_times[removed_index]
+                    if removed_time.timeblock.start_time < timeblock.start_time:
+                        response += f'[BUSY] [{removed_time.event_name[:20]}]'
+                        response += f' {removed_time.timeblock.start_time.strftime("%H:%M")}'
+                        response += f' - {removed_time.timeblock.end_time.strftime("%H:%M")}\n'
+                        removed_index += 1
+                response += f'[FREE] {timeblock}'
+        else:
+            for removed_time in self.removed_times:
+                response += f'[BUSY] [{removed_time.event_name[:20]}]'
+                response += f' {removed_time.timeblock.start_time.strftime("%H:%M")}'
+                response += f' - {removed_time.timeblock.end_time.strftime("%H:%M")}\n'
         return response
 
     @classmethod
