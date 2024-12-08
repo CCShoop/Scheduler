@@ -548,10 +548,6 @@ class Participant:
 
     @classmethod
     def from_dict(cls, guild: Guild, data: dict):
-        try:
-            note = data['note']
-        except Exception:
-            note = None
         return cls(
             member=guild.get_member(data['member_id']),
             answered=data['answered'],
@@ -559,7 +555,7 @@ class Participant:
             unavailable=data['unavailable'],
             removed_times=[RemovedTime.from_dict(removed_time) for removed_time in data['removed_time']],
             full_availability_flag=data['full_availability_flag'],
-            note=note,
+            note=data['note'],
             availability=[TimeBlock.from_dict(timeblock_data) for timeblock_data in data['availability']]
         )
 
