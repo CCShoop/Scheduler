@@ -692,7 +692,7 @@ class Event:
         if self.created:
             if end_time is None and not self.started:
                 if self.mins_until_start > 0:
-                    embed.add_field(name="Starts in",
+                    embed.add_field(name="Starting in",
                                     value=f"{get_time_str_from_minutes(self.mins_until_start)}",
                                     inline=False)
                 elif self.mins_until_start == 0:
