@@ -2736,9 +2736,9 @@ async def create_command(interaction: Interaction,
                   image_url=image_url,
                   duration=duration,
                   start_times=start_times)
-    client.events.append(event)
     await event.save_image_to_file()
     await event.make_scheduled_events()
+    client.events.append(event)
     remove_availabilities_for_events()
 
     try:
