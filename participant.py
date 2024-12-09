@@ -95,6 +95,9 @@ class RemovedTime:
             'timeblock': self.timeblock.to_dict()
         }
 
+    def __repr__(self) -> str:
+        return f"[{self.event_name[:20]}] {self.timeblock}"
+
 
 class Participant:
     """
@@ -540,20 +543,22 @@ class Participant:
         if self.full_availability_flag:
             response += "[Full Availability]\n"
         if self.availability:
+            # Print availabiliity and removed times within availability
             for timeblock in self.availability:
                 if removed_index < len(self.removed_times):
                     removed_time = self.removed_times[removed_index]
                     if removed_time.timeblock.start_time < timeblock.start_time:
-                        response += f'[Busy] [{removed_time.event_name[:20]}]'
-                        response += f' {removed_time.timeblock.start_time.strftime("%H:%M")}'
-                        response += f' - {removed_time.timeblock.end_time.strftime("%H:%M")}\n'
+                        response += f"[Busy] {removed_time}\n"
                         removed_index += 1
-                response += f'[Free] {timeblock}'
+                response += f"[Free] {timeblock}\n"
+            # Print removed times after end of availability
+            while removed_index < len(self.removed_times):
+                response += f"{self.removed_times[removed_index]}\n"
+                removed_index += 1
         else:
+            # Print removed times
             for removed_time in self.removed_times:
-                response += f'[Busy] [{removed_time.event_name[:20]}]'
-                response += f' {removed_time.timeblock.start_time.strftime("%H:%M")}'
-                response += f' - {removed_time.timeblock.end_time.strftime("%H:%M")}\n'
+                response += f"[Busy] {removed_time}\n"
         return response
 
     @classmethod
