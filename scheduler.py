@@ -689,7 +689,11 @@ class Event:
         embed.add_field(name="Multi Event",
                         value=f"{self.multi_event}",
                         inline=False)
-        if self.created:
+        if not self.created:
+            embed.add_field(name="Times out in",
+                            value=f"{get_time_str_from_minutes(self.timeout_minutes)}",
+                            inline=False)
+        else:
             if end_time is None and not self.started:
                 if self.mins_until_start > 0:
                     embed.add_field(name="Starting in",
