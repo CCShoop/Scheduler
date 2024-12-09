@@ -712,11 +712,6 @@ class Event:
                 embed.add_field(name="Ended",
                                 value=f'{end_time.strftime("%A, %m/%d at %H:%M")} ET',
                                 inline=False)
-        unsubscribed = self.get_names_string(unsubscribed_only=True).replace(', ', '\n')
-        if unsubscribed != "":
-            embed.add_field(name="Unsubscribed",
-                            value=unsubscribed,
-                            inline=False)
         if self.created:
             embed.timestamp = self.start_times[0]
         if self.scheduler:
@@ -1056,7 +1051,7 @@ class Event:
             if availString != "":
                 avail_embed.add_field(name=participantName, value=availString, inline=False)
             if not participant.subscribed:
-                avail_embed.add_field(name=participantName, value="Unsubscribed", inline=False)
+                avail_embed.add_field(name=participantName, value="[Unsubscribed]", inline=False)
         embeds.append(avail_embed)
         return embeds
 

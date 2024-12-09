@@ -536,22 +536,22 @@ class Participant:
         removed_index = 0
         response = ''
         if self.note:
-            response += f"Note: \"{self.note}\"\n"
+            response += f"[Note] \"{self.note}\"\n"
         if self.full_availability_flag:
-            response += "Full Availability\n"
+            response += "[Full Availability]\n"
         if self.availability:
             for timeblock in self.availability:
                 if removed_index < len(self.removed_times):
                     removed_time = self.removed_times[removed_index]
                     if removed_time.timeblock.start_time < timeblock.start_time:
-                        response += f'[BUSY] [{removed_time.event_name[:20]}]'
+                        response += f'[Busy] [{removed_time.event_name[:20]}]'
                         response += f' {removed_time.timeblock.start_time.strftime("%H:%M")}'
                         response += f' - {removed_time.timeblock.end_time.strftime("%H:%M")}\n'
                         removed_index += 1
-                response += f'[FREE] {timeblock}'
+                response += f'[Free] {timeblock}'
         else:
             for removed_time in self.removed_times:
-                response += f'[BUSY] [{removed_time.event_name[:20]}]'
+                response += f'[Busy] [{removed_time.event_name[:20]}]'
                 response += f' {removed_time.timeblock.start_time.strftime("%H:%M")}'
                 response += f' - {removed_time.timeblock.end_time.strftime("%H:%M")}\n'
         return response
