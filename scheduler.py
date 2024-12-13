@@ -47,7 +47,7 @@ EXCLUDE = 'EXCLUDE'
 INCLUDE_EXCLUDE: Literal = Literal[INCLUDE, EXCLUDE]
 
 # Time in minutes to delay "immediate" start
-START_TIME_DELAY = 10
+START_TIME_DELAY = 11
 
 # Time in seconds between updates
 UPDATE_INTERVAL: int = 10
@@ -421,6 +421,98 @@ class Event:
         self.mins_until_start: int = 0
         self.multi_event = multi_event
         self.timeout_counter: int = timeout_counter
+
+    async def update(self) -> None:
+        """
+        Heartbeat of the event.
+        Scheduling:
+            Check timeout status, cancel if timed out.
+            Confirm and trim availability of participants.
+            Clean up any remnant removed times of participants.
+            Cancel the event if everyone responded and no common availability was found.
+            Ensure start time is in the future and create the event.
+        Event Created:
+            Send 5 minute warning when appropriate.
+            Start the event if all participants are in the voice channel.
+            End the event if nobody is in the voice channel.
+        """
+        cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
+        if not self.created:
+            # Timeout check
+            cancelled = await self.update_timeout()
+            if cancelled:
+                return
+            # Participant availability checks
+            for participant in self.participants:
+                participant.confirm_answered(duration=self.duration, latest_date=self.latest_date)
+            # Clean removed availabilities of this event's participants
+            self.clean_participants_removed_times()
+            if self.everyone_answered:
+                self.compare_availabilities()
+                # Cancel if everyone answered and no common availabilty was found
+                if not self.ready_to_create:
+                    logger.info(f"[{self}] No common availability was found")
+                    await self.cancel(reason="No common availability was found.")
+                    return
+                # Create the event
+                else:
+                    # Ensure start time is in the future
+                    if self.start_times[0] <= cur_time:
+                        logger.warning(f"[{self}] Tried to create event in the past, moving to {START_TIME_DELAY} minutes from now")
+                        self.start_times[0] = cur_time + timedelta(minutes=START_TIME_DELAY)
+                    # Create the event
+                    await self.make_scheduled_events()
+        # Event has been created
+        else:
+            if not self.started:
+                # 5 minute warning
+                if not self.five_minute_warning_flag:
+                    if cur_time + timedelta(minutes=6) == self.start_times[0]:
+                        await self.send_five_minute_warning()
+                # Start if everyone is in the voice channel
+                await self.start_if_participants_in_vc()
+            else:
+                # End if nobody is in the voice channel
+                await self.end_if_participants_leave_vc()
+                return
+        # Update the event's messages
+        await self.update_messages()
+
+    async def update_timeout(self) -> bool:
+        """
+        Updates the event's timeout counter,
+        resends the availability message every RESEND_INTERVAL hours,
+        and cancels the event if it times out.
+
+        Returns
+        --------
+        cancelled: :class:`bool`
+            Whether or not the event timed out and was cancelled.
+        """
+        if self.created:
+            return
+        cancelled = False
+        self.timeout_counter -= 1
+        if self.timeout_counter > 0:
+            if (self.timeout_counter - OFFSET) % RESEND_INTERVAL == 0:
+                self.delete_availability_message()
+                await self.update_availability_message()
+        else:
+            notif_msg = f'{self.get_names_string(subscribed_only=True, mention=True)}\n'
+            notif_msg += f'Scheduling for **{self}** has timed out and has been cancelled.\n'
+            logger.info(f"[{self}] timed out and is being cancelled")
+            await self.cancel(reason=notif_msg)
+            cancelled = True
+        return cancelled
+
+    def clean_participants_removed_times(self) -> None:
+        """
+        Restores removed times for no longer active events.
+        """
+        for participant in self.participants:
+            for removed_time in participant.removed_times.copy():
+                if removed_time.event_name not in [event.name for event in client.events]:
+                    participant.restore_availability_for_event(event_name=removed_time.event_name)
 
     def intersect_time_blocks(self, timeblocks1: list, timeblocks2: list) -> list:
         """
@@ -911,7 +1003,30 @@ class Event:
 
     def shared_participants(self, event) -> list:
         """
-        Gets the list of participants shared with the provided event.
+        Gets the list of this event's participants shared with the provided event.
+
+        Arguments
+        ----------
+        event: :class:`Event`
+            The event to compare participants with.
+
+        Returns
+        --------
+        participants: :class:`list`
+            The list of this event's participants shared with the other event.
+            Empty if the events are the same or do not share participants.
+        """
+        participants = []
+        if event is not self:
+            for participant in self.participants:
+                for other_participant in event.participants:
+                    if participant.member.id == other_participant.member.id:
+                        participants.append(participant)
+        return participants
+
+    def other_shared_participants(self, event) -> list:
+        """
+        Gets the list of the other event's participants shared with this event.
 
         Arguments
         ----------
@@ -921,14 +1036,15 @@ class Event:
         Returns
         --------
         other_participants: :class:`list`
-            The list of shared participants between this event and the other event.
-            Empty if the events do not share participants.
+            The list of the other event's participants shared with this event.
+            Empty if the events are the same or do not share participants.
         """
         other_participants = []
-        for self_participant in self.participants:
-            for other_participant in event.participants:
-                if self_participant.member.id == other_participant.member.id:
-                    other_participants.append(other_participant)
+        if event is not self:
+            for participant in self.participants:
+                for other_participant in event.participants:
+                    if participant.member.id == other_participant.member.id:
+                        other_participants.append(other_participant)
         return other_participants
 
     def get_other_availability(self, participant: Participant) -> list:
@@ -1071,8 +1187,8 @@ class Event:
         if event is self:
             return
         logger.info(f"[{self}] Restored availabilities for {event}")
-        [participant.restore_availability_for_event(event.name) for participant in self.shared_participants(event)]
-        [participant.confirm_answered(duration=event.duration, latest_date=event.latest_date) for participant in self.shared_participants(event)]
+        [other_participant.restore_availability_for_event(event.name) for other_participant in self.other_shared_participants(event)]
+        [other_participant.confirm_answered(duration=event.duration, latest_date=event.latest_date) for other_participant in self.other_shared_participants(event)]
 
     def update_availabilities_to(self, participant: Participant) -> None:
         """
@@ -1182,6 +1298,11 @@ class Event:
                 except Exception as e:
                     logger.exception(f'[{self}] Failed to edit availability message in update: {e}')
 
+    async def delete_availability_message(self) -> None:
+        if self.availability_message is not None:
+            await self.availability_message.delete()
+            self.availability_message = None
+
     async def update_event_buttons_message(self) -> None:
         """
         Updates the event buttons message.
@@ -1254,36 +1375,28 @@ class Event:
         canceller: :class:`str`
             The name of the canceller of the event.
         """
+        for event in client.events:
+            event.restore_availabilities(self)
         content = self.get_names_string(subscribed_only=True, mention=True)
         embed = self.get_cancel_embed(reason, canceller)
-        if self.text_channel:
-            await self.text_channel.send(content=content, embed=embed)
-        else:
-            for participant in self.participants:
-                async with participant.msg_lock:
-                    await participant.member.send(content=content, embed=embed)
-        try:
-            if self.availability_message:
-                await self.availability_message.delete()
-                self.availability_message = None
-            if self.event_buttons_message:
-                await self.event_buttons_message.delete()
-                self.event_buttons_message = None
-        except Exception as e:
-            logger.error(f'Error in event cancel while deleting a message: {e}')
+        await self.text_channel.send(content=content, embed=embed)
+        if self.availability_message is not None:
+            await self.availability_message.delete()
+            self.availability_message = None
+        if self.event_buttons_message is not None:
+            await self.event_buttons_message.delete()
+            self.event_buttons_message = None
         try:
             if len(self.scheduled_events) > 0:
                 await self.scheduled_events[0].delete(reason=f'Cancel button pressed by {canceller}: {reason}')
         except Exception as e:
-            logger.error(f'Error in event cancel while deleting scheduled event: {e}')
+            logger.error(f'[{self}] Error in cancel while deleting scheduled event: {e}')
         try:
             anotherEvent = await self.prep_next_scheduled_event()
         except Exception as e:
-            logger.error(f'Error in event cancel while prepping next scheduled event: {e}')
+            logger.error(f'[{self}] Error in cancel while prepping next scheduled event: {e}')
         if not anotherEvent:
             self.remove()
-        for event in client.events:
-            event.restore_availabilities(self)
         save()
 
     def remove(self) -> None:
@@ -1383,6 +1496,25 @@ class Event:
             for timeblock in participant.availability:
                 latest_date = max((timeblock.start_time - timedelta(hours=HOURS_PAST_MIDNIGHT_CUTOFF)).date(), latest_date)
         return latest_date
+
+    @property
+    def location_has_active_event(self) -> bool:
+        """
+        Indicates if the event's :class:`VoiceChannel` has a different active event in it.
+
+        Returns
+        --------
+        True
+            If the voice channel has an active event.
+        False
+            If the voice channel does not have an active event.
+        """
+        for event in client.events:
+            if event is self or event.started:
+                continue
+            if event.voice_channel == self.voice_channel:
+                return True
+        return False
 
     @property
     def duration_minutes(self) -> int:
@@ -2036,6 +2168,8 @@ class EventButtons(View):
             except Exception as e:
                 logger.error(f'[{self.event}] Error responding to START button interaction: {e}')
         self.start_button.callback = start_button_callback
+        if self.event.location_has_active_event:
+            self.start_button.disabled = True
         self.add_item(self.start_button)
 
     def add_end_button(self) -> None:
@@ -2115,6 +2249,9 @@ class EventButtons(View):
                 return
             logger.info(f'[{self.event}] {interaction.user} rescheduled by button press')
             await interaction.response.defer(ephemeral=True)
+            # Restore removed availabilities
+            for other_event in client.events:
+                other_event.restore_availabilities(self.event)
             self.event.reset_timeout_counter()
             self.event.add_user_as_participant(interaction.user)
             try:
@@ -2141,9 +2278,6 @@ class EventButtons(View):
                 await interaction.followup.send(f"Event rescheduling started for {self.event}.", ephemeral=True)
             except Exception as e:
                 logger.exception(f"[{self.event}] Error with RESCHEDULE button requesting availability: {e}")
-            # Restore removed availabilities
-            for other_event in client.events:
-                other_event.restore_availabilities(self.event)
             save()
         self.reschedule_button.callback = reschedule_button_callback
         self.add_item(self.reschedule_button)
@@ -2424,144 +2558,6 @@ def get_participants_from_channel(event_name: str,
                 continue
         participants.append(Participant(member=member))
     return participants
-
-
-def location_has_active_event(location: VoiceChannel) -> bool:
-    """
-    Indicates if the provided :class:`VoiceChannel` has an active event in it.
-
-    Arguments
-    ----------
-    location: :class:`VoiceChannel`
-        The location to check for an active event in.
-
-    Returns
-    --------
-    True
-        If the voice channel has an active event.
-    False
-        If the voice channel does not have an active event.
-    """
-    for event in client.events:
-        if event.voice_channel == location and event.started:
-            return True
-    return False
-
-
-def first_start_time(event):
-    """
-    Gets the first start time of the event.
-
-    Arguments
-    ----------
-    event: :class:`Event`
-        The event to get the start time from.
-
-    Returns
-    --------
-    time: :class:`datetime`
-        The first start time of the event.
-    """
-    time = None
-    try:
-        time = event.start_times[0]
-    except Exception as e:
-        logger.error(f'Failed to access first start time: {e}')
-    return time
-
-
-def sort_events() -> None:
-    """
-    Sorts the created events by first start time and then appends the uncreated events.
-    """
-    new_events = []
-    # Get created events
-    for event in client.events:
-        if event.created and event.start_times:
-            new_events.append(event)
-    # Sort created events
-    if new_events:
-        try:
-            new_events.sort(key=first_start_time)
-        except Exception as e:
-            logger.error(f'Failed to sort created events: {e}')
-    # Append uncreated events
-    for event in client.events:
-        if not event.created and not event.start_times:
-            new_events.append(event)
-    client.events = new_events
-    save()
-
-
-async def update_event_timeouts() -> None:
-    """
-    Decrements the event timeout counters,
-    resends availability messages after RESEND_INTERVAL_HOURS,
-    and removes events that have timed out.
-    """
-    new_events = []
-    for event in client.events:
-        if event.created:
-            new_events.append(event)
-            continue
-        event.timeout_counter -= 1
-        if event.timeout_counter > 0:
-            new_events.append(event)
-            if not event.created:
-                if (event.timeout_counter - OFFSET) % RESEND_INTERVAL == 0:
-                    if event.availability_message is not None:
-                        await event.availability_message.delete()
-                        event.availability_message = None
-                    event.avail_buttons = None
-                    await event.update_availability_message()
-        else:
-            notification_message = f'{event.get_names_string(subscribed_only=True, mention=True)}\nScheduling for **{event}** has timed out and has been cancelled.\n'
-            if event.text_channel:
-                await event.text_channel.send(notification_message)
-            else:
-                for participant in event.participants:
-                    async with participant.msg_lock:
-                        await participant.member.send(notification_message)
-            logger.info(f'[{event}] timed out and cancelled')
-            try:
-                await event.availability_message.delete()
-                event.availability_message = None
-            except NotFound:
-                logger.warning(f"[{event}] Availability message not found")
-            except Exception as e:
-                logger.error(f"[{event}] Couldn't delete availability_message: {e}")
-            event.availability_message = None
-    client.events = new_events
-    save()
-
-
-def remove_availabilities_for_events() -> None:
-    """
-    Removes and saves timeblocks from uncreated events for created events.
-    Also cleans removed availabilities of forgotten events.
-    """
-    # Remove blocks of time from participant availability for events
-    for event in client.events:
-        if not event.created:
-            continue
-        for other_event in client.events:
-            if other_event == event or other_event.created:
-                continue
-            for participant in event.participants:
-                for other_participant in other_event.participants:
-                    if participant.member.id == other_participant.member.id:
-                        other_participant.remove_availability_for_event(event_name=event.name,
-                                                                        event_start_times=event.start_times,
-                                                                        event_duration=event.duration)
-                        break
-    # Clean removed availabilities
-    for event in client.events:
-        for participant in event.participants:
-            new_removed_times = []
-            for removed_time in participant.removed_times:
-                if removed_time.event_name in [event.name for event in client.events]:
-                    new_removed_times.append(removed_time)
-            participant.removed_times = new_removed_times
 
 
 @client.event
@@ -3090,105 +3086,76 @@ async def listevents_command(interaction: Interaction):
         await interaction.response.send_message(content=content, ephemeral=True)
 
 
+def first_start_time(event):
+    """
+    Gets the first start time of the event.
+
+    Arguments
+    ----------
+    event: :class:`Event`
+        The event to get the start time from.
+
+    Returns
+    --------
+    time: :class:`datetime`
+        The first start time of the event.
+    """
+    time = None
+    try:
+        time = event.start_times[0]
+    except Exception as e:
+        logger.error(f'Failed to access first start time: {e}')
+    return time
+
+
+def sort_events() -> None:
+    """
+    Sorts the created events by first start time and then appends the uncreated events.
+    """
+    new_events = []
+    # Get created events
+    for event in client.events:
+        if event.created and event.start_times:
+            new_events.append(event)
+    # Sort created events
+    if new_events:
+        try:
+            new_events.sort(key=first_start_time)
+        except Exception as e:
+            logger.error(f'Failed to sort created events: {e}')
+    # Append uncreated events
+    for event in client.events:
+        if not event.created and not event.start_times:
+            new_events.append(event)
+    client.events = new_events
+    save()
+
+
+def remove_times_from_availabilities_for_events() -> None:
+    """
+    Removes and saves timeblocks from uncreated events for created events.
+    Also cleans removed availabilities of forgotten events.
+    """
+    # Remove blocks of time from participant availability for events
+    for event in client.events:
+        if not event.created:
+            continue
+        for other_event in client.events:
+            if other_event == event or other_event.created:
+                continue
+            for shared_participant in event.other_shared_participants(other_event):
+                shared_participant.remove_availability_for_event(event_name=event.name,
+                                                                 event_start_times=event.start_times,
+                                                                 event_duration=event.duration)
+
+
 @tasks.loop(seconds=UPDATE_INTERVAL)
 async def update():
     sort_events()
-    await update_event_timeouts()
     await client.update_presence()
-
-    # Participant availability checks
     for event in client.events:
-        for participant in event.participants:
-            participant.confirm_answered(duration=event.duration, latest_date=event.latest_date)
-    remove_availabilities_for_events()
-    for event in client.events:
-        if not event.created:
-            await event.update_availability_message()
-
-    for event in client.events.copy():
-        # Countdown to start + 5 minute warning
-        if event.created and not event.started:
-            # Countdown
-            await event.update_event_buttons_message()
-            # Send 5 minute warning
-            if not event.five_minute_warning_flag:
-                if datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=6) == event.start_times[0] and event.scheduled_events[0].status == EventStatus.scheduled and not event.started:
-                    await event.send_five_minute_warning()
-            await event.start_if_participants_in_vc()
-            continue
-
-        # Skip the rest of update() for this event if it is created or if we are waiting for answers
-        if event.created:
-            await event.end_if_participants_leave_vc()
-            continue
-        elif not event.everyone_answered:
-            continue
-
-        await event.update_availability_message()
-        # Compare availabilities
-        try:
-            event.compare_availabilities()
-        except Exception as e:
-            logger.error(f'[{event}] Error comparing availabilities: {e}')
-            continue
-
-        # Cancel the event if no common availability was found
-        if not event.ready_to_create:
-            try:
-                logger.info(f'[{event}] No common availability found')
-                await event.cancel(reason="No common availability was found.")
-            except Exception as e:
-                logger.error(f'[{event}] Error messaging participants: {e}')
-            continue
-        # Create the event if it is ready to create
-        else:
-            # If start time is in the past, start it after the preset delay
-            cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
-            if event.start_times[0] <= cur_time:
-                logger.warning(f'[{event}] Tried to create event in the past! Moving to {START_TIME_DELAY} minutes from now.')
-                event.start_times[0] = cur_time + timedelta(minutes=START_TIME_DELAY)
-                event.ready_to_create = False
-                continue
-
-            # If there is an active event in the same location or sharing
-            # participants, offset the start time to after the event
-            prev_event = None
-            for other_event in client.events:
-                if other_event != event and (other_event.voice_channel == event.voice_channel or other_event.shares_participants(event)) and other_event.started:
-                    if not prev_event:
-                        prev_event = other_event
-                        continue
-                    if (prev_event.start_times[0] + prev_event.duration + event.duration) > other_event.start_times[0]:
-                        prev_event = other_event
-                        continue
-                    if event.start_times[0] < (prev_event.start_times[0] + prev_event.duration):
-                        event.start_times[0] = (prev_event.start_times[0] + prev_event.duration)
-                    break
-
-            # Create event
-            try:
-                await event.make_scheduled_events()
-                remove_availabilities_for_events()
-            except Exception as e:
-                logger.error(f'[{event}] Error creating scheduled event: {e}')
-                continue
-
-            # Delete availability message, send event buttons message
-            await event.update_messages()
-
-            # Go through created events and remove availability during the event time of all shared participants
-            for other_event in client.events:
-                if other_event != event:
-                    for participant in other_event.participants:
-                        participant.remove_availability_for_event(event_name=event.name,
-                                                                  event_start_times=event.start_times,
-                                                                  event_duration=event.duration)
-
-            # If there is an active event in the same location, disable the start button
-            if location_has_active_event(event.voice_channel):
-                event.event_buttons.start_button.disabled = True
-
-        await event.update_messages()
+        await event.update()
+    remove_times_from_availabilities_for_events()
     save()
 
 
