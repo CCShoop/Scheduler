@@ -1869,7 +1869,7 @@ class AvailabilityModal(Modal):
             logger.info(f'[{self.event}] Received availability from {interaction.user.name}')
             participant.set_specific_availability(avail_string, self.date.value, self.note.value)
             participant.confirm_answered(duration=self.event.duration, latest_date=self.event.latest_date)
-            remove_availabilities_for_events()
+            remove_times_from_availabilities_for_events()
             await self.event.update_availability_message()
             response = f'**__Availability received for {self.event}:__**\n'
             response += participant.availability_string
@@ -2738,7 +2738,7 @@ async def create_command(interaction: Interaction,
     await event.save_image_to_file()
     await event.make_scheduled_events()
     client.events.append(event)
-    remove_availabilities_for_events()
+    remove_times_from_availabilities_for_events()
 
     try:
         await interaction.response.send_message(content='Event created!', ephemeral=True)
