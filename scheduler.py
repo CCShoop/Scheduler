@@ -65,6 +65,39 @@ RESEND_INTERVAL: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * RESEND_INTERVAL_H
 OFFSET = EVENT_TIMEOUT % RESEND_INTERVAL
 
 
+HELP_EMBED = Embed(title='Help',
+                   description='How to respond with your availability:',
+                   color=Color.purple())
+HELP_EMBED.add_field(name='Respond Button',
+                     value="Set the date and enter the periods of time you are available."
+                     "\nAllows for some keyword inputs: full, all, clear, none, empty"
+                     "\nRequires 24 hour time (e.g. \"21-2\" is 9pm - 2am)."
+                     "\nSeparate multiple periods of time with commas (e.g. \"9-12, 13-17\")."
+                     "\nSet your timezone if you use your local time and it will be shifted to Eastern Time."
+                     "\nCurrently supported timezones: ET, CT, MT, PT"
+                     "\nNote: Allows you to leave a note in the availability embed, with or without availability."
+                     "\nLeaving the note field blank when resubmitting the form will clear your note.",
+                     inline=False)
+HELP_EMBED.add_field(name='Full Availability Button',
+                     value="Sets a \"full availability flag\" and adds a time period from now until midnight."
+                     "\nIf someone else puts availability extending past midnight, yours will be extended to the same time.",
+                     inline=False)
+HELP_EMBED.add_field(name='Use Existing Button',
+                     value="Grabs your availability from another event."
+                     "\nIf you are in more than one other event, you will have to choose which event's availability to reuse.",
+                     inline=False)
+HELP_EMBED.add_field(name='Unsubscribe Button',
+                     value="Unsubscribe from the event."
+                     "\nYou will still be a participant, but you will not be mentioned.",
+                     inline=False)
+HELP_EMBED.add_field(name='Cancel Button',
+                     value="Cancel scheduling of the event.",
+                     inline=False)
+HELP_EMBED.add_field(name='General Information',
+                     value="The event will be either created or cancelled within a minute after the last person responds.",
+                     inline=False)
+
+
 def save() -> None:
     """
     Saves the bot's status by writing the client's events to a file.
@@ -1129,40 +1162,6 @@ class Event:
         # Event info embed
         event_embed = self.get_general_embed()
         embeds.append(event_embed)
-        # Instructions embed
-        instructions_embed = Embed(title='Instructions',
-                                   description='How to respond with your availability:',
-                                   color=Color.purple())
-        instructions_embed.add_field(name='Respond Button',
-                                     value="Set the date and enter the periods of time you are available."
-                                     "\nAllows for some keyword inputs: full, all, clear, none, empty"
-                                     "\nRequires 24 hour time (e.g. \"21-2\" is 9pm - 2am)."
-                                     "\nSeparate multiple periods of time with commas (e.g. \"9-12, 13-17\")."
-                                     "\nSet your timezone if you use your local time and it will be shifted to Eastern Time."
-                                     "\nCurrently supported timezones: ET, CT, MT, PT"
-                                     "\nNote: Allows you to leave a note in the availability embed, with or without availability."
-                                     "\nLeaving the note field blank when resubmitting the form will clear your note.",
-                                     inline=False)
-        instructions_embed.add_field(name='Full Availability Button',
-                                     value="Sets a \"full availability flag\" and adds a time period from now until midnight."
-                                     "\nIf someone else puts availability extending past midnight, yours will be extended to the same time.",
-                                     inline=False)
-        instructions_embed.add_field(name='Use Existing Button',
-                                     value="Grabs your availability from another event."
-                                     "\nIf you are in more than one other event, you will have to choose which event's availability to reuse.",
-                                     inline=False)
-        instructions_embed.add_field(name='Unsubscribe Button',
-                                     value=f"Unsubscribe from {self}."
-                                     "\nYou will still be a participant, but you will not be mentioned.",
-                                     inline=False)
-        instructions_embed.add_field(name='Cancel Button',
-                                     value=f"Cancel scheduling of {self}.",
-                                     inline=False)
-        instructions_embed.add_field(name='General Information',
-                                     value=f"{self} will be either created or cancelled within a minute after the last person responds.",
-                                     inline=False)
-
-        embeds.append(instructions_embed)
         # Availabilities embed
         avail_embed = Embed(title='Availabilities', color=Color.blue())
         for participant in self.participants:
@@ -3084,6 +3083,12 @@ async def listevents_command(interaction: Interaction):
     else:
         content = "**No events found for this server.**"
         await interaction.response.send_message(content=content, ephemeral=True)
+
+
+@client.tree.command(name='help', description='Show helpful information.')
+async def help_command(interaction: Interaction):
+    logger.info(f"{interaction.user.name} used help command")
+    interaction.response.send_message(embed=HELP_EMBED, ephemeral=True)
 
 
 def first_start_time(event):
