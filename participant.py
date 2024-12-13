@@ -487,12 +487,14 @@ class Participant:
         event_name: :class:`str`
             The name of the event to restore availability from.
         """
-        for removed_time in self.removed_times.copy():
+        new_removed_times = []
+        for removed_time in self.removed_times:
             if removed_time.event_name == event_name:
                 self.availability.append(removed_time.timeblock)
-                self.removed_times.remove(removed_time)
-                self.clean_availability()
-                break
+            else:
+                new_removed_times.append(removed_time)
+        self.removed_times = new_removed_times
+        self.clean_availability()
 
     def confirm_answered(self, duration: timedelta = timedelta(minutes=30), latest_date=None) -> None:
         """
