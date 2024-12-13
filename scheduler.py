@@ -7,16 +7,18 @@ import asyncio
 import aiohttp
 from typing import Literal
 from dotenv import load_dotenv
+from typing import Optional
 from datetime import datetime, timedelta
 from discord import (app_commands, Interaction, Intents, Client, Embed, Color, Activity,
-                     ButtonStyle, EventStatus, EntityType, TextChannel, File, ActivityType,
+                     ButtonStyle, EntityType, TextChannel, ActivityType,
                      VoiceChannel, Message, SelectOption, ScheduledEvent, Member,
                      Guild, PrivacyLevel, User, utils, NotFound, HTTPException)
 from discord.ui import View, Button, Modal, TextInput, Select
 from discord.ext import tasks
 
-from persistence import Persistence
-from participant import Participant, TimeBlock, HOURS_PAST_MIDNIGHT_CUTOFF
+from libs.persistence import Persistence
+from libs.participant import Participant, TimeBlock, HOURS_PAST_MIDNIGHT_CUTOFF
+from libs.help import HELP_EMBEDS
 from server import Server
 
 # .env
@@ -52,6 +54,9 @@ START_TIME_DELAY = 11
 # Time in seconds between updates
 UPDATE_INTERVAL: int = 10
 
+# Default length of events in minutes
+DEFAULT_EVENT_DURATION: int = 30
+
 # Number of updates before an event is cleared
 UPDATES_PER_MINUTE: int = 60 // UPDATE_INTERVAL
 MINUTES_PER_HOUR: int = 60
@@ -63,39 +68,6 @@ RESEND_INTERVAL_HOURS: int = 23
 RESEND_INTERVAL: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * RESEND_INTERVAL_HOURS
 
 OFFSET = EVENT_TIMEOUT % RESEND_INTERVAL
-
-
-HELP_EMBED = Embed(title='Help',
-                   description='How to respond with your availability:',
-                   color=Color.purple())
-HELP_EMBED.add_field(name='Respond Button',
-                     value="Set the date and enter the periods of time you are available."
-                     "\nAllows for some keyword inputs: full, all, clear, none, empty"
-                     "\nRequires 24 hour time (e.g. \"21-2\" is 9pm - 2am)."
-                     "\nSeparate multiple periods of time with commas (e.g. \"9-12, 13-17\")."
-                     "\nSet your timezone if you use your local time and it will be shifted to Eastern Time."
-                     "\nCurrently supported timezones: ET, CT, MT, PT"
-                     "\nNote: Allows you to leave a note in the availability embed, with or without availability."
-                     "\nLeaving the note field blank when resubmitting the form will clear your note.",
-                     inline=False)
-HELP_EMBED.add_field(name='Full Availability Button',
-                     value="Sets a \"full availability flag\" and adds a time period from now until midnight."
-                     "\nIf someone else puts availability extending past midnight, yours will be extended to the same time.",
-                     inline=False)
-HELP_EMBED.add_field(name='Use Existing Button',
-                     value="Grabs your availability from another event."
-                     "\nIf you are in more than one other event, you will have to choose which event's availability to reuse.",
-                     inline=False)
-HELP_EMBED.add_field(name='Unsubscribe Button',
-                     value="Unsubscribe from the event."
-                     "\nYou will still be a participant, but you will not be mentioned.",
-                     inline=False)
-HELP_EMBED.add_field(name='Cancel Button',
-                     value="Cancel scheduling of the event.",
-                     inline=False)
-HELP_EMBED.add_field(name='General Information',
-                     value="The event will be either created or cancelled within a minute after the last person responds.",
-                     inline=False)
 
 
 def save() -> None:
@@ -401,24 +373,23 @@ class Event:
                  voice_channel: VoiceChannel,
                  guild: Guild,
                  text_channel: TextChannel,
-                 image_url: str = None,
-                 scheduler: Participant = None,
-                 rescheduler: Participant = None,
-                 participants: list = None,
-                 duration=timedelta(minutes=30),
-                 multi_event: bool = False,
-                 start_times: list = None,
-                 availability_message=None,
+                 image_url: Optional[str] = None,
+                 scheduler: Optional[Participant] = None,
+                 rescheduler: Optional[Participant] = None,
+                 participants: Optional[list] = None,
+                 duration: Optional[timedelta] = timedelta(minutes=DEFAULT_EVENT_DURATION),
+                 multi_event: Optional[bool] = False,
+                 start_times: Optional[list] = None,
+                 availability_message: Optional[Message] = None,
                  avail_buttons=None,
-                 event_buttons_message=None,
+                 event_buttons_message: Optional[Message] = None,
                  event_buttons=None,
-                 ready_to_create: bool = False,
-                 created: bool = False,
-                 started: bool = False,
-                 scheduled_events: list = None,
-                 changed: bool = False,
-                 timeout_counter: int = EVENT_TIMEOUT
-                 ) -> None:
+                 ready_to_create: Optional[bool] = False,
+                 created: Optional[bool] = False,
+                 started: Optional[bool] = False,
+                 scheduled_events: Optional[list] = None,
+                 changed: Optional[bool] = False,
+                 timeout_counter: Optional[int] = EVENT_TIMEOUT) -> None:
         self.name = name
         self.guild = guild
         self.entity_type = EntityType.voice
@@ -547,7 +518,7 @@ class Event:
                 if removed_time.event_name not in [event.name for event in client.events]:
                     participant.restore_availability_for_event(event_name=removed_time.event_name)
 
-    def intersect_time_blocks(self, timeblocks1: list, timeblocks2: list) -> list:
+    def intersect_time_blocks(self, timeblocks1: list, timeblocks2: list) -> list[TimeBlock]:
         """
         Gets all timeblocks in the two availabilities that intersect.
 
@@ -626,6 +597,9 @@ class Event:
             logger.info(f'[{self.name}] compare_availabilities: No common availability found between all participants, cancelling event')
 
     async def send_five_minute_warning(self) -> None:
+        """
+        Sends the 5 minute warning for the event.
+        """
         self.five_minute_warning_flag = True
         try:
             message = f'{self.get_names_string(subscribed_only=True, mention=True)}'
@@ -640,7 +614,15 @@ class Event:
         except Exception as e:
             logger.error(f'Error sending 5 minute warning: {e}')
 
-    async def start(self, reason: str = f"Event started by {client.user}.") -> None:
+    async def start(self, reason: Optional[str] = f"Event started by {client.user}.") -> None:
+        """
+        Starts the event.
+
+        Arguments
+        ----------
+        reason: :class:`Optional[str]`
+            Reason to provide for guild event start in audit log.
+        """
         logger.info(f"[{self}] starting, reason: {reason}")
         try:
             await self.scheduled_events[0].start(reason=reason)
@@ -698,9 +680,14 @@ class Event:
         if all(participant.member in self.voice_channel.members for participant in self.participants):
             await self.start(f'Event started by {client.user} because all users were in the voice channel.')
 
-    async def end(self, reason: str = f"Event ended by {client.user}.") -> None:
+    async def end(self, reason: Optional[str] = f"Event ended by {client.user}.") -> None:
         """
         Ends the event. If there are more scheduled events in this event, shift them forward and prep them.
+
+        Arguments
+        ----------
+        reason: :class:`Optional[str]`
+            The reason to provide to the audit log for ending the guild event.
         """
         logger.info(f"[{self}] ending, reason: {reason}")
         # Delete scheduled event
@@ -799,7 +786,20 @@ class Event:
         self.created = True
         save()
 
-    def get_general_embed(self, end_time: datetime = None) -> Embed:
+    def get_general_embed(self, end_time: Optional[datetime] = None) -> Embed:
+        """
+        Gets the general embed for the event with status, image thumbnail, duration, location, etc.
+
+        Arguments
+        ----------
+        end_time: :class:`Optional[datetime]`
+            If the event has ended, includes the provided end time in the embed.
+
+        Returns
+        --------
+        embed: :class:`Embed`
+            The general embed for the event.
+        """
         embed = Embed(title=f"{self}",
                       description=self.scheduling_status,
                       color=Color.green())
@@ -857,7 +857,7 @@ class Event:
                 embed.set_footer(text=f"Rescheduled by {self.rescheduler}")
         return embed
 
-    async def save_image_to_file(self) -> str:
+    async def save_image_to_file(self) -> None:
         """
         Saves the image from the url to a file to allow for sending in messages.
         """
@@ -1034,7 +1034,7 @@ class Event:
                     return True
         return False
 
-    def shared_participants(self, event) -> list:
+    def shared_participants(self, event) -> list[Participant]:
         """
         Gets the list of this event's participants shared with the provided event.
 
@@ -1057,7 +1057,7 @@ class Event:
                         participants.append(participant)
         return participants
 
-    def other_shared_participants(self, event) -> list:
+    def other_shared_participants(self, event) -> list[Participant]:
         """
         Gets the list of the other event's participants shared with this event.
 
@@ -1210,7 +1210,7 @@ class Event:
                         other_participant.availability[0].end_time = max(other_participant.availability[0].end_time, timeblock.end_time)
                         logger.info(f'[{self}] Updated {other_participant}\'s first timeblock\'s end time to {other_participant.availability[0].end_time.strftime("%a, %m/%d %H:%M")}')
 
-    def get_event_buttons_message_content(self, end_time: datetime = None) -> str:
+    def get_event_buttons_message_content(self, end_time: Optional[datetime] = None) -> str:
         """
         Gets the content for the event buttons message.
 
@@ -1224,7 +1224,7 @@ class Event:
         else:
             return ""
 
-    def get_event_buttons_message_embed(self, end_time: datetime = None) -> list[Embed]:
+    def get_event_buttons_message_embed(self, end_time: Optional[datetime] = None) -> list[Embed]:
         """
         Gets the embed for the event buttons message.
 
@@ -1255,7 +1255,7 @@ class Event:
         await self.update_availability_message()
         await self.update_event_buttons_message()
 
-    async def update_availability_message(self, rescheduler: Participant = None) -> None:
+    async def update_availability_message(self, rescheduler: Optional[Participant] = None) -> None:
         """
         Update the availability message.
 
@@ -1330,7 +1330,7 @@ class Event:
                                                       embed=embed,
                                                       view=self.event_buttons)
 
-    def get_cancel_embed(self, reason: str = "", canceller: str = "") -> Embed:
+    def get_cancel_embed(self, reason: Optional[str] = "", canceller: Optional[str] = "") -> Embed:
         """
         Get the embed for the cancel message.
 
@@ -1363,7 +1363,7 @@ class Event:
                     break
         return embed
 
-    async def cancel(self, reason: str = "", canceller: str = "") -> None:
+    async def cancel(self, reason: Optional[str] = "", canceller: Optional[str] = "") -> None:
         """
         Cancels the event.
 
@@ -2442,9 +2442,9 @@ class ExistingAvailabilitiesSelectView(View):
 
 def get_participants_from_interaction(event_name: str,
                                       interaction: Interaction,
-                                      include_exclude: INCLUDE_EXCLUDE = None,
-                                      usernames: str = None,
-                                      roles: str = None) -> list:
+                                      include_exclude: Optional[INCLUDE_EXCLUDE] = None,
+                                      usernames: Optional[str] = None,
+                                      roles: Optional[str] = None) -> list[Participant]:
     """
     Wrapper function for getting participants from a channel of an interaction.
     """
@@ -2460,10 +2460,10 @@ def get_participants_from_interaction(event_name: str,
 def get_participants_from_channel(event_name: str,
                                   guild: Guild,
                                   channel: TextChannel,
-                                  user: User = None,
-                                  include_exclude: INCLUDE_EXCLUDE = INCLUDE,
-                                  usernames: str = None,
-                                  roles: str = None):
+                                  user: Optional[User] = None,
+                                  include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
+                                  usernames: Optional[str] = None,
+                                  roles: Optional[str] = None):
     """
     Gets participants for an event from a channel using the included guidelines.
 
@@ -2475,20 +2475,20 @@ def get_participants_from_channel(event_name: str,
         The guild that the event is ocurring in.
     channel: :class:`TextChannel`
         The text channel that the event is occurring in.
-    user: :class:`User` or :class:`Member`
+    user: :class:`Optional[User]` or :class:`Optional[Member]`
         The user that is scheduling the event.
-    include_exclude: :class:`INCLUDE_EXCLUDE`
+    include_exclude: :class:`Optional[INCLUDE_EXCLUDE]`
         Whether to include or exclude the provided usernames/ids/roles.
         Default: INCLUDE
         REQUIRES usernames or roles.
-    usernames: :class:`str` or :class:`int`
+    usernames: :class:`Optional[str]`
         The comma separated usernames or ids to include/exclude.
-    roles: :class:`str`
+    roles: :class:`Optional[str]`
         A comma separated list of roles to include/exclude.
 
     Returns
     --------
-    participants: :class:`list`
+    participants: :class:`list[Participant]`
         The list of participants for the event.
     """
     participants = []
@@ -2675,16 +2675,16 @@ async def on_message(message: Message):
 @app_commands.describe(include_exclude='Whether to include or exclude users with the designated role.')
 @app_commands.describe(usernames='Comma separated usernames of users to include/exclude.')
 @app_commands.describe(roles='Comma separated roles of users to include/exclude.')
-@app_commands.describe(duration='Event duration in minutes (30 minutes default).')
+@app_commands.describe(duration=f'Event duration in minutes ({DEFAULT_EVENT_DURATION} minutes default).')
 async def create_command(interaction: Interaction,
                          event_name: str,
                          voice_channel: VoiceChannel,
                          start_time: str,
-                         image_url: str = None,
-                         include_exclude: INCLUDE_EXCLUDE = INCLUDE,
-                         usernames: str = None,
-                         roles: str = None,
-                         duration: int = 30):
+                         image_url: Optional[str] = None,
+                         include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
+                         usernames: Optional[str] = None,
+                         roles: Optional[str] = None,
+                         duration: Optional[int] = DEFAULT_EVENT_DURATION):
     logger.info(f'[{event_name}] Received event creation request from {interaction.user.name}')
     if not interaction.guild.voice_channels:
         raise Exception('The server must have at least one voice channel to schedule an event.')
@@ -2758,17 +2758,17 @@ async def create_command(interaction: Interaction,
 @app_commands.describe(include_exclude='Whether to include or exclude users specified.')
 @app_commands.describe(usernames='Comma separated usernames of users to include/exclude.')
 @app_commands.describe(roles='Comma separated roles of users to include/exclude.')
-@app_commands.describe(duration="Event duration in minutes (30 minutes default).")
+@app_commands.describe(duration=f"Event duration in minutes ({DEFAULT_EVENT_DURATION} minutes default).")
 @app_commands.describe(multi_event='Create an event on each date that everyone is available.')
 async def schedule_command(interaction: Interaction,
                            event_name: str,
                            voice_channel: VoiceChannel,
-                           image_url: str = None,
-                           include_exclude: INCLUDE_EXCLUDE = INCLUDE,
-                           usernames: str = None,
-                           roles: str = None,
-                           duration: int = 30,
-                           multi_event: bool = False):
+                           image_url: Optional[str] = None,
+                           include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
+                           usernames: Optional[str] = None,
+                           roles: Optional[str] = None,
+                           duration: Optional[int] = DEFAULT_EVENT_DURATION,
+                           multi_event: Optional[bool] = False):
     logger.info(f'[{event_name}] Received event schedule request from {interaction.user.name}')
     content = ""
     ephemeral = True
@@ -2794,13 +2794,13 @@ async def schedule(eventName: str,
                    guild: Guild,
                    textChannel: TextChannel,
                    voiceChannel: VoiceChannel,
-                   schedulerId: int = 0,
-                   imageUrl: str = None,
-                   includeExclude: INCLUDE_EXCLUDE = INCLUDE,
-                   usernames: str = None,
-                   roles: str = None,
-                   duration: int = 30,
-                   multiEvent: bool = False):
+                   schedulerId: Optional[int] = 0,
+                   imageUrl: Optional[str] = None,
+                   includeExclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
+                   usernames: Optional[str] = None,
+                   roles: Optional[str] = None,
+                   duration: Optional[int] = DEFAULT_EVENT_DURATION,
+                   multiEvent: Optional[bool] = False):
     """
     Starts the scheduling of an event.
 
@@ -2918,13 +2918,13 @@ async def schedule(eventName: str,
 @client.tree.command(name='edit', description='Edit an existing event.')
 @app_commands.describe(voice_channel='Voice channel for the event.')
 @app_commands.describe(image_url="URL to an image for the event.")
-@app_commands.describe(duration="Event duration in minutes (30 minutes default).")
+@app_commands.describe(duration=f"Event duration in minutes ({DEFAULT_EVENT_DURATION} minutes default).")
 @app_commands.describe(multi_event='Create an event on each date that everyone is available.')
 async def edit_command(interaction: Interaction,
-                       voice_channel: VoiceChannel = None,
-                       image_url: str = None,
-                       duration: int = None,
-                       multi_event: bool = None):
+                       voice_channel: Optional[VoiceChannel] = None,
+                       image_url: Optional[str] = None,
+                       duration: Optional[int] = None,
+                       multi_event: Optional[bool] = None):
     await interaction.response.defer(ephemeral=True)
     events = []
     for event in client.events:
@@ -2983,7 +2983,9 @@ async def edit_command(interaction: Interaction,
                                         inline=False)
                     else:
                         embed.add_field(name="Duration",
-                                        value=f"{old_duration}\n->\n{get_time_str_from_minutes(event.duration.total_seconds() // 60)}",
+                                        value=f"{get_time_str_from_minutes(old_duration // 60)}"
+                                        "->"
+                                        f"{get_time_str_from_minutes(event.duration.total_seconds() // 60)}",
                                         inline=False)
                 # Multi event
                 if multi_event is not None:
@@ -3026,10 +3028,14 @@ async def attach_command(interaction: Interaction):
         existingEvent = False
         # Event exists, adding guild event to that event
         for it_event in client.events:
-            if guild_event.name == it_event.name and guild_event.location == it_event.voice_channel:
+            if guild_event.name == it_event.name:
                 existingEvent = True
-                it_event.created = True
                 it_event.text_channel = interaction.channel
+                it_event.created = True
+                if len(it_event.scheduled_events) == 0:
+                    it_event.scheduled_events.append(guild_event)
+                else:
+                    it_event.scheduled_events[0] = guild_event
                 event = it_event
                 break
         # Event does not exist
@@ -3088,7 +3094,7 @@ async def listevents_command(interaction: Interaction):
 @client.tree.command(name='help', description='Show helpful information.')
 async def help_command(interaction: Interaction):
     logger.info(f"{interaction.user.name} used help command")
-    interaction.response.send_message(embed=HELP_EMBED, ephemeral=True)
+    await interaction.response.send_message(embeds=HELP_EMBEDS, ephemeral=True)
 
 
 def first_start_time(event):
@@ -3167,11 +3173,8 @@ async def update():
 @update.before_loop
 async def before_update():
     now = datetime.now().astimezone()
-    if now.second < UPDATE_INTERVAL:
-        next_half_minute = now.replace(second=0) + timedelta(seconds=UPDATE_INTERVAL)
-    else:
-        next_half_minute = now.replace(second=UPDATE_INTERVAL) + timedelta(seconds=UPDATE_INTERVAL)
-    seconds_until_interval = (next_half_minute - now).total_seconds()
+    seconds_after_interval = now.timestamp() % UPDATE_INTERVAL
+    seconds_until_interval = UPDATE_INTERVAL - seconds_after_interval
     logger.info(f'[{client.user}] Sleeping for {seconds_until_interval} seconds before update')
     await asyncio.sleep(seconds_until_interval)
 

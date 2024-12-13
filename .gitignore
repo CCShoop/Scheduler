@@ -4,5 +4,4 @@ __pycache__
 *.txt
 *.json
 *.log
-*.vim
 *.png
