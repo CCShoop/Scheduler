@@ -779,7 +779,7 @@ class Event:
             if self.has_image_saved:
                 await scheduled_event.edit(image=self.get_image())
             self.scheduled_events.append(scheduled_event)
-            logger.info(f'[{self}] Created event starting {start_time.strftime("%A, %m/%d/%Y: %H:%M")} ET')
+            logger.info(f'[{self}] Created event starting {start_time.strftime("%A, %m/%d/%Y: %H:%M %Z")}')
             if not self.multi_event:
                 break
         self.ready_to_create = False
@@ -839,7 +839,7 @@ class Event:
             # Event has ended
             else:
                 embed.add_field(name="Ended",
-                                value=f'{end_time.strftime("%A, %m/%d at %H:%M")} ET',
+                                value=f'{end_time.strftime("%A, %m/%d at %H:%M %Z")}',
                                 inline=False)
         if self.created:
             embed.timestamp = self.start_times[0]
@@ -1125,7 +1125,7 @@ class Event:
             The string for the start time.
         """
         if index >= 0 and len(self.start_times) > index:
-            return f'{self.start_times[index].strftime("%A, %m/%d at %H:%M")} ET'
+            return f'{self.start_times[index].strftime("%A, %m/%d at %H:%M %Z")}'
         return ''
 
     def get_availability_request_content(self) -> str:
