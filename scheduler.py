@@ -2559,11 +2559,11 @@ def get_participants_from_channel(event_name: str,
     return participants
 
 
-def edit_event(event: Event,
-               voice_channel: Optional[VoiceChannel] = None,
-               image_url: Optional[str] = None,
-               duration: Optional[int] = None,
-               multi_event: Optional[bool] = None) -> None:
+async def edit_event(event: Event,
+                     voice_channel: Optional[VoiceChannel] = None,
+                     image_url: Optional[str] = None,
+                     duration: Optional[int] = None,
+                     multi_event: Optional[bool] = None) -> None:
     embed = Embed(title=f"{event} Edited",
                   description=f"{event} has been edited.",
                   color=Color.orange())
@@ -2627,10 +2627,8 @@ def edit_event(event: Event,
                             inline=False)
     if event.image_url:
         embed.set_thumbnail(url=event.image_url)
-    if interaction.user.avatar:
-        embed.set_footer(text=f"Edited by {interaction.user}", icon_url=interaction.user.avatar.url)
-    else:
-        embed.set_footer(text=f"Edited by {interaction.user}")
+    await event.update_messages()
+    save()
 
 
 @client.event
@@ -3015,8 +3013,10 @@ async def edit_command(interaction: Interaction,
                            image_url=image_url,
                            duration=duration,
                            multi_event=multi_event)
-        await event.update_messages()
-        save()
+        if interaction.user.avatar:
+            embed.set_footer(text=f"Edited by {interaction.user}", icon_url=interaction.user.avatar.url)
+        else:
+            embed.set_footer(text=f"Edited by {interaction.user}")
         await interaction.followup.send(embed=embed)
     # Multiple events in guild, select one to edit from a dropdown
     else:
@@ -3032,8 +3032,10 @@ async def edit_command(interaction: Interaction,
                                        image_url=image_url,
                                        duration=duration,
                                        multi_event=multi_event)
-                    await event.update_messages()
-                    save()
+                    if interaction.user.avatar:
+                        embed.set_footer(text=f"Edited by {interaction.user}", icon_url=interaction.user.avatar.url)
+                    else:
+                        embed.set_footer(text=f"Edited by {interaction.user}")
                     await interaction.followup.send(embed=embed)
                     return
 
