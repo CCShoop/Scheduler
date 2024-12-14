@@ -2559,6 +2559,80 @@ def get_participants_from_channel(event_name: str,
     return participants
 
 
+def edit_event(event: Event,
+               voice_channel: Optional[VoiceChannel] = None,
+               image_url: Optional[str] = None,
+               duration: Optional[int] = None,
+               multi_event: Optional[bool] = None) -> None:
+    embed = Embed(title=f"{event} Edited",
+                  description=f"{event} has been edited.",
+                  color=Color.orange())
+    # Voice Channel
+    if voice_channel is not None:
+        old_vc = event.voice_channel
+        event.voice_channel = voice_channel
+        if old_vc == event.voice_channel:
+            embed.add_field(name="Voice Channel",
+                            value="Unchanged",
+                            inline=False)
+        else:
+            embed.add_field(name="Voice Channel",
+                            value=f"{old_vc.name}\n->\n{event.voice_channel.name}",
+                            inline=False)
+    # Image URL
+    if image_url is not None:
+        old_image_url = event.image_url
+        event.delete_image_file()
+        event.image_url = image_url
+        await event.save_image_to_file()
+        if event.image_url:
+            if old_image_url == event.image_url:
+                embed.add_field(name="Image",
+                                value="Unchanged",
+                                inline=False)
+            else:
+                embed.add_field(name="Image",
+                                value=f"{old_image_url}\n->\n{event.image_url}",
+                                inline=False)
+        else:
+            event.image_url = old_image_url
+            embed.add_field(name="ERROR: Image",
+                            value="The new image could not be downloaded.\nThe old one was kept.",
+                            inline=False)
+    # Duration
+    if duration is not None:
+        old_duration = event.duration
+        event.duration = timedelta(minutes=duration)
+        if old_duration.total_seconds() == event.duration.total_seconds():
+            embed.add_field(name="Duration",
+                            value="Unchanged",
+                            inline=False)
+        else:
+            embed.add_field(name="Duration",
+                            value=f"{get_time_str_from_minutes(old_duration // 60)}"
+                            "->"
+                            f"{get_time_str_from_minutes(event.duration.total_seconds() // 60)}",
+                            inline=False)
+    # Multi event
+    if multi_event is not None:
+        old_multi_event = event.multi_event
+        event.multi_event = multi_event
+        if old_multi_event == event.multi_event:
+            embed.add_field(name="Multi Event",
+                            value="Unchanged",
+                            inline=False)
+        else:
+            embed.add_field(name="Multi Event",
+                            value=f"{old_multi_event}\n->\n{event.multi_event}",
+                            inline=False)
+    if event.image_url:
+        embed.set_thumbnail(url=event.image_url)
+    if interaction.user.avatar:
+        embed.set_footer(text=f"Edited by {interaction.user}", icon_url=interaction.user.avatar.url)
+    else:
+        embed.set_footer(text=f"Edited by {interaction.user}")
+
+
 @client.event
 async def on_ready():
     logger.info(f'[{client.user}] Connected to Discord!')
@@ -2930,91 +3004,43 @@ async def edit_command(interaction: Interaction,
     for event in client.events:
         if event.guild == interaction.guild:
             events.append(event)
-    options = [SelectOption(label=event.name, value=event.name)
-               for event in events]
-    select = Select(placeholder="Select an event to edit", options=options)
+    # No events found in this guild
+    if len(events) == 0:
+        await interaction.followup.send("**No events were found in this guild.**", ephemeral=True)
+    # Only one event in this guild, edit it
+    elif len(events) == 1:
+        event = events[0]
+        embed = edit_event(event=event,
+                           voice_channel=voice_channel,
+                           image_url=image_url,
+                           duration=duration,
+                           multi_event=multi_event)
+        await event.update_messages()
+        save()
+        await interaction.followup.send(embed=embed)
+    # Multiple events in guild, select one to edit from a dropdown
+    else:
+        options = [SelectOption(label=event.name, value=event.name) for event in events]
+        select = Select(placeholder="Select an event to edit", options=options)
 
-    async def select_callback(interaction: Interaction):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        for event in events:
-            if event.name == select.values[0]:
-                embed = Embed(title=f"{event} Edited",
-                              description=f"{event} has been edited.",
-                              color=Color.orange())
-                # Voice Channel
-                if voice_channel is not None:
-                    old_vc = event.voice_channel
-                    event.voice_channel = voice_channel
-                    if old_vc == event.voice_channel:
-                        embed.add_field(name="Voice Channel",
-                                        value="Unchanged",
-                                        inline=False)
-                    else:
-                        embed.add_field(name="Voice Channel",
-                                        value=f"{old_vc.name}\n->\n{event.voice_channel.name}",
-                                        inline=False)
-                # Image URL
-                if image_url is not None:
-                    old_image_url = event.image_url
-                    event.delete_image_file()
-                    event.image_url = image_url
-                    await event.save_image_to_file()
-                    if event.image_url:
-                        if old_image_url == event.image_url:
-                            embed.add_field(name="Image",
-                                            value="Unchanged",
-                                            inline=False)
-                        else:
-                            embed.add_field(name="Image",
-                                            value=f"{old_image_url}\n->\n{event.image_url}",
-                                            inline=False)
-                    else:
-                        event.image_url = old_image_url
-                        embed.add_field(name="ERROR: Image",
-                                        value="The new image could not be downloaded.\nThe old one was kept.",
-                                        inline=False)
-                # Duration
-                if duration is not None:
-                    old_duration = event.duration
-                    event.duration = timedelta(minutes=duration)
-                    if old_duration.total_seconds() == event.duration.total_seconds():
-                        embed.add_field(name="Duration",
-                                        value="Unchanged",
-                                        inline=False)
-                    else:
-                        embed.add_field(name="Duration",
-                                        value=f"{get_time_str_from_minutes(old_duration // 60)}"
-                                        "->"
-                                        f"{get_time_str_from_minutes(event.duration.total_seconds() // 60)}",
-                                        inline=False)
-                # Multi event
-                if multi_event is not None:
-                    old_multi_event = event.multi_event
-                    event.multi_event = multi_event
-                    if old_multi_event == event.multi_event:
-                        embed.add_field(name="Multi Event",
-                                        value="Unchanged",
-                                        inline=False)
-                    else:
-                        embed.add_field(name="Multi Event",
-                                        value=f"{old_multi_event}\n->\n{event.multi_event}",
-                                        inline=False)
-                if event.image_url:
-                    embed.set_thumbnail(url=event.image_url)
-                if interaction.user.avatar:
-                    embed.set_footer(text=f"Edited by {interaction.user}", icon_url=interaction.user.avatar.url)
-                else:
-                    embed.set_footer(text=f"Edited by {interaction.user}")
-                await event.update_messages()
-                save()
-                await interaction.followup.send(embed=embed)
-                return
+        async def select_callback(interaction: Interaction):
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            for event in events:
+                if event.name == select.values[0]:
+                    embed = edit_event(event=event,
+                                       voice_channel=voice_channel,
+                                       image_url=image_url,
+                                       duration=duration,
+                                       multi_event=multi_event)
+                    await event.update_messages()
+                    save()
+                    await interaction.followup.send(embed=embed)
+                    return
 
-    select.callback = select_callback
-    view = View()
-    view.add_item(select)
-
-    await interaction.followup.send(view=view, ephemeral=True)
+        select.callback = select_callback
+        view = View()
+        view.add_item(select)
+        await interaction.followup.send(view=view, ephemeral=True)
 
 
 @client.tree.command(name='attach', description='Create an event message for an existing guild event.')
