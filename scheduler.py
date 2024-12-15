@@ -1365,7 +1365,10 @@ class Event:
             embed.add_field(name="Reason for Cancellation", value=reason, inline=False)
         if canceller != "":
             for participant in self.participants:
-                if participant.member.name == canceller:
+                participant_name = participant.member.name
+                if participant.member.nick:
+                    participant_name = participant.member.nick
+                if participant_name == canceller:
                     if participant.member.avatar:
                         embed.set_footer(text=f"Cancelled by {participant}", icon_url=participant.member.avatar.url)
                     else:
