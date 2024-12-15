@@ -2166,8 +2166,13 @@ class EventButtons(View):
         async def start_button_callback(interaction: Interaction):
             if self.event not in client.events:
                 client.events.append(self.event)
-            logger.info(f'[{self.event}] {interaction.user} started by button press')
             self.event.add_user_as_participant(interaction.user)
+            if interaction.user.id not in [member.id for member in self.event.voice_channel.members]:
+                logger.info(f"[{self.event}] {interaction.user} tried to press start button while not in the event's voice channel")
+                content = f"You must be in {self.event.voice_channel.mention} to start {self.event}!"
+                await interaction.response.send_message(content=content, ephemeral=True)
+                return
+            logger.info(f'[{self.event}] {interaction.user} started by button press')
             await self.event.start(f'Event started by {interaction.user} pressing start button.')
             # Interaction response
             try:
