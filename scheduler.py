@@ -499,7 +499,7 @@ class Event:
         self.timeout_counter -= 1
         if self.timeout_counter > 0:
             if (self.timeout_counter - OFFSET) % RESEND_INTERVAL == 0:
-                self.delete_availability_message()
+                await self.delete_availability_message()
                 await self.update_availability_message()
         else:
             notif_msg = f'{self.get_names_string(subscribed_only=True, mention=True)}\n'
@@ -2267,7 +2267,6 @@ class EventButtons(View):
             for other_event in client.events:
                 other_event.restore_availabilities(self.event)
             self.event.reset_timeout_counter()
-            self.event.add_user_as_participant(interaction.user)
             try:
                 await self.event.scheduled_events[0].delete(reason=f'Reschedule button pressed by {interaction.user.name}.')
             except Exception as e:
@@ -2280,10 +2279,14 @@ class EventButtons(View):
                 self.event.start_times.remove(self.event.start_times[0])
             except Exception as e:
                 logger.error(f"[{self.event}] Error removing start time from list: {e}")
+            self.event.ready_to_create = False
             self.event.created = False
             self.event.five_minute_warning_flag = False
             await self.event.update_event_buttons_message()
             try:
+                for participant in self.event.participants:
+                    participant.confirm_answered(duration=self.event.duration,
+                                                 latest_date=self.event.latest_date)
                 participant = self.event.get_participant(interaction.user.name)
                 participant.answered = False
                 participant.subscribed = True
