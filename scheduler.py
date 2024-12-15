@@ -1149,7 +1149,7 @@ class Event:
             output += '\n\nEveryone has responded.'
         return output
 
-    def get_availability_request_embeds(self) -> Embed:
+    def get_availability_request_embeds(self) -> list[Embed]:
         """
         Gets the embeds for the availability message.
 
@@ -1255,7 +1255,7 @@ class Event:
             # Replace duration with actual duration
             self.duration: timedelta = end_time - self.start_times[0]
         embeds = [self.get_general_embed(end_time=end_time)]
-        embeds.append(self.get_availability_request_embeds())
+        embeds.append(self.get_availability_embed())
         return embeds
 
     async def update_messages(self) -> None:
@@ -1670,7 +1670,7 @@ class Event:
         try:
             event_start_times = [datetime.fromisoformat(start_time) for start_time in data["start_times"]]
             for event_start_time in event_start_times:
-                logger.info(f'[{event_name}] start time found: {event_start_time.strftime("%a, %m/%d/%Y %H:%M")}')
+                logger.info(f'[{event_name}] start time found: {event_start_time.strftime("%a, %m/%d/%Y %H:%M %Z")}')
         except Exception as e:
             event_start_time = []
             logger.info(f'[{event_name}] no start times found: {e}')
