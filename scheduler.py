@@ -698,10 +698,10 @@ class Event:
         # Update event buttons message
         end_time: datetime = datetime.now().astimezone().replace(second=0, microsecond=0)
         content = self.get_event_buttons_message_content(end_time)
-        embed = self.get_event_buttons_message_embed(end_time)
+        embeds = self.get_event_buttons_message_embeds(end_time)
         try:
             self.event_buttons = None
-            await self.event_buttons_message.edit(content=content, embed=embed, view=None)
+            await self.event_buttons_message.edit(content=content, embeds=embeds, view=None)
         except Exception as e:
             logger.error(f"[{self}] Error in event control end button callback while editing event buttons message: {e}")
         # Remove start_time and scheduled event from lists
@@ -1158,21 +1158,30 @@ class Event:
         embeds: :class:`list[Embed]`
             The list of embeds for the availability message.
         """
-        embeds = []
         # Event info embed
-        event_embed = self.get_general_embed()
-        embeds.append(event_embed)
+        embeds = [self.get_general_embed()]
         # Availabilities embed
-        avail_embed = Embed(title='Availabilities', color=Color.blue())
+        embeds.append(self.get_availability_embed())
+        return embeds
+
+    def get_availability_embed(self) -> Embed:
+        """
+        Gets the availability embed.
+
+        Returns
+        --------
+        embed: :class:`Embed`
+            The embed containing each participant's availability.
+        """
+        embed = Embed(title='Availabilities', color=Color.blue())
         for participant in self.participants:
             participantName = f'{participant}'
             availString = participant.availability_string
             if availString != "":
-                avail_embed.add_field(name=participantName, value=availString, inline=False)
+                embed.add_field(name=participantName, value=availString, inline=False)
             if not participant.subscribed:
-                avail_embed.add_field(name=participantName, value="[Unsubscribed]", inline=False)
-        embeds.append(avail_embed)
-        return embeds
+                embed.add_field(name=participantName, value="[Unsubscribed]", inline=False)
+        return embed
 
     def restore_availabilities(self, event) -> None:
         """
@@ -1224,19 +1233,19 @@ class Event:
         else:
             return ""
 
-    def get_event_buttons_message_embed(self, end_time: Optional[datetime] = None) -> list[Embed]:
+    def get_event_buttons_message_embeds(self, end_time: Optional[datetime] = None) -> list[Embed]:
         """
-        Gets the embed for the event buttons message.
+        Gets the embeds for the event buttons message.
 
         Arguments
         ----------
-        end_time: :class:`datetime`
+        end_time: :class:`Optional[datetime]`
             The end time of the event to put in the embed.
 
         Returns
         --------
-        embed: :class:`Embed`
-            The embed for the event buttons message.
+        embed: :class:`list[Embed]`
+            The embeds for the event buttons message.
         """
         if end_time is None:
             # Get time until start
@@ -1245,8 +1254,9 @@ class Event:
         else:
             # Replace duration with actual duration
             self.duration: timedelta = end_time - self.start_times[0]
-        embed = self.get_general_embed(end_time=end_time)
-        return embed
+        embeds = [self.get_general_embed(end_time=end_time)]
+        embeds.append(self.get_availability_request_embeds())
+        return embeds
 
     async def update_messages(self) -> None:
         """
@@ -1318,16 +1328,16 @@ class Event:
                 self.event_buttons = EventButtons(self)
             save()
             message = self.get_event_buttons_message_content()
-            embed = self.get_event_buttons_message_embed()
+            embeds = self.get_event_buttons_message_embeds()
             # Send a new message
             if self.event_buttons_message is None:
                 self.event_buttons_message = await self.text_channel.send(content=message,
-                                                                          embed=embed,
+                                                                          embeds=embeds,
                                                                           view=self.event_buttons)
             # Edit existing message
             else:
                 await self.event_buttons_message.edit(content=message,
-                                                      embed=embed,
+                                                      embeds=embeds,
                                                       view=self.event_buttons)
 
     def get_cancel_embed(self, reason: Optional[str] = "", canceller: Optional[str] = "") -> Embed:
@@ -2162,8 +2172,8 @@ class EventButtons(View):
             # Interaction response
             try:
                 content = self.event.get_event_buttons_message_content()
-                embed = self.event.get_event_buttons_message_embed()
-                await interaction.response.edit_message(content=content, embed=embed, view=self.event.event_buttons)
+                embeds = self.event.get_event_buttons_message_embeds()
+                await interaction.response.edit_message(content=content, embeds=embeds, view=self.event.event_buttons)
             except Exception as e:
                 logger.error(f'[{self.event}] Error responding to START button interaction: {e}')
         self.start_button.callback = start_button_callback
