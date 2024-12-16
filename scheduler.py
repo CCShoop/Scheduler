@@ -1522,7 +1522,7 @@ class Event:
             If the voice channel does not have an active event.
         """
         for event in client.events:
-            if event is self or event.started:
+            if event is self or not event.started:
                 continue
             if event.voice_channel == self.voice_channel:
                 return True
