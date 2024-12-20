@@ -30,7 +30,8 @@ commands.add_field(name="create",
                    "\nduration: The duration of the event in minutes. Default is 30 minutes.",
                    inline=False)
 commands.add_field(name="edit",
-                   value="Edit an existing event chosen from a dropdown."
+                   value="Edit an existing event using this text channel chosen from a dropdown."
+                   "\nname: Change the name of the event."
                    "\nvoice_channel: Change the location of the event."
                    "\nimage_url: Change the image of the event."
                    "\nduration: Change the duration of the event."
@@ -41,6 +42,9 @@ commands.add_field(name="attach",
                    inline=False)
 commands.add_field(name="listevents",
                    value="Shows all events that the Event Scheduler is aware of in this guild.",
+                   inline=False)
+commands.add_field(name="availability",
+                   value="Shows the availability for an event tied to this text channel.",
                    inline=False)
 commands.add_field(name="help",
                    value="Shows this help message.",

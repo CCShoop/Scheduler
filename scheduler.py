@@ -1255,7 +1255,6 @@ class Event:
             # Replace duration with actual duration
             self.duration: timedelta = end_time - self.start_times[0]
         embeds = [self.get_general_embed(end_time=end_time)]
-        embeds.append(self.get_availability_embed())
         return embeds
 
     async def update_messages(self) -> None:
@@ -2581,6 +2580,7 @@ def get_participants_from_channel(event_name: str,
 
 
 async def edit_event(event: Event,
+                     name: Optional[str] = None,
                      voice_channel: Optional[VoiceChannel] = None,
                      image_url: Optional[str] = None,
                      duration: Optional[int] = None,
@@ -2588,6 +2588,18 @@ async def edit_event(event: Event,
     embed = Embed(title=f"{event} Edited",
                   description=f"{event} has been edited.",
                   color=Color.orange())
+    # Name
+    if name is not None:
+        old_name = event.name
+        event.name = name
+        if old_name == event.name:
+            embed.add_field(name="Name",
+                            value="Unchanged",
+                            inline=False)
+        else:
+            embed.add_field(name="Name",
+                            value=f"{old_name}->{event.name}",
+                            inline=False)
     # Voice Channel
     if voice_channel is not None:
         old_vc = event.voice_channel
@@ -2598,7 +2610,7 @@ async def edit_event(event: Event,
                             inline=False)
         else:
             embed.add_field(name="Voice Channel",
-                            value=f"{old_vc.name}\n->\n{event.voice_channel.name}",
+                            value=f"{old_vc.mention}->{event.voice_channel.mention}",
                             inline=False)
     # Image URL
     if image_url is not None:
@@ -2613,7 +2625,7 @@ async def edit_event(event: Event,
                                 inline=False)
             else:
                 embed.add_field(name="Image",
-                                value=f"{old_image_url}\n->\n{event.image_url}",
+                                value=f"{old_image_url}->{event.image_url}",
                                 inline=False)
         else:
             event.image_url = old_image_url
@@ -2631,8 +2643,7 @@ async def edit_event(event: Event,
         else:
             embed.add_field(name="Duration",
                             value=f"{get_time_str_from_minutes(old_duration // 60)}"
-                            "->"
-                            f"{get_time_str_from_minutes(event.duration.total_seconds() // 60)}",
+                            f"->{get_time_str_from_minutes(event.duration.total_seconds() // 60)}",
                             inline=False)
     # Multi event
     if multi_event is not None:
@@ -2644,7 +2655,7 @@ async def edit_event(event: Event,
                             inline=False)
         else:
             embed.add_field(name="Multi Event",
-                            value=f"{old_multi_event}\n->\n{event.multi_event}",
+                            value=f"{old_multi_event}->{event.multi_event}",
                             inline=False)
     if event.image_url:
         embed.set_thumbnail(url=event.image_url)
@@ -3009,11 +3020,13 @@ async def schedule(eventName: str,
 
 
 @client.tree.command(name='edit', description='Edit an existing event.')
+@app_commands.describe(name='Name for the event.')
 @app_commands.describe(voice_channel='Voice channel for the event.')
 @app_commands.describe(image_url="URL to an image for the event.")
 @app_commands.describe(duration=f"Event duration in minutes ({DEFAULT_EVENT_DURATION} minutes default).")
 @app_commands.describe(multi_event='Create an event on each date that everyone is available.')
 async def edit_command(interaction: Interaction,
+                       name: Optional[str] = None,
                        voice_channel: Optional[VoiceChannel] = None,
                        image_url: Optional[str] = None,
                        duration: Optional[int] = None,
@@ -3021,7 +3034,7 @@ async def edit_command(interaction: Interaction,
     await interaction.response.defer(ephemeral=True)
     events = []
     for event in client.events:
-        if event.guild == interaction.guild:
+        if event.text_channel == interaction.channel:
             events.append(event)
     # No events found in this guild
     if len(events) == 0:
@@ -3030,6 +3043,7 @@ async def edit_command(interaction: Interaction,
     elif len(events) == 1:
         event = events[0]
         embed = edit_event(event=event,
+                           name=name,
                            voice_channel=voice_channel,
                            image_url=image_url,
                            duration=duration,
@@ -3049,6 +3063,7 @@ async def edit_command(interaction: Interaction,
             for event in events:
                 if event.name == select.values[0]:
                     embed = edit_event(event=event,
+                                       name=name,
                                        voice_channel=voice_channel,
                                        image_url=image_url,
                                        duration=duration,
@@ -3138,6 +3153,37 @@ async def listevents_command(interaction: Interaction):
     else:
         content = "**No events found for this server.**"
         await interaction.response.send_message(content=content, ephemeral=True)
+
+
+@client.tree.command(name='availability', description='Show availabilities of an event.')
+async def availability_command(interaction: Interaction):
+    logger.info(f"{interaction.user.name} used availability command")
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    events = []
+    for event in client.events:
+        if event.text_channel is interaction.channel:
+            events.append(event)
+    if len(events) == 0:
+        await interaction.followup.send(content="**No events were found using this text channel.**", ephemeral=True)
+    elif len(events) == 1:
+        embed = events.get_availability_embed()
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    else:
+        options = [SelectOption(label=event.name, value=event.name) for event in client.events]
+        select = Select(placeholder="Select an event", options=options)
+
+        async def select_callback(interaction: Interaction):
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            for event in events:
+                if event.name == select.values[0]:
+                    embed = event.get_availability_embed()
+                    await interaction.followup.send(embed=embed)
+                    return
+
+        select.callback = select_callback
+        view = View()
+        view.add_item(select)
+        await interaction.followup.send(view=view, ephemeral=True)
 
 
 @client.tree.command(name='help', description='Show helpful information.')
