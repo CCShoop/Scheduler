@@ -674,6 +674,8 @@ class Event:
         Starts the event if all of the participants are in the voice channel
         and there are no active events in that voice channel.
         """
+        if datetime.now().astimezone() < self.start_times[0]:
+            return
         for event in client.events:
             if event is not self and event.voice_channel is self.voice_channel and event.started:
                 return
