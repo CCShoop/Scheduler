@@ -2663,6 +2663,7 @@ async def edit_event(event: Event,
         embed.set_thumbnail(url=event.image_url)
     await event.update_messages()
     save()
+    return embed
 
 
 @client.event
