@@ -2644,7 +2644,7 @@ async def edit_event(event: Event,
                             inline=False)
         else:
             embed.add_field(name="Duration",
-                            value=f"{get_time_str_from_minutes(old_duration // 60)}"
+                            value=f"{get_time_str_from_minutes(old_duration.total_seconds() // 60)}"
                             f"->{get_time_str_from_minutes(event.duration.total_seconds() // 60)}",
                             inline=False)
     # Multi event
