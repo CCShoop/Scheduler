@@ -3044,12 +3044,12 @@ async def edit_command(interaction: Interaction,
     # Only one event in this guild, edit it
     elif len(events) == 1:
         event = events[0]
-        embed = edit_event(event=event,
-                           name=name,
-                           voice_channel=voice_channel,
-                           image_url=image_url,
-                           duration=duration,
-                           multi_event=multi_event)
+        embed = await edit_event(event=event,
+                                 name=name,
+                                 voice_channel=voice_channel,
+                                 image_url=image_url,
+                                 duration=duration,
+                                 multi_event=multi_event)
         if interaction.user.avatar:
             embed.set_footer(text=f"Edited by {interaction.user}", icon_url=interaction.user.avatar.url)
         else:
@@ -3064,12 +3064,12 @@ async def edit_command(interaction: Interaction,
             await interaction.response.defer(ephemeral=True, thinking=True)
             for event in events:
                 if event.name == select.values[0]:
-                    embed = edit_event(event=event,
-                                       name=name,
-                                       voice_channel=voice_channel,
-                                       image_url=image_url,
-                                       duration=duration,
-                                       multi_event=multi_event)
+                    embed = await edit_event(event=event,
+                                             name=name,
+                                             voice_channel=voice_channel,
+                                             image_url=image_url,
+                                             duration=duration,
+                                             multi_event=multi_event)
                     if interaction.user.avatar:
                         embed.set_footer(text=f"Edited by {interaction.user}", icon_url=interaction.user.avatar.url)
                     else:
