@@ -2600,7 +2600,7 @@ async def edit_event(event: Event,
                             inline=False)
         else:
             embed.add_field(name="Name",
-                            value=f"{old_name}->{event.name}",
+                            value=f"{old_name} -> {event.name}",
                             inline=False)
     # Voice Channel
     if voice_channel is not None:
@@ -2612,7 +2612,7 @@ async def edit_event(event: Event,
                             inline=False)
         else:
             embed.add_field(name="Voice Channel",
-                            value=f"{old_vc.mention}->{event.voice_channel.mention}",
+                            value=f"{old_vc.mention} -> {event.voice_channel.mention}",
                             inline=False)
     # Image URL
     if image_url is not None:
@@ -2627,7 +2627,7 @@ async def edit_event(event: Event,
                                 inline=False)
             else:
                 embed.add_field(name="Image",
-                                value=f"{old_image_url}->{event.image_url}",
+                                value=f"{old_image_url} -> {event.image_url}",
                                 inline=False)
         else:
             event.image_url = old_image_url
@@ -2645,7 +2645,7 @@ async def edit_event(event: Event,
         else:
             embed.add_field(name="Duration",
                             value=f"{get_time_str_from_minutes(old_duration.total_seconds() // 60)}"
-                            f"->{get_time_str_from_minutes(event.duration.total_seconds() // 60)}",
+                            f" -> {get_time_str_from_minutes(event.duration.total_seconds() // 60)}",
                             inline=False)
     # Multi event
     if multi_event is not None:
@@ -2657,7 +2657,7 @@ async def edit_event(event: Event,
                             inline=False)
         else:
             embed.add_field(name="Multi Event",
-                            value=f"{old_multi_event}->{event.multi_event}",
+                            value=f"{old_multi_event} -> {event.multi_event}",
                             inline=False)
     if event.image_url:
         embed.set_thumbnail(url=event.image_url)
