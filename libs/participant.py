@@ -324,21 +324,28 @@ class Participant:
         timezone_offset = 0
         avail_string = avail_string.replace('s', '')
         avail_string = avail_string.replace('d', '')
-        if 'et' in avail_string:
-            timezone_offset = 0
+        if 'at' in avail_string:
+            timezone_offset += -1
+            avail_string = avail_string.replace('at', '')
+        elif 'et' in avail_string:
+            timezone_offset += 0
             avail_string = avail_string.replace('et', '')
         elif 'ct' in avail_string:
-            timezone_offset = 1
+            timezone_offset += 1
             avail_string = avail_string.replace('ct', '')
         elif 'mt' in avail_string:
-            timezone_offset = 2
+            timezone_offset += 2
             avail_string = avail_string.replace('mt', '')
         elif 'pt' in avail_string:
-            timezone_offset = 3
+            timezone_offset += 3
             avail_string = avail_string.replace('pt', '')
 
         # 12-hour time parsing pt. 1
         avail_string = avail_string.replace('.', '')
+        if '12am' in avail_string:
+            avail_string = avail_string.replace('12am', '0000')
+        if '1200am' in avail_string:
+            avail_string = avail_string.replace('1200am', '0000')
         avail_string = avail_string.replace('am', '')
 
         # Make timeblock string list

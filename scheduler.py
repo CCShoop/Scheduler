@@ -623,7 +623,7 @@ class Event:
         reason: :class:`Optional[str]`
             Reason to provide for guild event start in audit log.
         """
-        logger.info(f"[{self}] starting, reason: {reason}")
+        logger.info(f"[{self}] Starting, reason: {reason}")
         try:
             await self.scheduled_events[0].start(reason=reason)
         except Exception as e:
@@ -691,7 +691,7 @@ class Event:
         reason: :class:`Optional[str]`
             The reason to provide to the audit log for ending the guild event.
         """
-        logger.info(f"[{self}] ending, reason: {reason}")
+        logger.info(f"[{self}] Ending, reason: {reason}")
         # Delete scheduled event
         try:
             await self.scheduled_events[0].delete(reason=reason)
@@ -1863,7 +1863,7 @@ class AvailabilityModal(Modal):
         self.timeslot2 = TextInput(label='Timeslot 2', placeholder='15:30-17 (i.e. Available 1530-1700)', default='', required=False)
         self.note = TextInput(label='Note', placeholder='A note to show with your availability', default='', required=False)
         self.date = TextInput(label='Date', placeholder='MM/DD/YYYY', default=date)
-        self.timezone = TextInput(label='Timezone', placeholder='ET|EST|EDT|CT|CST|CDT|MT|MST|MDT|PT|PST|PDT', default='ET')
+        self.timezone = TextInput(label='Timezone', placeholder='AT|AST|ADT|ET|EST|EDT|CT|CST|CDT|MT|MST|MDT|PT|PST|PDT', default='ET')
         self.add_item(self.timeslot1)
         self.add_item(self.timeslot2)
         self.add_item(self.note)
@@ -1881,6 +1881,7 @@ class AvailabilityModal(Modal):
         avail_string = f'{self.timeslot1.value}, {self.timeslot2.value} {self.timezone.value}'
         try:
             logger.info(f'[{self.event}] Received availability from {interaction.user.name}')
+            logger.info(f'[{self.event}] Raw input: "{avail_string}"')
             participant.set_specific_availability(avail_string, self.date.value, self.note.value)
             participant.confirm_answered(duration=self.event.duration, latest_date=self.event.latest_date)
             remove_times_from_availabilities_for_events()
@@ -2804,7 +2805,7 @@ async def create_command(interaction: Interaction,
     try:
         start_time_obj = datetime.fromisoformat(start_time)
     except Exception as e:
-        logger.info(f"Start time was not in iso format: {e}")
+        logger.info(f"[{event_name}] Start time was not in iso format: {e}")
         start_time = start_time.strip()
         start_time = start_time.replace(':', '')
         if len(start_time) == 1 or len(start_time) == 2:

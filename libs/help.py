@@ -60,7 +60,7 @@ instructions.add_field(name="Respond Button",
                        "\nRequires 24 hour time (e.g. \"21-2\" is 9pm - 2am)."
                        "\nSeparate multiple periods of time with commas (e.g. \"9-12, 13-17\")."
                        "\nSet your timezone if you use your local time and it will be shifted to Eastern Time."
-                       "\nCurrently supported timezones: ET, CT, MT, PT"
+                       "\nCurrently supported timezones: AT, ET, CT, MT, PT"
                        "\nNote: Allows you to leave a note in the availability embed, with or without availability."
                        "\nLeaving the note field blank when resubmitting the form will clear your note.",
                        inline=False)
