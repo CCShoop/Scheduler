@@ -370,14 +370,24 @@ class Participant:
                 raise Exception("Invalid end time provided by user: cannot use current time as end time")
 
             # 12-hour time parsing pt. 2
-            if 'pm' in start_time:
+            if 'pm' in start_time and '12' not in start_time:
                 start_time = re.sub(r"\D", "", start_time)
-                start_time = str(int(start_time) + 12)
+                if len(start_time) == 1 or len(start_time) == 2:
+                    start_time = str(int(start_time) + 12)
+                elif len(start_time) == 3 or len(start_time) == 4:
+                    start_time = str(int(start_time) + 1200)
+                else:
+                    raise Exception(f'Invalid start time provided by user: {start_time}')
             else:
                 start_time = re.sub(r"\D", "", start_time)
-            if 'pm' in end_time:
+            if 'pm' in end_time and '12' not in end_time:
                 end_time = re.sub(r"\D", "", end_time)
-                end_time = str(int(end_time) + 12)
+                if len(end_time) == 1 or len(end_time) == 2:
+                    end_time = str(int(end_time) + 12)
+                elif len(end_time) == 3 or len(end_time) == 4:
+                    end_time = str(int(end_time) + 1200)
+                else:
+                    raise Exception(f'Invalid end time provided by user: {start_time}')
             else:
                 end_time = re.sub(r"\D", "", end_time)
 
