@@ -3170,7 +3170,7 @@ async def availability_command(interaction: Interaction):
     if len(events) == 0:
         await interaction.followup.send(content="**No events were found using this text channel.**", ephemeral=True)
     elif len(events) == 1:
-        embed = events.get_availability_embed()
+        embed = events[0].get_availability_embed()
         await interaction.followup.send(embed=embed, ephemeral=True)
     else:
         options = [SelectOption(label=event.name, value=event.name) for event in client.events]
