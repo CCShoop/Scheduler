@@ -453,13 +453,8 @@ class Event:
             self.clean_participants_removed_times()
             if self.everyone_answered:
                 self.compare_availabilities()
-                # Cancel if everyone answered and no common availabilty was found
-                if not self.ready_to_create:
-                    logger.info(f"[{self}] No common availability was found")
-                    await self.cancel(reason="No common availability was found.")
-                    return
                 # Create the event
-                else:
+                if self.ready_to_create:
                     # Ensure start time is in the future
                     if self.start_times[0] <= cur_time:
                         logger.warning(f"[{self}] Tried to create event in the past, moving to {START_TIME_DELAY} minutes from now")
@@ -1143,7 +1138,7 @@ class Event:
         if not self.everyone_answered:
             cur_date = datetime.now().astimezone().date()
             latest_date = self.latest_date
-            if cur_date < latest_date:
+            if latest_date and cur_date < latest_date:
                 output += f'\n\n**Input availability with start time on latest availability date: {latest_date.strftime("%m/%d")}**'
             mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
             output += f'\n\nWaiting for a response from:{mentions}'
@@ -1502,7 +1497,10 @@ class Event:
         --------
         latest_date: :class:`datetime.date`
             The latest date of all start times in all participants' availabilities.
+            None if this event is not a multi-event.
         """
+        if not self.multi_event:
+            return None
         current_time = datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=START_TIME_DELAY)
         latest_date = current_time.date()
         for participant in self.participants:
