@@ -466,6 +466,7 @@ class Participant:
         self.availability = merged_availability
         if self.availability:
             self.answered = True
+        self.update_removed_times()
 
     def get_availability_overlap(self, event_start_time: datetime, event_duration: timedelta) -> TimeBlock:
         """
@@ -560,13 +561,8 @@ class Participant:
         latest_date: :class:`datetime.date`
             Optional: Latest date from other participants in the event.
         """
+        self.update_removed_times()
         cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
-        new_removed_times = []
-        for removed_time in self.removed_times:
-            if cur_time < removed_time.timeblock.end_time:
-                removed_time.timeblock.start_time = max(removed_time.timeblock.start_time, cur_time)
-                new_removed_times.append(removed_time)
-        self.removed_times = new_removed_times
         if self.availability:
             new_availability = []
             for tb in self.availability:
@@ -579,6 +575,15 @@ class Participant:
         if not self.availability:
             self.answered = False
             self.full_availability_flag = False
+
+    def update_removed_times(self) -> None:
+        cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
+        new_removed_times = []
+        for removed_time in self.removed_times:
+            if cur_time < removed_time.timeblock.end_time:
+                removed_time.timeblock.start_time = max(removed_time.timeblock.start_time, cur_time)
+                new_removed_times.append(removed_time)
+        self.removed_times = new_removed_times
 
     @property
     def availability_string(self) -> str:
