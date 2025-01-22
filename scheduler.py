@@ -52,7 +52,7 @@ INCLUDE_EXCLUDE: Literal = Literal[INCLUDE, EXCLUDE]
 START_TIME_DELAY = 11
 
 # Time in seconds between updates
-UPDATE_INTERVAL: int = 10
+UPDATE_INTERVAL: int = 5
 
 # Default length of events in minutes
 DEFAULT_EVENT_DURATION: int = 30
@@ -3186,6 +3186,14 @@ async def availability_command(interaction: Interaction):
         view = View()
         view.add_item(select)
         await interaction.followup.send(view=view, ephemeral=True)
+
+
+@client.tree.command(name='offset', description='Set the midnight offset value.')
+@app_commands.describe(offset='The offset in hours after midnight to automatically extend Full Availability to.')
+async def offset_command(interaction: Interaction, offset: int = 2):
+    global HOURS_PAST_MIDNIGHT_CUTOFF
+    HOURS_PAST_MIDNIGHT_CUTOFF = offset
+    await interaction.response.send_message(content=f"Midnight offset has been set to {offset}.")
 
 
 @client.tree.command(name='help', description='Show helpful information.')
