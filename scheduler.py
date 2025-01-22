@@ -1890,11 +1890,11 @@ class AvailabilityModal(Modal):
             for timeblock in participant.availability:
                 logger.info(f'[{self.event}] \t{timeblock}')
         except Exception as e:
+            logger.exception(f'[{self.event}] Error setting specific availability: {e}')
             try:
                 await interaction.response.send_message(f'Error setting your availability: {e}')
-            except Exception as e:
-                logger.error(f'[{self.event}] Failed sending interaction response: {e}')
-            logger.exception(f'[{self.event}] Error setting specific availability: {e}')
+            except Exception as err:
+                logger.error(f'[{self.event}] Failed sending interaction response: {err}')
 
     async def on_error(self, interaction: Interaction, error: Exception) -> None:
         await interaction.response.send_message(f'Error getting availability: {error}', ephemeral=True)
