@@ -588,8 +588,6 @@ class Event:
                 self.start_times.append(timeblock.start_time)
                 self.ready_to_create = True
                 dates_scheduled.append(tb_date)
-        if not self.ready_to_create:
-            logger.info(f'[{self.name}] compare_availabilities: No common availability found between all participants, cancelling event')
 
     async def send_five_minute_warning(self) -> None:
         """
