@@ -52,7 +52,7 @@ INCLUDE_EXCLUDE: Literal = Literal[INCLUDE, EXCLUDE]
 START_TIME_DELAY = 11
 
 # Time in seconds between updates
-UPDATE_INTERVAL: int = 5
+UPDATE_INTERVAL: int = 10
 
 # Default length of events in minutes
 DEFAULT_EVENT_DURATION: int = 30
