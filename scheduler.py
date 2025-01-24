@@ -1433,7 +1433,7 @@ class Event:
         if self.changed:
             return "Availability input cooldown"
         if self.everyone_answered:
-            return "Preparing to create event"
+            return "No common availability"
         return "Awaiting availability"
 
     @property
