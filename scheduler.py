@@ -51,6 +51,9 @@ INCLUDE_EXCLUDE: Literal = Literal[INCLUDE, EXCLUDE]
 # Time in minutes to delay "immediate" start
 START_TIME_DELAY = 11
 
+# Time in minutes before an event to send warning
+WARNING_TIME_MINUTES = 6
+
 # Time in seconds between updates
 UPDATE_INTERVAL: int = 10
 
@@ -466,7 +469,7 @@ class Event:
             if not self.started:
                 # 5 minute warning
                 if not self.five_minute_warning_flag:
-                    if cur_time + timedelta(minutes=6) == self.start_times[0]:
+                    if cur_time + timedelta(minutes=WARNING_TIME_MINUTES) == self.start_times[0]:
                         await self.send_five_minute_warning()
                 # Start if everyone is in the voice channel
                 await self.start_if_participants_in_vc()
@@ -667,13 +670,14 @@ class Event:
         Starts the event if all of the participants are in the voice channel
         and there are no active events in that voice channel.
         """
-        if datetime.now().astimezone() < self.start_times[0]:
+        if datetime.now().astimezone() < self.start_times[0] - timedelta(WARNING_TIME_MINUTES):
             return
         for event in client.events:
             if event is not self and event.voice_channel is self.voice_channel and event.started:
                 return
         if all(participant.member in self.voice_channel.members for participant in self.participants):
             await self.start(f'Event started by {client.user} because all users were in the voice channel.')
+            logger.info(f"[{self}] Started guild event because everyone was in the voice channel")
 
     async def end(self, reason: Optional[str] = f"Event ended by {client.user}.") -> None:
         """
@@ -2269,17 +2273,12 @@ class EventButtons(View):
                 other_event.restore_availabilities(self.event)
             self.event.reset_timeout_counter()
             try:
-                await self.event.scheduled_events[0].delete(reason=f'Reschedule button pressed by {interaction.user.name}.')
+                for scheduled_event in self.event.scheduled_events:
+                    await scheduled_event.delete(reason=f'Reschedule button pressed by {interaction.user.name}.')
             except Exception as e:
                 logger.error(f"[{self.event}] Error cancelling guild event to reschedule: {e}")
-            try:
-                self.event.scheduled_events.remove(self.event.scheduled_events[0])
-            except Exception as e:
-                logger.error(f"[{self.event}] Error removing guild event from list: {e}")
-            try:
-                self.event.start_times.remove(self.event.start_times[0])
-            except Exception as e:
-                logger.error(f"[{self.event}] Error removing start time from list: {e}")
+            self.event.scheduled_events = []
+            self.event.start_times = []
             self.event.ready_to_create = False
             self.event.created = False
             self.event.five_minute_warning_flag = False
