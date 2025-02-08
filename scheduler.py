@@ -60,6 +60,9 @@ UPDATE_INTERVAL: int = 1
 # Default length of events in minutes
 DEFAULT_EVENT_DURATION: int = 30
 
+# Default time between events in minutes
+EVENT_BUFFER_MINUTES: int = 0
+
 # Number of updates before an event is cleared
 UPDATES_PER_MINUTE: int = 60 // UPDATE_INTERVAL
 MINUTES_PER_HOUR: int = 60
@@ -586,9 +589,9 @@ class Event:
             intersected_timeblocks = self.intersect_time_blocks(intersected_timeblocks, timeblocks)
 
         # Get events in the same voice channel
-        conflicting_events = [event for event in client.events if event.voice_channel == self.voice_channel]
+        conflicting_events = [event for event in client.events if event.voice_channel == self.voice_channel and event.created]
         occupied_timeblocks = [
-            TimeBlock(event.start_time, event.start_time + event.duration)
+            TimeBlock(event.start_times[0], event.start_times[0] + event.duration)
             for event in conflicting_events
         ]
 
@@ -643,20 +646,21 @@ class Event:
         if self.five_minute_warning_flag:
             return
         self.five_minute_warning_flag = True
-        try:
-            message = f'{self.get_names_string(subscribed_only=True, mention=True)}'
-            embed = Embed(title="5 Minute Warning!",
-                          description=f"{self} is scheduled to start in 5 minutes.",
-                          color=Color.orange())
-            embed.timestamp = self.start_times[0]
-            if self.image_url:
-                embed.set_thumbnail(url=self.image_url)
-            embed.set_footer(text="Courtesy of Event Scheduler", icon_url=client.user.avatar.url)
-            self.five_minute_warning_message = await self.text_channel.send(content=message,
-                                                                            embed=embed,
-                                                                            reference=self.event_buttons_message)
-        except Exception as e:
-            logger.error(f'Error sending 5 minute warning: {e}')
+        # No need to send 5 minute warning if all
+        # participants are already in the voice channel
+        if all(participant.member in self.voice_channel.members for participant in self.participants):
+            return
+        message = f'{self.get_names_string(subscribed_only=True, mention=True)}'
+        embed = Embed(title="5 Minute Warning!",
+                      description=f"{self} is scheduled to start in 5 minutes.",
+                      color=Color.orange())
+        embed.timestamp = self.start_times[0]
+        if self.image_url:
+            embed.set_thumbnail(url=self.image_url)
+        embed.set_footer(text="Courtesy of Event Scheduler", icon_url=client.user.avatar.url)
+        self.five_minute_warning_message = await self.text_channel.send(content=message,
+                                                                        embed=embed,
+                                                                        reference=self.event_buttons_message)
 
     async def start(self, reason: Optional[str] = f"Event started by {client.user}.") -> None:
         """
@@ -674,11 +678,11 @@ class Event:
         try:
             await self.scheduled_events[0].start(reason=reason)
         except Exception as e:
-            logger.exception(f'[{self}] Failed to start: {e}')
+            logger.exception(f"[{self}] Failed to start: {e}")
         try:
             self.start_times[0] = datetime.now().astimezone().replace(second=0, microsecond=0)
         except Exception as e:
-            logger.warning(f'[{self}] Error getting start time: {e}')
+            logger.warning(f"[{self}] Error getting start time: {e}")
             self.start_times.append(datetime.now().astimezone().replace(second=0, microsecond=0))
         self.started = True
         self.event_buttons.start_button.style = ButtonStyle.green
@@ -687,33 +691,28 @@ class Event:
         self.event_buttons.reschedule_button.disabled = True
         self.event_buttons.cancel_button.disabled = True
         await self.update_event_buttons_message()
-        # Offset all other events that share this location to start after the end of this event
-        buffer_time = timedelta(minutes=0)
-        other_events = []
-        prev_event = None
-        for other_event in client.events:
-            if other_event != self and (other_event.voice_channel == self.voice_channel or other_event.shares_participants(self)):
-                for other_event_start_time in other_event.start_times:
-                    if other_event_start_time < (self.start_times[0] + self.duration + buffer_time):
-                        other_event_start_time = (self.start_times[0] + self.duration + buffer_time)
-                other_events.append(other_event)
-        # Offset the events from each other to prevent stack smashing
-        for other_event in other_events:
-            if prev_event:
-                for other_event_start_time in other_event.start_times:
-                    if other_event_start_time < (prev_event.start_times[0] + prev_event.duration + buffer_time):
-                        other_event_start_time = (prev_event.start_times[0] + prev_event.duration + buffer_time)
-            prev_event = other_event
+        # Push back start times of all other events that share
+        # this location to start after the end of this event
+        buffer_time = timedelta(minutes=EVENT_BUFFER_MINUTES)
+        buffered_end = self.start_times[0] + self.duration + buffer_time
+        affected_events = []
+        for event in client.events:
+            if event == self or not event.created:
+                continue
+            if event.voice_channel == self.voice_channel or event.shares_participants(self):
+                affected_events.append(event)
+                logger.debug(f"[{self}] {event} affected")
+        for event in sorted(affected_events, key=lambda e: min(e.start_times)):
+            event.start_times[0] = max(event.start_times[0], buffered_end)
+            buffered_end = event.start_times[0] + event.duration + buffer_time
+            await event.update_event_buttons_message()
+            logger.debug(f"[{self}] Pushed back start of {event} to {event.start_times[0]}")
         # Disable start buttons of events scheduled for the same channel
         for event in client.events:
             if event == self or not event.created or event.voice_channel != self.voice_channel:
                 continue
             event.event_buttons.start_button.disabled = True
-            try:
-                await event.event_buttons_message.edit(view=event.event_buttons)
-                logger.info(f'[{self}] Disabled start button for event with same location: {event}')
-            except Exception as e:
-                logger.error(f'[{self}] Failed to disable start button for {event}: {e}')
+            await event.update_event_buttons_message()
 
     async def start_if_participants_in_vc(self) -> None:
         """
@@ -726,8 +725,7 @@ class Event:
             if event is not self and event.voice_channel is self.voice_channel and event.started:
                 return
         if all(participant.member in self.voice_channel.members for participant in self.participants):
-            await self.start(f'Event started by {client.user} because all users were in the voice channel.')
-            logger.info(f"[{self}] Started guild event because everyone was in the voice channel")
+            await self.start(f"Event started by {client.user} because all users were in the voice channel.")
 
     async def end(self, reason: Optional[str] = f"Event ended by {client.user}.") -> None:
         """
@@ -2858,17 +2856,21 @@ async def create_command(interaction: Interaction,
         start_time_obj = datetime.fromisoformat(start_time)
     except Exception as e:
         logger.info(f"[{event_name}] Start time was not in iso format: {e}")
-        start_time = start_time.strip()
-        start_time = start_time.replace(':', '')
-        if len(start_time) == 1 or len(start_time) == 2:
-            start_time = start_time + '00'
-        if len(start_time) == 3:
-            start_time = '0' + start_time
-        elif len(start_time) != 4:
+        try:
+            start_time = start_time.strip()
+            start_time = start_time.replace(':', '')
+            if len(start_time) == 1 or len(start_time) == 2:
+                start_time = start_time + '00'
+            if len(start_time) == 3:
+                start_time = '0' + start_time
+            elif len(start_time) != 4:
+                await interaction.followup.send('Invalid start time format. Examples: "1630" or "00:30"')
+            hour = int(start_time[:2])
+            minute = int(start_time[2:])
+            start_time_obj = datetime.now().astimezone().replace(hour=hour, minute=minute, second=0, microsecond=0)
+        except Exception:
             await interaction.followup.send('Invalid start time format. Examples: "1630" or "00:30"')
-        hour = int(start_time[:2])
-        minute = int(start_time[2:])
-        start_time_obj = datetime.now().astimezone().replace(hour=hour, minute=minute, second=0, microsecond=0)
+            return
     while start_time_obj <= datetime.now().astimezone().replace(second=0, microsecond=0):
         start_time_obj += timedelta(days=1)
 
@@ -3192,7 +3194,6 @@ async def attach_command(interaction: Interaction):
 @client.tree.command(name='listevents', description='List all events in this server.')
 async def listevents_command(interaction: Interaction):
     await interaction.response.defer(ephemeral=True, thinking=True)
-    logger.info(f"Received list events command request from {interaction.user.name}")
     foundEvents = False
     content = ""
     embeds = [Embed(title=f"All events in {interaction.guild.name}", color=Color.blue())]
@@ -3212,7 +3213,6 @@ async def listevents_command(interaction: Interaction):
 @client.tree.command(name='availability', description='Show availabilities of an event.')
 async def availability_command(interaction: Interaction):
     await interaction.response.defer(ephemeral=True, thinking=True)
-    logger.info(f"{interaction.user.name} used availability command")
     events = []
     for event in client.events:
         if event.text_channel is interaction.channel:
@@ -3250,7 +3250,6 @@ async def offset_command(interaction: Interaction, offset: int = 2):
 
 @client.tree.command(name='help', description='Show helpful information.')
 async def help_command(interaction: Interaction):
-    logger.info(f"{interaction.user.name} used help command")
     await interaction.response.send_message(embeds=HELP_EMBEDS, ephemeral=True)
 
 
