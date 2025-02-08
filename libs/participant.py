@@ -25,7 +25,23 @@ class TimeBlock():
     def __init__(self, start_time: datetime, end_time: datetime) -> None:
         self.start_time: datetime = start_time
         self.end_time: datetime = end_time
-        self.duration: timedelta = end_time - start_time
+
+    @property
+    def duration(self):
+        return self.end_time - self.start_time
+
+    def subtract(self, timeblock):
+        """Subtracts another timeblock and returns the remaining block(s)."""
+        # No overlap
+        if self.end_time <= timeblock.start_time or self.start_time >= timeblock.end_time:
+            return [self]
+
+        timeblocks = []
+        if self.start_time < timeblock.start_time:
+            timeblocks.append(TimeBlock(self.start_time, timeblock.start_time))
+        if self.end_time > timeblock.end_time:
+            timeblocks.append(TimeBlock(timeblock.end_time, self.end_time))
+        return timeblocks
 
     @classmethod
     def from_dict(cls, data: dict):
@@ -172,17 +188,17 @@ class Participant:
                 return True
         return False
 
-    def set_full_availability(self, month=None, day=None, year=None, end_time=None) -> None:
+    def set_full_availability(self, day=None, month=None, year=None, end_time=None) -> None:
         """
         Sets the aprticipant to have full deliver.
 
         Arguments
         ----------
-        month: :class:`int`
-            Optional. Current entered month.
-            Default: Current
         day: :class:`int`
             Optional. Current entered day.
+            Default: Current
+        month: :class:`int`
+            Optional. Current entered month.
             Default: Current
         year: :class:`int`
             Optional. Current entered year.
@@ -199,9 +215,16 @@ class Participant:
                 day = cur_time.day
             if not year:
                 year = cur_time.year
-            start_time = cur_time.replace(month=month, day=day, year=year)
+            start_time = cur_time.replace(day=day,
+                                          month=month,
+                                          year=year)
             if not end_time:
-                end_time = cur_time.replace(month=month, day=day, year=year, hour=HOURS_PAST_MIDNIGHT_CUTOFF, minute=0) + timedelta(days=1)
+                end_time = cur_time.replace(day=day,
+                                            month=month,
+                                            year=year,
+                                            hour=HOURS_PAST_MIDNIGHT_CUTOFF,
+                                            minute=0)
+                end_time += timedelta(days=1)
             self.availability.append(TimeBlock(start_time, end_time))
             self.answered = True
             self.full_availability_flag = True
@@ -209,13 +232,33 @@ class Participant:
         except Exception as e:
             raise e
 
-    def set_no_availability(self) -> None:
+    def set_no_availability(self, day=None, month=None, year=None) -> None:
         """
         Sets the participant to have no availability.
+
+        Arguments
+        ----------
+        day: :class:`int`
+            Optional. Current entered day.
+            Default: Current
+        month: :class:`int`
+            Optional. Current entered month.
+            Default: Current
+        year: :class:`int`
+            Optional. Current entered year.
+            Default: Current
         """
-        self.availability.clear()
-        self.answered = False
         self.full_availability_flag = False
+        if day is None or month is None or year is None:
+            self.availability.clear()
+        else:
+            new_availability = []
+            for timeblock in self.availability:
+                if timeblock.start_time.day is not day or \
+                        timeblock.start_time.month is not month or \
+                        timeblock.start_time.year is not year:
+                    new_availability.append(timeblock)
+            self.availability = new_availability
 
     def set_specific_availability(self, avail_string: str, date_string: str, note: str) -> None:
         """
@@ -313,10 +356,13 @@ class Participant:
             date_is_today = True
 
         # Keyword shortcuts
-        if 'full' in avail_string or 'all' in avail_string:
-            self.set_full_availability(month=month, day=day, year=year)
+        if 'full' in avail_string:
+            self.set_full_availability(day=day, month=month, year=year)
             return
-        if 'clear' in avail_string or 'none' in avail_string or 'empty' in avail_string:
+        if 'clear' in avail_string:
+            self.set_no_availability(day=day, month=month, year=year)
+            return
+        if 'none' in avail_string:
             self.set_no_availability()
             return
 

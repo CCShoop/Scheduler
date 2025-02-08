@@ -56,7 +56,10 @@ instructions = Embed(title="Instructions",
                      color=Color.purple())
 instructions.add_field(name="Respond Button",
                        value="Set the date and enter the periods of time you are available."
-                       "\nAllows for some keyword inputs: full, all, clear, none, empty"
+                       "\nAllows for some keyword inputs: full, clear, none"
+                       "\n\tfull: full availability"
+                       "\n\tclear: removes availability for selected day"
+                       "\n\tnone: removes all availability"
                        "\nRequires 24 hour time (e.g. \"21-2\" is 9pm - 2am)."
                        "\nSeparate multiple periods of time with commas (e.g. \"9-12, 13-17\")."
                        "\nSet your timezone if you use your local time and it will be shifted to Eastern Time."
