@@ -224,8 +224,7 @@ class SchedulerClient(Client):
                         event = await Event.from_dict(event_data)
                         if not event:
                             raise Exception('Failed to create event object')
-                        await event.update_messages()
-                        if event.event_buttons_message is not None:
+                        if event.created:
                             event.event_buttons = EventButtons(event)
                             if event.started:
                                 event.event_buttons.start_button.style = ButtonStyle.green
@@ -233,40 +232,21 @@ class SchedulerClient(Client):
                                 event.event_buttons.end_button.disabled = False
                                 event.event_buttons.reschedule_button.disabled = True
                                 event.event_buttons.cancel_button.disabled = True
-                                # Offset all other events that share this location to start after the end of this event
-                                buffer_time = timedelta(minutes=0)
-                                other_events = []
-                                prev_event = None
-                                for other_event in client.events:
-                                    if other_event != event and (other_event.voice_channel == event.voice_channel or other_event.shares_participants(event)):
-                                        for other_event_start_time in other_event.start_times:
-                                            if other_event_start_time < (event.start_times[0] + event.duration + buffer_time):
-                                                other_event_start_time = (event.start_times[0] + event.duration + buffer_time)
-                                        other_events.append(other_event)
-                                # Offset the events from each other to prevent stack smashing
-                                for other_event in other_events:
-                                    if prev_event:
-                                        for other_event_start_time in other_event.start_times:
-                                            if other_event_start_time < (prev_event.start_times[0] + prev_event.duration + buffer_time):
-                                                other_event_start_time = (prev_event.start_times[0] + prev_event.duration + buffer_time)
-                                    prev_event = other_event
-                                # Disable start buttons of events scheduled for the same channel
-                                for other_event in client.events:
-                                    if other_event == event or not other_event.created or other_event.voice_channel != event.voice_channel:
-                                        continue
-                                    other_event.event_buttons.start_button.disabled = True
-                                    try:
-                                        await other_event.event_buttons_message.edit(view=other_event.event_buttons)
-                                        logger.info(f'[{event}] Disabled start button for event with same location: {other_event.name}')
-                                    except Exception as e:
-                                        logger.error(f'[{event}] Failed to disable start button for {other_event}: {e}')
-                            await event.event_buttons_message.edit(view=event.event_buttons)
                         client.events.append(event)
                         logger.info(f'[{event}] event loaded and added to client event list')
                     except Exception as e:
                         logger.error(f'Could not add event to client event list: {e}')
                     # Stop rate limiting when launching bot
                     time.sleep(3)
+                for event in client.events:
+                    if event.created and not event.started:
+                        for other_event in client.events:
+                            if other_event == event or other_event.voice_channel != event.voice_channel:
+                                continue
+                            if other_event.started:
+                                event.event_buttons.start_button.disabled = True
+                for event in client.events:
+                    await event.update_messages()
             else:
                 logger.info('No json data found')
 
@@ -329,10 +309,10 @@ class Event:
         The list of guild event start times.
     availability_message_lock: :class:`asyncio.Lock`
         The lock to prevent the availability message update from being called twice simultaneously.
-    availability_message: :class:`Message`
-        The message object that is requesting availability from participants.
+    availability_message_id: :class:`int`
+        The message id that is requesting availability from participants.
     avail_buttons: :class:`AvailabilityButtons`
-        The availability buttons attached to the availability_message that users can
+        The availability buttons attached to the availability message that users can
         use to submit their availability, unsubscribe, or cancel.
     event_buttons_message_lock: :class:`asyncio.Lock`
         The lock to prevent the event buttons message update from being called twice simultaneously.
@@ -355,7 +335,7 @@ class Event:
         Indicator of whether a participant has interacted with the bot since the last update.
     five_minute_warning_flag: :class:`bool`
         Indicator of whether a five minute warning message has been sent.
-    five_minute_warning_message: :class:`Message`
+    five_minute_warning_message_id: :class:`int`
         The message object warning participants that an event is starting in 5 minutes.
     timeout_counter: :class:`int`
         The event's time to live. Also used to resend the availability message for visibility.
@@ -373,9 +353,9 @@ class Event:
                  duration: Optional[timedelta] = timedelta(minutes=DEFAULT_EVENT_DURATION),
                  multi_event: Optional[bool] = False,
                  start_times: Optional[list] = None,
-                 availability_message: Optional[Message] = None,
+                 availability_message_id: Optional[int] = None,
                  avail_buttons=None,
-                 event_buttons_message: Optional[Message] = None,
+                 event_buttons_message_id: Optional[int] = None,
                  event_buttons=None,
                  ready_to_create: Optional[bool] = False,
                  created: Optional[bool] = False,
@@ -383,14 +363,14 @@ class Event:
                  scheduled_events: Optional[list] = None,
                  changed: Optional[bool] = False,
                  five_minute_warning_flag: Optional[bool] = False,
-                 five_minute_warning_message: Optional[Message] = None,
+                 five_minute_warning_message_id: Optional[int] = None,
                  timeout_counter: Optional[int] = EVENT_TIMEOUT) -> None:
         self.name = name
         self.guild = guild
         self.entity_type = EntityType.voice
         self.text_channel = text_channel
         self.availability_message_lock: asyncio.Lock = asyncio.Lock()
-        self.availability_message = availability_message
+        self.availability_message_id: int = availability_message_id
         if voice_channel:
             self.voice_channel = voice_channel
         else:
@@ -407,7 +387,7 @@ class Event:
         self.image_path = f'{self.name}.png'
         self.avail_buttons: AvailabilityButtons = avail_buttons
         self.event_buttons_message_lock: asyncio.Lock = asyncio.Lock()
-        self.event_buttons_message: Message = event_buttons_message
+        self.event_buttons_message_id: int = event_buttons_message_id
         self.event_buttons: EventButtons = event_buttons
         self.ready_to_create = ready_to_create
         self.created = created
@@ -415,7 +395,7 @@ class Event:
         self.scheduled_events: list = scheduled_events if scheduled_events is not None else []
         self.changed = changed
         self.five_minute_warning_flag = five_minute_warning_flag
-        self.five_minute_warning_message = five_minute_warning_message
+        self.five_minute_warning_message_id = five_minute_warning_message_id
         self.start_times: list = start_times or []
         self.duration = duration
         self.multi_event = multi_event
@@ -456,7 +436,7 @@ class Event:
                 if not self.five_minute_warning_flag:
                     cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
                     if cur_time + timedelta(minutes=WARNING_TIME_MINUTES) == self.start_times[0]:
-                        await self.send_five_minute_warning()
+                        await self.send_five_minute_warning_message()
                 # 5 minute warning has been sent
                 else:
                     await self.start_if_participants_in_vc()
@@ -639,10 +619,8 @@ class Event:
             other_event.clean_participants_removed_times()
             await other_event.update_messages()
 
-    async def send_five_minute_warning(self) -> None:
-        """
-        Sends the 5 minute warning for the event.
-        """
+    async def send_five_minute_warning_message(self) -> None:
+        """Sends the 5 minute warning."""
         if self.five_minute_warning_flag:
             return
         self.five_minute_warning_flag = True
@@ -658,9 +636,17 @@ class Event:
         if self.image_url:
             embed.set_thumbnail(url=self.image_url)
         embed.set_footer(text="Courtesy of Event Scheduler", icon_url=client.user.avatar.url)
-        self.five_minute_warning_message = await self.text_channel.send(content=message,
-                                                                        embed=embed,
-                                                                        reference=self.event_buttons_message)
+        five_minute_warning_message = await self.text_channel.send(content=message,
+                                                                   embed=embed,
+                                                                   reference=self.get_event_buttons_message())
+        self.five_minute_warning_message_id = five_minute_warning_message.id
+
+    async def delete_five_minute_warning_message(self) -> None:
+        """Deletes the 5 minute warning message."""
+        five_minute_warning_message = await self.get_five_minute_warning_message()
+        if five_minute_warning_message is not None:
+            await five_minute_warning_message.delete()
+            self.five_minute_warning_message_id = None
 
     async def start(self, reason: Optional[str] = f"Event started by {client.user}.") -> None:
         """
@@ -672,9 +658,7 @@ class Event:
             Reason to provide for guild event start in audit log.
         """
         logger.info(f"[{self}] Starting, reason: {reason}")
-        if self.five_minute_warning_message is not None:
-            self.five_minute_warning_message.delete()
-            self.five_minute_warning_message = None
+        await self.delete_five_minute_warning_message()
         try:
             await self.scheduled_events[0].start(reason=reason)
         except Exception as e:
@@ -748,7 +732,9 @@ class Event:
         embeds = self.get_event_buttons_message_embeds(end_time)
         try:
             self.event_buttons = None
-            await self.event_buttons_message.edit(content=content, embeds=embeds, view=None)
+            event_buttons_message = await self.get_event_buttons_message()
+            if event_buttons_message is not None:
+                await event_buttons_message.edit(content=content, embeds=embeds, view=None)
         except Exception as e:
             logger.error(f"[{self}] Error in event control end button callback while editing event buttons message: {e}")
         # Remove start_time and scheduled event from lists
@@ -804,12 +790,12 @@ class Event:
             self.event_buttons.unsubscribe_button.disabled = True
             self.event_buttons.reschedule_button.disabled = True
             self.event_buttons.cancel_button.disabled = True
-            if self.event_buttons_message is not None:
-                self.event_buttons_message.delete()
-                self.event_buttons_message = None
+            event_buttons_message = await self.get_event_buttons_message()
+            if event_buttons_message is not None:
+                await event_buttons_message.edit(view=self.event_buttons)
+            self.event_buttons_message_id = None
             self.event_buttons = None
             await self.update_event_buttons_message()
-            save()
             return True
         else:
             return False
@@ -1339,13 +1325,17 @@ class Event:
 
     async def create_availability_message(self, interaction: Interaction) -> None:
         async with self.availability_message_lock:
+            availability_message = await self.get_availability_message()
+            if availability_message is not None:
+                await self.delete_availability_message()
             content = self.get_availability_request_content()
             embeds = self.get_availability_request_embeds()
             if self.avail_buttons is None:
                 self.avail_buttons = AvailabilityButtons(event=self)
-            self.availability_message = await interaction.followup.send(content=content,
-                                                                        embeds=embeds,
-                                                                        view=self.avail_buttons)
+            availability_message = await interaction.followup.send(content=content,
+                                                                   embeds=embeds,
+                                                                   view=self.avail_buttons)
+            self.availability_message_id = availability_message.id
 
     async def update_availability_message(self, rescheduler: Optional[Participant] = None) -> None:
         """
@@ -1358,12 +1348,10 @@ class Event:
             Default: None
         """
         async with self.availability_message_lock:
+            availability_message = await self.get_availability_message()
             # Delete the message if the event was created
             if self.created:
-                if self.availability_message is not None:
-                    await self.availability_message.delete()
-                    self.availability_message = None
-                self.avail_buttons = None
+                await self.delete_availability_message()
                 return
             if rescheduler is not None:
                 self.scheduler = None
@@ -1373,63 +1361,74 @@ class Event:
             if self.avail_buttons is None:
                 self.avail_buttons = AvailabilityButtons(event=self)
             # Send a new message
-            if self.availability_message is None:
+            if availability_message is None:
                 if self.rescheduler is not None:
                     self.rescheduler.set_no_availability()
-                self.availability_message = await self.text_channel.send(content=content,
-                                                                         embeds=embeds,
-                                                                         view=self.avail_buttons)
+                availability_message = await self.text_channel.send(content=content,
+                                                                    embeds=embeds,
+                                                                    view=self.avail_buttons)
+                self.availability_message_id = availability_message.id
             # Update existing message
             else:
                 try:
-                    await self.availability_message.edit(content=content,
-                                                         embeds=embeds,
-                                                         view=self.avail_buttons)
+                    await availability_message.edit(content=content,
+                                                    embeds=embeds,
+                                                    view=self.avail_buttons)
                 except Exception as e:
-                    logger.exception(f'[{self}] Failed to edit availability message in update: {e}')
+                    logger.exception(f'[{self}] Failed to edit availability message: {e}')
 
     async def delete_availability_message(self) -> None:
-        async with self.availability_message_lock:
-            if self.availability_message is not None:
-                await self.availability_message.delete()
-                self.availability_message = None
+        availability_message = await self.get_availability_message()
+        if availability_message is not None:
+            await availability_message.delete()
+            self.availability_message_id = None
+            self.avail_buttons = None
 
     async def create_event_buttons_message(self, interaction: Interaction) -> None:
         async with self.event_buttons_message_lock:
+            event_buttons_message = await self.get_event_buttons_message()
+            if event_buttons_message is not None:
+                await self.delete_event_buttons_message()
             content = self.get_event_buttons_message_content()
             embeds = self.get_event_buttons_message_embeds()
             if not self.event_buttons:
                 self.event_buttons = EventButtons(self)
-            self.event_buttons_message = await interaction.followup.send(content=content,
-                                                                         embeds=embeds,
-                                                                         view=self.event_buttons)
+            event_buttons_message = await interaction.followup.send(content=content,
+                                                                    embeds=embeds,
+                                                                    view=self.event_buttons)
+            self.event_buttons_message_id = event_buttons_message.id
 
     async def update_event_buttons_message(self) -> None:
-        """
-        Updates the event buttons message.
-        """
+        """Updates the event buttons message."""
         async with self.event_buttons_message_lock:
+            event_buttons_message = await self.get_event_buttons_message()
+            # Delete the message if the event was rescheduled
             if not self.created:
-                # Delete the message if the event was rescheduled
-                if self.event_buttons_message is not None:
-                    await self.event_buttons_message.delete()
-                    self.event_buttons_message = None
-                self.event_buttons = None
+                await self.delete_event_buttons_message()
                 return
             content = self.get_event_buttons_message_content()
             embeds = self.get_event_buttons_message_embeds()
             if not self.event_buttons:
                 self.event_buttons = EventButtons(self)
             # Send a new message
-            if self.event_buttons_message is None:
-                self.event_buttons_message = await self.text_channel.send(content=content,
-                                                                          embeds=embeds,
-                                                                          view=self.event_buttons)
+            if event_buttons_message is None:
+                event_buttons_message = await self.text_channel.send(content=content,
+                                                                     embeds=embeds,
+                                                                     view=self.event_buttons)
+                self.event_buttons_message_id = event_buttons_message.id
             # Edit existing message
             else:
-                await self.event_buttons_message.edit(content=content,
-                                                      embeds=embeds,
-                                                      view=self.event_buttons)
+                await event_buttons_message.edit(content=content,
+                                                 embeds=embeds,
+                                                 view=self.event_buttons)
+
+    async def delete_event_buttons_message(self) -> None:
+        """Deletes the event buttons message."""
+        event_buttons_message = await self.get_event_buttons_message()
+        if event_buttons_message is not None:
+            await event_buttons_message.delete()
+            self.event_buttons_message_id = None
+            self.event_buttons = None
 
     def get_cancel_embed(self, reason: Optional[str] = "", canceller: Optional[str] = "") -> Embed:
         """
@@ -1482,15 +1481,11 @@ class Event:
         content = self.get_names_string(subscribed_only=True, mention=True)
         embed = self.get_cancel_embed(reason, canceller)
         await self.text_channel.send(content=content, embed=embed)
-        if self.availability_message is not None:
-            await self.availability_message.delete()
-            self.availability_message = None
-        if self.event_buttons_message is not None:
-            await self.event_buttons_message.delete()
-            self.event_buttons_message = None
-        if self.five_minute_warning_message is not None:
-            self.five_minute_warning_message.delete()
-            self.five_minute_warning_message = None
+        if not self.created:
+            await self.delete_availability_message()
+        else:
+            await self.delete_event_buttons_message()
+            await self.delete_five_minute_warning_message()
         try:
             if len(self.scheduled_events) > 0:
                 await self.scheduled_events[0].delete(reason=f'Cancel button pressed by {canceller}: {reason}')
@@ -1515,6 +1510,72 @@ class Event:
         self.delete_image_file()
         client.events.remove(self)
         logger.info(f'[{self}] Removed from client events list')
+
+    async def get_availability_message(self) -> Message:
+        """
+        Gets the availability message if there is one.
+
+        Returns
+        --------
+        availability_message: :class:`Message`
+            The availability message if there is one, otherwise None.
+        """
+        if self.availability_message_id is None:
+            return None
+        try:
+            return await self.text_channel.fetch_message(self.availability_message_id)
+        except NotFound as nf:
+            self.availability_message_id = None
+            logger.exception(f"[{self}] Availability message not found: {nf}")
+        except HTTPException as http:
+            logger.error(f"[{self}] Error getting availability message: {http}")
+        except Exception as e:
+            self.availability_message_id = None
+            logger.exception(f"[{self}] Error getting availability message: {e}")
+
+    async def get_event_buttons_message(self) -> Message:
+        """
+        Gets the event buttons message if there is one.
+
+        Returns
+        --------
+        event_buttons_message: :class:`Message`
+            The event buttons message if there is one, otherwise None.
+        """
+        if self.event_buttons_message_id is None:
+            return None
+        try:
+            return await self.text_channel.fetch_message(self.event_buttons_message_id)
+        except NotFound as nf:
+            self.event_buttons_message_id = None
+            logger.exception(f"[{self}] Event buttons message not found: {nf}")
+        except HTTPException as http:
+            logger.error(f"[{self}] Error getting event buttons message: {http}")
+        except Exception as e:
+            self.event_buttons_message_id = None
+            logger.exception(f"[{self}] Error getting event buttons message: {e}")
+
+    async def get_five_minute_warning_message(self) -> Message:
+        """
+        Gets the five minute warning message if there is one.
+
+        Returns
+        --------
+        five_minute_warning_message: :class:`Message`
+            The 5 minute warning message if there is one, otherwise None.
+        """
+        if self.five_minute_warning_message_id is None:
+            return None
+        try:
+            return await self.text_channel.fetch_message(self.five_minute_warning_message_id)
+        except NotFound as nf:
+            self.five_minute_warning_message_id = None
+            logger.exception(f"[{self}] Five minute warning message not found: {nf}")
+        except HTTPException as http:
+            logger.error(f"[{self}] Error getting five minute warning message: {http}")
+        except Exception as e:
+            self.five_minute_warning_message_id = None
+            logger.exception(f"[{self}] Error getting five minute warning message: {e}")
 
     @property
     def scheduling_status(self) -> str:
@@ -1718,27 +1779,13 @@ class Event:
             if type(event_rescheduler) is Member and event_rescheduler.id == participant.member.id:
                 event_rescheduler = participant
 
-        # Interaction (availability) message
-        event_avail_buttons = None
-        event_availability_message = None
-        try:
-            event_availability_message = await event_text_channel.fetch_message(data["availability_message_id"])
-            logger.info(f'[{event_name}] found availability_message: {event_availability_message.id}')
-        except NotFound:
-            logger.info(f'[{event_name}] no availability_message found')
-        except HTTPException as e:
-            logger.error(f'[{event_name}] error getting availability_message: {e}')
+        # Availability message id
+        event_availability_message_id = data["availability_message_id"]
+        logger.info(f'[{event_name}] found availability_message_id: {event_availability_message_id}')
 
-        # Event buttons message
-        event_event_buttons = None
-        event_event_buttons_message = None
-        try:
-            event_event_buttons_message = await event_text_channel.fetch_message(data["event_buttons_message_id"])
-            logger.info(f'[{event_name}] found event_buttons_message: {event_event_buttons_message.id}')
-        except NotFound:
-            logger.info(f'[{event_name}] no event_buttons_message found')
-        except HTTPException as e:
-            logger.error(f'[{event_name}] error getting event_buttons_message: {e}')
+        # Event buttons message id
+        event_event_buttons_message_id = data["event_buttons_message_id"]
+        logger.info(f'[{event_name}] found event_buttons_message_id: {event_event_buttons_message_id}')
 
         # Image url
         event_image_url = data["image_url"]
@@ -1774,16 +1821,10 @@ class Event:
         logger.info(f'[{event_name}] changed: {event_changed}')
 
         # 5 minute warning flag
-        try:
-            five_minute_warning_flag = data["five_minute_warning_flag"]
-        except Exception:
-            five_minute_warning_flag = False
+        five_minute_warning_flag = data["five_minute_warning_flag"]
 
         # 5 minute warning message
-        try:
-            five_minute_warning_message = await event_text_channel.fetch_message(data["five_minute_warning_message_id"])
-        except Exception:
-            five_minute_warning_message = None
+        five_minute_warning_message_id = data["five_minute_warning_message_id"]
 
         # Start time
         try:
@@ -1821,22 +1862,22 @@ class Event:
             name=event_name,
             guild=event_guild,
             text_channel=event_text_channel,
-            availability_message=event_availability_message,
-            avail_buttons=event_avail_buttons,
+            availability_message_id=event_availability_message_id,
+            avail_buttons=None,
             voice_channel=event_voice_channel,
             scheduler=event_scheduler,
             rescheduler=event_rescheduler,
             participants=event_participants,
             image_url=event_image_url,
-            event_buttons_message=event_event_buttons_message,
-            event_buttons=event_event_buttons,
+            event_buttons_message_id=event_event_buttons_message_id,
+            event_buttons=None,
             ready_to_create=event_ready_to_create,
             created=event_created,
             started=event_started,
             scheduled_events=event_scheduled_events,
             changed=event_changed,
             five_minute_warning_flag=five_minute_warning_flag,
-            five_minute_warning_message=five_minute_warning_message,
+            five_minute_warning_message_id=five_minute_warning_message_id,
             start_times=event_start_times,
             duration=event_duration,
             multi_event=event_multi_event,
@@ -1852,10 +1893,6 @@ class Event:
         data: :class:`dict`
             The event data dict.
         """
-        try:
-            availability_message_id = self.availability_message.id
-        except Exception:
-            availability_message_id = 0
         try:
             scheduler_id = self.scheduler.member.id
         except Exception:
@@ -1874,18 +1911,10 @@ class Event:
         else:
             image_url = ''
         try:
-            event_buttons_message_id = self.event_buttons_message.id
-        except Exception:
-            event_buttons_message_id = 0
-        try:
             scheduled_event_ids = [scheduled_event.id for scheduled_event in self.scheduled_events]
         except Exception as e:
             logger.warning(f'Failed getting scheduled event ids: {e}')
             scheduled_event_ids = []
-        try:
-            five_minute_warning_message_id = self.five_minute_warning_message.id
-        except Exception:
-            five_minute_warning_message_id = 0
         try:
             start_times = [start_time.isoformat() for start_time in self.start_times]
         except Exception as e:
@@ -1895,20 +1924,20 @@ class Event:
             'name': self.name,
             'guild_id': self.guild.id,
             'text_channel_id': self.text_channel.id,
-            'availability_message_id': availability_message_id,
+            'availability_message_id': self.availability_message_id,
             'voice_channel_id': self.voice_channel.id,
             'scheduler_id': scheduler_id,
             'rescheduler_id': rescheduler_id,
             'participants': participants,
             'image_url': image_url,
-            'event_buttons_message_id': event_buttons_message_id,
+            'event_buttons_message_id': self.event_buttons_message_id,
             'ready_to_create': self.ready_to_create,
             'created': self.created,
             'started': self.started,
             'scheduled_event_ids': scheduled_event_ids,
             'changed': self.changed,
             'five_minute_warning_flag': self.five_minute_warning_flag,
-            'five_minute_warning_message_id': five_minute_warning_message_id,
+            'five_minute_warning_message_id': self.five_minute_warning_message_id,
             'start_times': start_times,
             'duration': self.duration_minutes,
             'multi_event': self.multi_event,
