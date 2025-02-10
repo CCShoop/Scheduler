@@ -636,9 +636,13 @@ class Event:
         if self.image_url:
             embed.set_thumbnail(url=self.image_url)
         embed.set_footer(text="Courtesy of Event Scheduler", icon_url=client.user.avatar.url)
-        five_minute_warning_message = await self.text_channel.send(content=message,
-                                                                   embed=embed,
-                                                                   reference=self.get_event_buttons_message())
+        if type(self.get_event_buttons_message()) is Message:
+            five_minute_warning_message = await self.text_channel.send(content=message,
+                                                                       embed=embed,
+                                                                       reference=self.get_event_buttons_message())
+        else:
+            five_minute_warning_message = await self.text_channel.send(content=message,
+                                                                       embed=embed)
         self.five_minute_warning_message_id = five_minute_warning_message.id
 
     async def delete_five_minute_warning_message(self) -> None:
