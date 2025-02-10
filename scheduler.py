@@ -2531,8 +2531,7 @@ class ExistingAvailabilitiesSelect(Select):
         for event_avail in self.event_avails:
             if event_avail.event.name == self.values[0]:
                 logger.info(f'{interaction.user.name} reused availability from {self.values[0]}')
-                await interaction.message.edit(content="Copied availability!")
-                await interaction.message.delete(delay=FOLLOWUP_DELAY_SECONDS)
+                await interaction.message.delete()
                 self.participant.availability = event_avail.avail.copy()
                 self.participant.full_availability_flag = event_avail.full_flag
                 self.participant.answered = True
