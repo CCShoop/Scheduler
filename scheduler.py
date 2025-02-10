@@ -2525,15 +2525,16 @@ class ExistingAvailabilitiesSelect(Select):
     # Select an availability to attach
     async def callback(self, interaction: Interaction):
         await interaction.response.defer(ephemeral=True)
-        logger.info(f'{interaction.user.name} reused availability from {self.values[0]}')
         for event_avail in self.event_avails:
             if event_avail.event.name == self.values[0]:
+                logger.info(f'{interaction.user.name} reused availability from {self.values[0]}')
+                followup = await interaction.followup.send(content="Availability found!", ephemeral=True)
+                await followup.delete(delay=1)
                 self.participant.availability = event_avail.avail.copy()
                 self.participant.full_availability_flag = event_avail.full_flag
                 self.participant.answered = True
                 self.participant.subscribed = True
                 await event_avail.event.create_if_possible()
-                await interaction.followup.delete(reason=f"{interaction.user.name} reused availability")
                 return
         await interaction.followup.send(content="**Failed to get your availability.**",
                                         ephemeral=True)
