@@ -2530,8 +2530,8 @@ class ExistingAvailabilitiesSelect(Select):
         await interaction.response.defer(ephemeral=True)
         for event_avail in self.event_avails:
             if event_avail.event.name == self.values[0]:
+                self.participant.set_no_availability()
                 logger.info(f'{interaction.user.name} reused availability from {self.values[0]}')
-                await interaction.message.delete()
                 self.participant.availability = event_avail.avail.copy()
                 self.participant.full_availability_flag = event_avail.full_flag
                 self.participant.answered = True
