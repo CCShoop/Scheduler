@@ -2533,6 +2533,7 @@ class ExistingAvailabilitiesSelect(Select):
                 self.participant.answered = True
                 self.participant.subscribed = True
                 await event_avail.event.create_if_possible()
+                await interaction.followup.delete(reason=f"{interaction.user.name} reused availability")
                 return
         await interaction.followup.send(content="**Failed to get your availability.**",
                                         ephemeral=True)
