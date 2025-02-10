@@ -63,6 +63,9 @@ DEFAULT_EVENT_DURATION: int = 30
 # Default time between events in minutes
 EVENT_BUFFER_MINUTES: int = 0
 
+# Seconds to wait before deleting a followup message
+FOLLOWUP_DELAY_SECONDS: int = 3
+
 # Number of updates before an event is cleared
 UPDATES_PER_MINUTE: int = 60 // UPDATE_INTERVAL
 MINUTES_PER_HOUR: int = 60
@@ -2528,8 +2531,8 @@ class ExistingAvailabilitiesSelect(Select):
         for event_avail in self.event_avails:
             if event_avail.event.name == self.values[0]:
                 logger.info(f'{interaction.user.name} reused availability from {self.values[0]}')
-                followup = await interaction.followup.send(content="Availability found!", ephemeral=True)
-                await followup.delete(delay=1)
+                await interaction.message.edit(content="Copied availability!")
+                await interaction.message.delete(delay=FOLLOWUP_DELAY_SECONDS)
                 self.participant.availability = event_avail.avail.copy()
                 self.participant.full_availability_flag = event_avail.full_flag
                 self.participant.answered = True
