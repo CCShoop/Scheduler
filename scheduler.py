@@ -632,7 +632,7 @@ class Event:
         # participants are already in the voice channel
         if all(participant.member in self.voice_channel.members for participant in self.participants):
             return
-        message = f'{self.get_names_string(subscribed_only=True, mention=True)}'
+        message = f'{self.get_names_string(subscribed_only=True, mention=True, not_in_voice_channel_only=True)}'
         embed = Embed(title="5 Minute Warning!",
                       description=f"{self} is scheduled to start in 5 minutes.",
                       color=Color.orange())
