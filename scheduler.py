@@ -479,6 +479,7 @@ class Event:
 
     async def create_if_possible(self) -> None:
         if not self.created:
+            remove_times_from_availabilities_for_events()
             cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
             for participant in self.participants:
                 participant.confirm_answered(duration=self.duration, latest_date=self.latest_date)
@@ -2475,6 +2476,7 @@ class ExistingGuildEventsSelect(Select):
                               start_times=start_times,
                               created=True)
                 client.events.append(event)
+                remove_times_from_availabilities_for_events()
                 await event.save_image_to_file()
             for guild_event in self.guild.scheduled_events:
                 if guild_event.name == selected_guild_event.name and guild_event.location == selected_guild_event.location:
@@ -2530,12 +2532,13 @@ class ExistingAvailabilitiesSelect(Select):
         await interaction.response.defer(ephemeral=True)
         for event_avail in self.event_avails:
             if event_avail.event.name == self.values[0]:
-                self.participant.set_no_availability()
                 logger.info(f'{interaction.user.name} reused availability from {self.values[0]}')
+                self.participant.set_no_availability()
                 self.participant.availability = event_avail.avail.copy()
                 self.participant.full_availability_flag = event_avail.full_flag
                 self.participant.answered = True
                 self.participant.subscribed = True
+                remove_times_from_availabilities_for_events()
                 await event_avail.event.create_if_possible()
                 return
         await interaction.followup.send(content="**Failed to get your availability.**",
