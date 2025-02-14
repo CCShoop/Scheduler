@@ -2697,6 +2697,12 @@ async def edit_event(event: Event,
                             value="Unchanged",
                             inline=False)
         else:
+            for other_event in client.events:
+                other_event.restore_availabilities(event)
+                for shared_participant in event.other_shared_participants(other_event):
+                    shared_participant.remove_availability_for_event(event_name=event.name,
+                                                                     event_start_times=event.start_times,
+                                                                     event_duration=event.duration)
             embed.add_field(name="Name",
                             value=f"{old_name} -> {event.name}",
                             inline=False)
