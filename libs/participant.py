@@ -30,7 +30,7 @@ class TimeBlock():
     def duration(self):
         return self.end_time - self.start_time
 
-    def subtract(self, timeblock):
+    def subtract(self, timeblock) -> list:
         """Subtracts another timeblock and returns the remaining block(s)."""
         # No overlap
         if self.end_time <= timeblock.start_time or self.start_time >= timeblock.end_time:
@@ -42,6 +42,11 @@ class TimeBlock():
         if self.end_time > timeblock.end_time:
             timeblocks.append(TimeBlock(timeblock.end_time, self.end_time))
         return timeblocks
+
+    def overlaps_with(self, timeblock) -> bool:
+        if timeblock.end_time <= self.start_time or self.end_time <= timeblock.start_time:
+            return False
+        return True
 
     @classmethod
     def from_dict(cls, data: dict):
