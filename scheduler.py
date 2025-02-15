@@ -2060,7 +2060,12 @@ class AvailabilityModal(Modal):
             logger.info(f'[{self.event}] Raw input: "{avail_string}"')
             participant.set_specific_availability(avail_string, self.date.value, self.note.value)
             participant.confirm_answered(duration=self.event.duration, latest_date=self.event.latest_date)
+            for other_event in client.events:
+                other_event.restore_availabilities(self.event)
             remove_times_from_availabilities_for_events()
+            for other_event in client.events:
+                if other_event != self.event:
+                    await other_event.update_messages()
             await self.event.create_if_possible()
         except Exception as e:
             logger.exception(f"[{self.event}] Error setting specific availability: {e}")
