@@ -742,7 +742,7 @@ class Event:
         if all(participant.member in self.voice_channel.members for participant in self.participants):
             await self.start(f"Event started by {client.user} because all users were in the voice channel.")
         else:
-            await self.update_five_minute_availability_message()
+            await self.update_five_minute_warning_message()
 
     async def end(self, reason: Optional[str] = f"Event ended by {client.user}.") -> None:
         """
