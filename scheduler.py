@@ -2187,10 +2187,8 @@ class AvailabilityButtons(View):
                 return
             found_availabilities = self.event.get_other_availability(participant)
             if not found_availabilities:
-                logger.info(f'[{self.event}] No existing availability found for {interaction.user.name}')
                 await interaction.followup.send("No existing availability found.", ephemeral=True)
                 return
-            logger.info(f'[{self.event}] Found existing availability for {interaction.user.name}')
             if len(found_availabilities) == 1:
                 participant.availability = found_availabilities[0].avail.copy()
                 participant.answered = True
@@ -2546,7 +2544,8 @@ class ExistingAvailabilitiesSelect(Select):
                 self.participant.full_availability_flag = event_avail.full_flag
                 self.participant.answered = True
                 self.participant.subscribed = True
-                remove_times_from_availabilities_for_events()
+                await interaction.followup.send(content="**Availability retrieved!**",
+                                                ephemeral=True)
                 await event_avail.event.create_if_possible()
                 return
         await interaction.followup.send(content="**Failed to get your availability.**",
@@ -2694,7 +2693,7 @@ async def edit_event(event: Event,
         event.name = name
         if old_name == event.name:
             embed.add_field(name="Name",
-                            value="Unchanged",
+                            value=f"Unchanged; name is already {event.name}",
                             inline=False)
         else:
             for other_event in client.events:
@@ -2703,6 +2702,9 @@ async def edit_event(event: Event,
                     shared_participant.remove_availability_for_event(event_name=event.name,
                                                                      event_start_times=event.start_times,
                                                                      event_duration=event.duration)
+            if event.created:
+                for scheduled_event in event.scheduled_events:
+                    await scheduled_event.edit(name=event.name)
             embed.add_field(name="Name",
                             value=f"{old_name} -> {event.name}",
                             inline=False)
@@ -2712,9 +2714,12 @@ async def edit_event(event: Event,
         event.voice_channel = voice_channel
         if old_vc == event.voice_channel:
             embed.add_field(name="Voice Channel",
-                            value="Unchanged",
+                            value=f"Unchanged; voice channel is already {event.voice_channel.mention}",
                             inline=False)
         else:
+            if event.created:
+                for scheduled_event in event.scheduled_events:
+                    await scheduled_event.edit(channel=event.voice_channel)
             embed.add_field(name="Voice Channel",
                             value=f"{old_vc.mention} -> {event.voice_channel.mention}",
                             inline=False)
@@ -2727,9 +2732,12 @@ async def edit_event(event: Event,
         if event.image_url:
             if old_image_url == event.image_url:
                 embed.add_field(name="Image",
-                                value="Unchanged",
+                                value=f"Unchanged; image is already {event.image_url}",
                                 inline=False)
             else:
+                if event.created:
+                    for scheduled_event in event.scheduled_events:
+                        await scheduled_event.edit(image=event.get_image())
                 embed.add_field(name="Image",
                                 value=f"{old_image_url} -> {event.image_url}",
                                 inline=False)
@@ -2744,28 +2752,38 @@ async def edit_event(event: Event,
         event.duration = timedelta(minutes=duration)
         if old_duration.total_seconds() == event.duration.total_seconds():
             embed.add_field(name="Duration",
-                            value="Unchanged",
+                            value=f"Unchanged; duration already {event.duration_string}",
                             inline=False)
         else:
+            for other_event in client.events:
+                other_event.restore_availabilities(event)
+                for shared_participant in event.other_shared_participants(other_event):
+                    shared_participant.remove_availability_for_event(event_name=event.name,
+                                                                     event_start_times=event.start_times,
+                                                                     event_duration=event.duration)
             embed.add_field(name="Duration",
                             value=f"{get_time_str_from_minutes(old_duration.total_seconds() // 60)}"
                             f" -> {get_time_str_from_minutes(event.duration.total_seconds() // 60)}",
                             inline=False)
     # Multi event
     if multi_event is not None:
-        old_multi_event = event.multi_event
-        event.multi_event = multi_event
-        if old_multi_event == event.multi_event:
+        if event.created:
             embed.add_field(name="Multi Event",
-                            value="Unchanged",
+                            value="Unchanged; event already created",
                             inline=False)
         else:
-            embed.add_field(name="Multi Event",
-                            value=f"{old_multi_event} -> {event.multi_event}",
-                            inline=False)
+            old_multi_event = event.multi_event
+            event.multi_event = multi_event
+            if old_multi_event == event.multi_event:
+                embed.add_field(name="Multi Event",
+                                value=f"Unchanged; Multi Event already {event.multi_event}",
+                                inline=False)
+            else:
+                embed.add_field(name="Multi Event",
+                                value=f"{old_multi_event} -> {event.multi_event}",
+                                inline=False)
     if event.image_url:
         embed.set_thumbnail(url=event.image_url)
-    await event.update_messages()
     return embed
 
 
