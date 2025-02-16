@@ -492,7 +492,6 @@ class Event:
                     # Create the event
                     await self.make_scheduled_events()
                     self.previous_countdown = self.mins_until_start
-                    remove_times_from_availabilities_for_events()
                     for event in client.events:
                         await event.update_messages()
                     return
@@ -2062,11 +2061,11 @@ class AvailabilityModal(Modal):
             participant.confirm_answered(duration=self.event.duration, latest_date=self.event.latest_date)
             for other_event in client.events:
                 other_event.restore_availabilities(self.event)
-            remove_times_from_availabilities_for_events()
-            for other_event in client.events:
-                if other_event != self.event:
-                    await other_event.update_messages()
             await self.event.create_if_possible()
+            if not self.event.created:
+                for other_event in client.events:
+                    if other_event != self.event:
+                        await other_event.update_messages()
         except Exception as e:
             logger.exception(f"[{self.event}] Error setting specific availability: {e}")
 
@@ -2197,6 +2196,7 @@ class AvailabilityButtons(View):
             if len(found_availabilities) == 1:
                 participant.availability = found_availabilities[0].avail.copy()
                 participant.answered = True
+                remove_times_from_availabilities_for_events()
                 await self.event.update_availability_message()
             else:
                 await interaction.followup.send(content="Select another event to grab your availability from.",
