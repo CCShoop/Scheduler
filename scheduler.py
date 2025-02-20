@@ -3134,8 +3134,12 @@ async def schedule(eventName: str,
         logger.error(f'[{eventName}] Error saving image: {e}')
         raise Exception(f"Failed to save image: {e}")
 
+    remove_times_from_availabilities_for_events()
     if sendAvailabilityMessage:
         await event.update_availability_message()
+    for other_event in client.events:
+        if other_event is not event:
+            await other_event.update_messages()
     return event
 
 
