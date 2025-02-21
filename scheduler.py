@@ -497,15 +497,6 @@ class Event:
                     return
             await self.update_availability_message()
 
-    def clean_participants_removed_times(self) -> None:
-        """
-        Restores removed times for no longer active events.
-        """
-        for participant in self.participants:
-            for removed_time in participant.removed_times.copy():
-                if removed_time.event_name not in [event.name for event in client.events]:
-                    participant.restore_availability_for_event(event_name=removed_time.event_name)
-
     def intersect_time_blocks(self, timeblocks1: list, timeblocks2: list) -> list[TimeBlock]:
         """
         Gets all timeblocks in the two availabilities that intersect.
@@ -628,7 +619,6 @@ class Event:
         # Restore removed availabilities
         for other_event in client.events:
             other_event.restore_availabilities(self)
-            other_event.clean_participants_removed_times()
             await other_event.update_messages()
 
     def get_five_minute_warning_message_content(self) -> str:
@@ -793,7 +783,6 @@ class Event:
         # Restore removed availabilities
         for event in client.events:
             event.restore_availabilities(self)
-            event.clean_participants_removed_times()
             await event.update_messages()
 
     async def end_if_participants_leave_vc(self) -> None:
@@ -1529,7 +1518,6 @@ class Event:
         # Restore removed availabilities
         for event in client.events:
             event.restore_availabilities(self)
-            event.clean_participants_removed_times()
             await event.update_messages()
 
     def remove(self) -> None:
@@ -2932,7 +2920,6 @@ async def create_command(interaction: Interaction,
     try:
         start_time_obj = datetime.fromisoformat(start_time)
     except Exception as e:
-        logger.info(f"[{event_name}] Start time was not in iso format: {e}")
         try:
             start_time = start_time.strip()
             start_time = start_time.replace(':', '')
@@ -2942,11 +2929,13 @@ async def create_command(interaction: Interaction,
                 start_time = '0' + start_time
             elif len(start_time) != 4:
                 await interaction.followup.send('Invalid start time format. Examples: "1630" or "00:30"')
+                logger.info(f"[{event_name}] Start time was not in iso format: {e}")
             hour = int(start_time[:2])
             minute = int(start_time[2:])
             start_time_obj = datetime.now().astimezone().replace(hour=hour, minute=minute, second=0, microsecond=0)
         except Exception:
             await interaction.followup.send('Invalid start time format. Examples: "1630" or "00:30"')
+            logger.info(f"[{event_name}] Start time was not in iso format: {e}")
             return
     while start_time_obj <= datetime.now().astimezone().replace(second=0, microsecond=0):
         start_time_obj += timedelta(days=1)
@@ -2962,9 +2951,45 @@ async def create_command(interaction: Interaction,
         if participant.member.id == interaction.user.id:
             scheduler = participant
 
-    # Make event
+    # Check event won't overlap with another event in the same voice channel
+    # or another event with a shared participant
+    for other_event in client.events:
+        if not other_event.created:
+            continue
+        for other_participant in other_event.participants:
+            for participant in participants:
+                if other_participant.member.id == participant.member.id:
+                    participant.remove_availability_for_event(event_name=other_event.name,
+                                                              event_start_times=other_event.start_times,
+                                                              event_duration=other_event.duration)
+                    break
+            else:
+                continue
+            break
     duration = timedelta(minutes=duration)
     start_times = [start_time_obj]
+    for start_time in start_times:
+        timeblock = TimeBlock(start_time=start_time, end_time=start_time + duration)
+        for other_event in client.events:
+            if not other_event.created:
+                continue
+            for other_start_time in other_event.start_times:
+                other_timeblock = TimeBlock(start_time=other_start_time,
+                                            end_time=other_start_time + other_event.duration)
+                if other_event.voice_channel == voice_channel:
+                    if timeblock.overlaps_with(other_timeblock):
+                        content = f"**Specified time overlaps with** ***{other_event}*** **in the same location!**"
+                        await interaction.followup.send(content=content, silent=True)
+                        return
+                for other_participant in other_event.participants:
+                    if other_participant.member.id in [participant.member.id for participant in participants]:
+                        for other_participant_removed_time in other_participant.removed_times:
+                            if timeblock.overlaps_with(other_participant_removed_time):
+                                content = f"**Specified time overlaps with an event that** ***{other_participant}*** **is in!**"
+                                await interaction.followup.send(content=content, silent=True)
+                                return
+
+    # Make event
     event = Event(name=event_name,
                   voice_channel=voice_channel,
                   scheduler=scheduler,
@@ -3021,7 +3046,7 @@ async def schedule_command(interaction: Interaction,
     except Exception as e:
         content = f"[{event_name}] Failed to schedule event: {e}"
         logger.error(content)
-        await interaction.followup.send(content=content)
+        await interaction.followup.send(content=content, silent=True)
 
 
 async def schedule(eventName: str,

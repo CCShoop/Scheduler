@@ -27,8 +27,12 @@ class TimeBlock():
         self.end_time: datetime = end_time
 
     @property
-    def duration(self):
+    def duration(self) -> timedelta:
         return self.end_time - self.start_time
+
+    @property
+    def string(self) -> str:
+        return f"[Free] {self}"
 
     def subtract(self, timeblock) -> list:
         """Subtracts another timeblock and returns the remaining block(s)."""
@@ -107,6 +111,14 @@ class RemovedTime:
         self.event_name = event_name
         self.timeblock = timeblock
         self.removed_timeblock = removed_timeblock
+
+    @property
+    def string(self) -> str:
+        return f"[Busy] {self}"
+
+    @classmethod
+    def removed_time_start_time(removed_time) -> datetime:
+        return removed_time.timeblock.start_time
 
     @classmethod
     def from_dict(cls, data: dict):
@@ -646,6 +658,7 @@ class Participant:
         response: :class:`str`
             The participant's availability string
         """
+        self.removed_times = sorted(self.removed_times, key=RemovedTime.removed_time_start_time)
         removed_index = 0
         response = ''
         if self.note:
@@ -653,22 +666,22 @@ class Participant:
         if self.full_availability_flag:
             response += "[Full Availability]\n"
         if self.availability:
-            # Print availabiliity and removed times within availability
+            # Print availability and removed times within availability
             for timeblock in self.availability:
                 if removed_index < len(self.removed_times):
                     removed_time = self.removed_times[removed_index]
                     if removed_time.timeblock.start_time < timeblock.start_time:
-                        response += f"[Busy] {removed_time}\n"
+                        response += f"{removed_time.string}\n"
                         removed_index += 1
-                response += f"[Free] {timeblock}\n"
+                response += f"{timeblock.string}\n"
             # Print removed times after end of availability
             while removed_index < len(self.removed_times):
-                response += f"{self.removed_times[removed_index]}\n"
+                response += f"{self.removed_times[removed_index].string}\n"
                 removed_index += 1
         else:
             # Print removed times
             for removed_time in self.removed_times:
-                response += f"[Busy] {removed_time}\n"
+                response += f"{removed_time.string}\n"
         return response
 
     @classmethod
