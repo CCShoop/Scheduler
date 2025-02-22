@@ -658,7 +658,7 @@ class Participant:
         response: :class:`str`
             The participant's availability string
         """
-        self.removed_times.sort(RemovedTime.removed_time_start_time)
+        self.removed_times.sort(key=RemovedTime.removed_time_start_time, reverse=False)
         removed_index = 0
         response = ''
         if self.note:
