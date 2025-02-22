@@ -824,6 +824,8 @@ class Event:
         """
         Creates a scheduled event for each start time and sets the guild event's image if appropriate.
         """
+        if len(self.name) > 100:
+            self.name = self.name[:99]
         for start_time in self.start_times:
             scheduled_event = await self.guild.create_scheduled_event(name=self.name,
                                                                       description='Bot-generated event',
