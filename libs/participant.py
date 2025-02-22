@@ -113,12 +113,16 @@ class RemovedTime:
         self.removed_timeblock = removed_timeblock
 
     @property
+    def start_time(self) -> datetime:
+        return self.timeblock.start_time
+
+    @property
+    def end_time(self) -> datetime:
+        return self.timeblock.end_time
+
+    @property
     def string(self) -> str:
         return f"[Busy] {self}"
-
-    @classmethod
-    def removed_time_start_time(removed_time) -> datetime:
-        return removed_time.timeblock.start_time
 
     @classmethod
     def from_dict(cls, data: dict):
@@ -658,7 +662,7 @@ class Participant:
         response: :class:`str`
             The participant's availability string
         """
-        self.removed_times.sort(key=RemovedTime.removed_time_start_time, reverse=False)
+        self.removed_times.sort(key=lambda rt: rt.start_time)
         removed_index = 0
         response = ''
         if self.note:
