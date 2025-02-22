@@ -1142,6 +1142,7 @@ class Event:
                 for other_participant in event.participants:
                     if participant.member.id == other_participant.member.id:
                         other_participants.append(other_participant)
+                        break
         return other_participants
 
     def get_other_availability(self, participant: Participant) -> list:
@@ -1275,7 +1276,6 @@ class Event:
         if event == self:
             return
         logger.info(f"[{event}] Restored availabilities for {self}")
-        # for other_participant in self.other_shared_participants(event):
         for participant in self.participants:
             participant.restore_availability_for_event(event.name)
             participant.confirm_answered(duration=self.duration,
@@ -3399,16 +3399,10 @@ def get_participants_other_events(event: Event, participant: Participant) -> lis
 
 
 def remove_times_from_availabilities_for_events() -> None:
-    """
-    Removes and saves timeblocks from uncreated events for created events.
-    Also cleans removed availabilities of forgotten events.
-    """
-    # Remove blocks of time from participant availability for events
+    """Removes and saves timeblocks from shared participants with other events."""
     for event in client.events:
-        if not event.created:
-            continue
         for other_event in client.events:
-            if other_event == event or other_event.created:
+            if other_event == event:
                 continue
             for shared_participant in event.other_shared_participants(other_event):
                 shared_participant.remove_availability_for_event(event_name=event.name,
