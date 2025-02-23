@@ -1312,7 +1312,10 @@ class Event:
             The content for the event buttons message.
         """
         if not self.started:
-            return self.get_names_string(subscribed_only=True, mention=True, not_in_voice_channel_only=True)
+            if self.five_minute_warning_flag:
+                return self.get_names_string(subscribed_only=True, mention=True, not_in_voice_channel_only=True)
+            else:
+                return self.get_names_string(subscribed_only=True, mention=True)
         else:
             return ""
 
