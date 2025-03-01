@@ -554,6 +554,25 @@ class Participant:
                              end_time=min(event_timeblock.end_time, timeblock.end_time))
         return None
 
+    def remove_from_availability(self, timeblock: TimeBlock) -> None:
+        """Removes a timeblock from availability."""
+        self.clean_availability()
+        new_availability = []
+        for tb in self.availability:
+            if timeblock.end_time <= tb.start_time:
+                # We've passed the timeblock
+                return
+            if tb.overlaps_with(timeblock):
+                if tb.start_time < timeblock.start_time:
+                    new_availability.append(TimeBlock(start_time=tb.start_time,
+                                                      end_time=timeblock.start_time))
+                if timeblock.end_time < tb.end_time:
+                    new_availability.append(TimeBlock(start_time=timeblock.end_time,
+                                                      end_time=tb.end_time))
+            else:
+                new_availability.append(tb)
+        self.availability = new_availability
+
     def remove_availability_for_event(self, event_name: str, event_timeblocks: list[TimeBlock]) -> None:
         """
         Removes and saves availability for an event.
@@ -623,6 +642,9 @@ class Participant:
         for removed_time in self.removed_times:
             if cur_time < removed_time.event_timeblock.end_time:
                 new_removed_times.append(removed_time)
+                if not removed_time.removed_timeblock:
+                    removed_time.removed_timeblock = self.get_availability_overlap(removed_time.event_timeblock)
+                self.remove_from_availability(removed_time.removed_timeblock)
         self.removed_times = new_removed_times
 
     @property
