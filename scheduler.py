@@ -479,7 +479,6 @@ class Event:
 
     async def create_if_possible(self) -> None:
         if not self.created:
-            remove_times_from_availabilities_for_events()
             cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
             if self.everyone_answered:
                 self.compare_availabilities()
@@ -491,6 +490,7 @@ class Event:
                         self.start_times[0] = cur_time + timedelta(minutes=START_TIME_DELAY)
                     # Create the event
                     await self.make_scheduled_events()
+                    remove_times_from_availabilities_for_events()
                     self.previous_countdown = self.mins_until_start
                     for event in client.events:
                         await event.update_messages()
@@ -1277,7 +1277,6 @@ class Event:
         """
         if event == self:
             return
-        logger.info(f"[{event}] Restored availabilities for {self}")
         for participant in self.participants:
             participant.restore_availability_for_event(event.name)
             participant.confirm_answered(duration=self.duration,
@@ -2065,13 +2064,10 @@ class AvailabilityModal(Modal):
             logger.info(f'[{self.event}] Raw input: "{avail_string}"')
             participant.set_specific_availability(avail_string, self.date.value, self.note.value)
             participant.confirm_answered(duration=self.event.duration, latest_date=self.event.latest_date)
-            for other_event in client.events:
-                other_event.restore_availabilities(self.event)
             await self.event.create_if_possible()
             if not self.event.created:
                 for other_event in client.events:
-                    if other_event != self.event:
-                        await other_event.update_messages()
+                    await other_event.update_messages()
         except Exception as e:
             logger.exception(f"[{self.event}] Error setting specific availability: {e}")
 
@@ -2494,8 +2490,8 @@ class ExistingGuildEventsSelect(Select):
                               start_times=start_times,
                               created=True)
                 client.events.append(event)
-                remove_times_from_availabilities_for_events()
                 await event.save_image_to_file()
+            remove_times_from_availabilities_for_events()
             for guild_event in self.guild.scheduled_events:
                 if guild_event.name == selected_guild_event.name and guild_event.location == selected_guild_event.location:
                     event.start_times.append(guild_event.start_time.astimezone())
@@ -3198,15 +3194,24 @@ async def edit_command(interaction: Interaction,
                        duration: Optional[int] = None,
                        multi_event: Optional[bool] = None):
     await interaction.response.defer(ephemeral=True, thinking=True)
+    same_text_channel_events = []
+    same_guild_events = []
     events = []
     for event in client.events:
         if event.text_channel == interaction.channel:
-            events.append(event)
-    # No events found in this guild
-    if len(events) == 0:
-        await interaction.followup.send("**No events were found in this guild.**", ephemeral=True)
-    # Only one event in this guild, edit it
-    elif len(events) == 1:
+            same_text_channel_events.append(event)
+        if event.guild == interaction.guild:
+            same_guild_events.append(event)
+    if same_text_channel_events:
+        events = same_text_channel_events
+    else:
+        if same_guild_events:
+            events = same_guild_events
+        else:
+            await interaction.followup.send("**No events were found in this guild.**", ephemeral=True)
+            return
+    # Only one event in this text channel/guild, edit it
+    if len(events) == 1:
         event = events[0]
         embed = await edit_event(event=event,
                                  name=name,
@@ -3222,7 +3227,7 @@ async def edit_command(interaction: Interaction,
         for event in client.events:
             await event.update_messages()
         await interaction.followup.send(embed=embed)
-    # Multiple events in guild, select one to edit from a dropdown
+    # Multiple events in text channel/guild, select one to edit from a dropdown
     else:
         options = [SelectOption(label=event.name, value=event.name) for event in events]
         select = Select(placeholder="Select an event to edit", options=options)
