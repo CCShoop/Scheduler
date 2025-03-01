@@ -647,7 +647,7 @@ class Participant:
             for timeblock in self.availability:
                 if removed_index < len(self.removed_times):
                     removed_time = self.removed_times[removed_index]
-                    if removed_time.timeblock.start_time < timeblock.start_time:
+                    if removed_time.event_timeblock.start_time < timeblock.start_time:
                         response += f"{removed_time}\n"
                         removed_index += 1
                 response += f"{timeblock.string}\n"
