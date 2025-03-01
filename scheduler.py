@@ -541,6 +541,8 @@ class Event:
             TimeBlock(start_time=event.start_times[0], end_time=event.start_times[0] + event.duration)
             for event in conflicting_events
         ]
+        logger.debug("occupied_timeblocks:")
+        logger.debug(occupied_timeblocks)
 
         # Check if the voice channel is available in [START_TIME_DELAY] minutes
         all_participants_and_vc_available = True
@@ -548,12 +550,14 @@ class Event:
         for occupied_timeblock in occupied_timeblocks:
             if occupied_timeblock.overlaps_with(self_timeblock):
                 all_participants_and_vc_available = False
+                logger.debug(f"[{self}] voice channel is unavailable for immediate start")
                 break
 
         # Check if all participants are available in [START_TIME_DELAY] minutes
         for participant in subbed_participants:
             if not participant.is_available_at(current_time, self.duration):
                 all_participants_and_vc_available = False
+                logger.debug(f"[{self}] {participant} is unavailable for immediate start")
                 break
 
         # Make an event if all participants are available when the voice channel is next available,
@@ -567,16 +571,22 @@ class Event:
             if not self.multi_event:
                 return
             dates_scheduled.append(cur_date)
+        logger.debug("dates_scheduled:")
+        logger.debug(dates_scheduled)
 
         # Find the earliest common availability
 
         # Get all availabilities
         available_timeblocks = [participant.availability for participant in subbed_participants]
+        logger.debug("available_timeblocks:")
+        logger.debug(available_timeblocks)
 
         # Get intersected availability
         intersected_timeblocks = available_timeblocks[0]
         for timeblocks in available_timeblocks[1:]:
             intersected_timeblocks = self.intersect_time_blocks(intersected_timeblocks, timeblocks)
+        logger.debug("intersected_timeblocks:")
+        logger.debug(intersected_timeblocks)
 
         # Remove conflicting time blocks
         filtered_timeblocks = []
@@ -588,6 +598,8 @@ class Event:
                     new_blocks.extend(block.subtract(occupied_timeblock))
                 remaining_blocks = new_blocks
             filtered_timeblocks.extend(remaining_blocks)
+        logger.debug("filtered_timeblocks:")
+        logger.debug(filtered_timeblocks)
 
         # Find valid start times
         for timeblock in filtered_timeblocks:
@@ -601,6 +613,8 @@ class Event:
                 self.start_times.append(timeblock.start_time)
                 self.ready_to_create = True
                 dates_scheduled.append(tb_date)
+        logger.debug("dates_scheduled:")
+        logger.debug(dates_scheduled)
 
     async def reschedule(self, rescheduler: Participant) -> None:
         self.reset_timeout_counter()
