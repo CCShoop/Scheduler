@@ -127,7 +127,7 @@ class RemovedTime:
     def from_dict(cls, data: dict):
         return cls(
             event_name=data['event_name'],
-            timeblock=TimeBlock.from_dict(data['timeblock']),
+            event_timeblock=TimeBlock.from_dict(data['timeblock']),
             removed_timeblock=TimeBlock.from_dict(data['removed_timeblock'])
         )
 
