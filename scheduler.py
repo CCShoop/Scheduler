@@ -541,8 +541,6 @@ class Event:
             TimeBlock(start_time=event.start_times[0], end_time=event.start_times[0] + event.duration)
             for event in conflicting_events
         ]
-        logger.debug("occupied_timeblocks:")
-        logger.debug(occupied_timeblocks)
 
         # Check if the voice channel is available in [START_TIME_DELAY] minutes
         all_participants_and_vc_available = True
@@ -571,22 +569,16 @@ class Event:
             if not self.multi_event:
                 return
             dates_scheduled.append(cur_date)
-        logger.debug("dates_scheduled:")
-        logger.debug(dates_scheduled)
 
         # Find the earliest common availability
 
         # Get all availabilities
         available_timeblocks = [participant.availability for participant in subbed_participants]
-        logger.debug("available_timeblocks:")
-        logger.debug(available_timeblocks)
 
         # Get intersected availability
         intersected_timeblocks = available_timeblocks[0]
         for timeblocks in available_timeblocks[1:]:
             intersected_timeblocks = self.intersect_time_blocks(intersected_timeblocks, timeblocks)
-        logger.debug("intersected_timeblocks:")
-        logger.debug(intersected_timeblocks)
 
         # Remove conflicting time blocks
         filtered_timeblocks = []
@@ -598,8 +590,6 @@ class Event:
                     new_blocks.extend(block.subtract(occupied_timeblock))
                 remaining_blocks = new_blocks
             filtered_timeblocks.extend(remaining_blocks)
-        logger.debug("filtered_timeblocks:")
-        logger.debug(filtered_timeblocks)
 
         # Find valid start times
         for timeblock in filtered_timeblocks:
@@ -613,8 +603,6 @@ class Event:
                 self.start_times.append(timeblock.start_time)
                 self.ready_to_create = True
                 dates_scheduled.append(tb_date)
-        logger.debug("dates_scheduled:")
-        logger.debug(dates_scheduled)
 
     async def reschedule(self, rescheduler: Participant) -> None:
         self.reset_timeout_counter()
@@ -1280,7 +1268,7 @@ class Event:
 
     def restore_availabilities(self, event) -> None:
         """
-        Restores availabilities that were modified by provided event's creation.
+        Restores availabilities that were modified by the provided event's creation.
 
         Arguments
         ----------
@@ -1721,6 +1709,17 @@ class Event:
             if event.voice_channel == self.voice_channel:
                 return True
         return False
+
+    @property
+    def timeblock(self) -> TimeBlock:
+        return TimeBlock(start_time=self.start_times[0],
+                         end_time=self.start_times[0] + self.duration)
+
+    @property
+    def timeblocks(self) -> list[TimeBlock]:
+        return [TimeBlock(start_time=start_time,
+                          end_time=start_time + self.duration)
+                for start_time in self.start_times]
 
     @property
     def mins_until_start(self) -> int:
@@ -2714,8 +2713,7 @@ async def edit_event(event: Event,
                 other_event.restore_availabilities(event)
                 for shared_participant in event.other_shared_participants(other_event):
                     shared_participant.remove_availability_for_event(event_name=event.name,
-                                                                     event_start_times=event.start_times,
-                                                                     event_duration=event.duration)
+                                                                     event_timeblocks=event.timeblocks)
             if event.created:
                 for scheduled_event in event.scheduled_events:
                     await scheduled_event.edit(name=event.name)
@@ -2773,8 +2771,7 @@ async def edit_event(event: Event,
                 other_event.restore_availabilities(event)
                 for shared_participant in event.other_shared_participants(other_event):
                     shared_participant.remove_availability_for_event(event_name=event.name,
-                                                                     event_start_times=event.start_times,
-                                                                     event_duration=event.duration)
+                                                                     event_timeblocks=event.timeblocks)
             embed.add_field(name="Duration",
                             value=f"{get_time_str_from_minutes(old_duration.total_seconds() // 60)}"
                             f" -> {get_time_str_from_minutes(event.duration.total_seconds() // 60)}",
@@ -2981,8 +2978,7 @@ async def create_command(interaction: Interaction,
             for participant in participants:
                 if other_participant.member.id == participant.member.id:
                     participant.remove_availability_for_event(event_name=other_event.name,
-                                                              event_start_times=other_event.start_times,
-                                                              event_duration=other_event.duration)
+                                                              event_timeblocks=other_event.timeblocks)
                     break
             else:
                 continue
@@ -3425,8 +3421,7 @@ def remove_times_from_availabilities_for_events() -> None:
                 continue
             for shared_participant in event.other_shared_participants(other_event):
                 shared_participant.remove_availability_for_event(event_name=event.name,
-                                                                 event_start_times=event.start_times,
-                                                                 event_duration=event.duration)
+                                                                 event_timeblocks=event.timeblocks)
 
 
 @tasks.loop(seconds=UPDATE_INTERVAL)
