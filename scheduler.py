@@ -2525,10 +2525,12 @@ class ExistingAvailabilitiesSelect(Select):
     def __init__(self, event_avails: list, participant: Participant):
         self.event_avails = event_avails
         self.participant = participant
-        options = [
-            SelectOption(label=event_avail.event.name, value=event_avail.event.name)
-            for event_avail in self.event_avails
-        ]
+        options = []
+        for event_avail in self.event_avails:
+            name = event_avail.event.name
+            if len(name) > 99:
+                name = name[:99]
+            options.append(SelectOption(label=name, value=name))
         super().__init__(placeholder="Event Availabilities", options=options)
 
     # Select an availability to attach
