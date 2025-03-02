@@ -616,6 +616,7 @@ class Event:
         self.ready_to_create = False
         self.created = False
         self.five_minute_warning_flag = False
+        await self.delete_five_minute_warning_message()
         await self.update_event_buttons_message()
         await self.update_availability_message(rescheduler=rescheduler)
         # Restore removed availabilities
