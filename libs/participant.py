@@ -541,7 +541,6 @@ class Participant:
         event_timeblock: :class:`TimeBlock`
             The timeblock with which to get its overlap with availability.
         """
-        self.clean_availability()
         for timeblock in self.availability:
             # Timeblock ends before or when event starts
             if timeblock.end_time <= event_timeblock.start_time:
@@ -556,7 +555,6 @@ class Participant:
 
     def remove_from_availability(self, timeblock: TimeBlock) -> None:
         """Removes a timeblock from availability."""
-        self.clean_availability()
         new_availability = []
         for tb in self.availability:
             if timeblock.end_time <= tb.start_time:
