@@ -642,7 +642,8 @@ class Participant:
                 new_removed_times.append(removed_time)
                 if not removed_time.removed_timeblock:
                     removed_time.removed_timeblock = self.get_availability_overlap(removed_time.event_timeblock)
-                self.remove_from_availability(removed_time.removed_timeblock)
+                if removed_time.removed_timeblock:
+                    self.remove_from_availability(removed_time.removed_timeblock)
         self.removed_times = new_removed_times
 
     @property
