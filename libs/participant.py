@@ -584,9 +584,22 @@ class Participant:
         """
         for event_timeblock in event_timeblocks:
             removed_timeblock = self.get_availability_overlap(event_timeblock)
-            self.removed_times.append(RemovedTime(event_name=event_name,
-                                                  event_timeblock=event_timeblock,
-                                                  removed_timeblock=removed_timeblock))
+            if removed_timeblock:
+                self.remove_from_availability(removed_timeblock)
+            for removed_time in self.removed_times:
+                # Update the existing RemovedTime
+                if removed_time.removed_timeblock \
+                        and removed_time.event_name == event_name \
+                        and removed_time.event_timeblock.start_time == event_timeblock.start_time:
+                    removed_time.event_timeblock = event_timeblock
+                    removed_time.removed_timeblock = removed_timeblock
+                    break
+            else:
+                # Add a new RemovedTime
+                removed_time = RemovedTime(event_name=event_name,
+                                           event_timeblock=event_timeblock,
+                                           removed_timeblock=removed_timeblock)
+                self.removed_times.append(removed_time)
 
     def restore_availability_for_event(self, event_name: str) -> None:
         """
