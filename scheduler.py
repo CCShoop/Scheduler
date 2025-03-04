@@ -648,7 +648,7 @@ class Event:
             return
         content = self.get_five_minute_warning_message_content()
         embed = self.get_five_minute_warning_message_embed()
-        event_buttons_message = self.get_event_buttons_message()
+        event_buttons_message = await self.get_event_buttons_message()
         if type(event_buttons_message) is Message:
             five_minute_warning_message = await self.text_channel.send(content=content,
                                                                        embed=embed,
@@ -2497,7 +2497,7 @@ class ExistingGuildEventsSelect(Select):
                 if guild_event.name == selected_guild_event.name and guild_event.location == selected_guild_event.location:
                     event.start_times.append(guild_event.start_time.astimezone())
                     if event.has_image_saved:
-                        guild_event.edit(image=event.get_image())
+                        await guild_event.edit(image=event.get_image())
                     event.scheduled_events.append(guild_event)
             await event.update_event_buttons_message()
             await interaction.followup.send('Success!', ephemeral=True)
