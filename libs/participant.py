@@ -612,12 +612,10 @@ class Participant:
         """
         new_removed_times = []
         for removed_time in self.removed_times:
-            if removed_time.event_name == event_name:
-                self.availability.append(removed_time.removed_timeblock)
-                self.clean_availability()
-            else:
+            if not removed_time.event_name == event_name:
                 new_removed_times.append(removed_time)
         self.removed_times = new_removed_times
+        self.update_removed_times()
 
     def confirm_answered(self, duration: timedelta = timedelta(minutes=30), latest_date=None) -> None:
         """
