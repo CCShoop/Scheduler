@@ -1803,7 +1803,10 @@ class Event:
         if event_participants:
             logger.info(f'[{event_name}] found participant(s): {", ".join([p.member.name for p in event_participants])}')
         else:
-            raise Exception(f'[{event_name}] no participant(s) found, discarding event')
+            event_participants = get_participants_from_channel(event_name=event_name,
+                                                               guild=event_guild,
+                                                               channel=event_guild.get_channel(event_text_channel))
+            logger.warning(f'[{event_name}] no participant(s) found, added everyone in the text channel')
 
         # Set (re)scheduler to a participant
         for participant in event_participants:
