@@ -479,11 +479,11 @@ class Event:
 
     async def create_if_possible(self) -> None:
         if not self.created:
-            cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
             if self.everyone_answered:
                 self.compare_availabilities()
                 # Create the event
                 if self.ready_to_create:
+                    cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
                     # Ensure start time is in the future
                     if self.start_times[0] <= cur_time:
                         logger.warning(f"[{self}] Tried to create event in the past, moving to {START_TIME_DELAY} minutes from now")
@@ -495,7 +495,6 @@ class Event:
                     for event in client.events:
                         await event.update_messages()
                     return
-            await self.update_availability_message()
 
     def intersect_time_blocks(self, timeblocks1: list, timeblocks2: list) -> list[TimeBlock]:
         """
@@ -2068,6 +2067,7 @@ class AvailabilityModal(Modal):
             logger.info(f'[{self.event}] Raw input: "{avail_string}"')
             participant.set_specific_availability(avail_string, self.date.value, self.note.value)
             participant.confirm_answered(duration=self.event.duration, latest_date=self.event.latest_date)
+            remove_times_from_availabilities_for_events()
             await self.event.create_if_possible()
             if not self.event.created:
                 for other_event in client.events:
@@ -2168,7 +2168,10 @@ class AvailabilityButtons(View):
                 logger.info(f'[{self.event}] {participant} selected full availability')
                 participant.set_full_availability()
                 self.event.update_availabilities_to(participant)
+                remove_times_from_availabilities_for_events()
                 await self.event.create_if_possible()
+                if not self.event.created:
+                    await self.event.update_availability_message()
             # Participant no longer has full availability
             else:
                 logger.info(f'[{self.event}] {participant} deselected full availability')
@@ -2559,6 +2562,8 @@ class ExistingAvailabilitiesSelect(Select):
                 await interaction.followup.send(content="**Availability retrieved!**",
                                                 ephemeral=True)
                 await event_avail.event.create_if_possible()
+                if not event_avail.event.created:
+                    await event_avail.event.update_availability_message()
                 return
         await interaction.followup.send(content="**Failed to get your availability.**",
                                         ephemeral=True)
