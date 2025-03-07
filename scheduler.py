@@ -2201,8 +2201,8 @@ class AvailabilityButtons(View):
                 return
             if len(found_availabilities) == 1:
                 participant.availability = found_availabilities[0].avail.copy()
+                participant.full_availability_flag = found_availabilities[0].full_flag
                 participant.answered = True
-                remove_times_from_availabilities_for_events()
                 await self.event.update_availability_message()
             else:
                 await interaction.followup.send(content="Select another event to grab your availability from.",
@@ -2540,9 +2540,7 @@ class ExistingAvailabilitiesSelect(Select):
         self.participant = participant
         options = []
         for event_avail in self.event_avails:
-            name = event_avail.event.name
-            if len(name) > 99:
-                name = name[:99]
+            name = event_avail.event.name[:99]
             options.append(SelectOption(label=name, value=name))
         super().__init__(placeholder="Event Availabilities", options=options)
 
@@ -2550,7 +2548,8 @@ class ExistingAvailabilitiesSelect(Select):
     async def callback(self, interaction: Interaction):
         await interaction.response.defer(ephemeral=True)
         for event_avail in self.event_avails:
-            if event_avail.event.name == self.values[0]:
+            name = event_avail.event.name[:99]
+            if name == self.values[0]:
                 logger.info(f'{interaction.user.name} reused availability from {self.values[0]}')
                 self.participant.set_no_availability()
                 self.participant.availability = event_avail.avail.copy()
