@@ -586,14 +586,13 @@ class Participant:
             removed_timeblock = self.get_availability_overlap(event_timeblock)
             if removed_timeblock:
                 self.remove_from_availability(removed_timeblock)
-            for removed_time in self.removed_times:
-                # Update the existing RemovedTime
-                if removed_time.removed_timeblock \
-                        and removed_time.event_name == event_name \
-                        and removed_time.event_timeblock.start_time == event_timeblock.start_time:
-                    removed_time.event_timeblock = event_timeblock
-                    removed_time.removed_timeblock = removed_timeblock
-                    break
+            existing_removed_time = next(
+                (rt for rt in self.removed_times
+                 if rt.event_name == event_name and rt.event_timeblock.start_time == event_timeblock.start_time),
+                None)
+            if existing_removed_time:
+                existing_removed_time.event_timeblock = event_timeblock
+                existing_removed_time.removed_timeblock = removed_timeblock
             else:
                 # Add a new RemovedTime
                 removed_time = RemovedTime(event_name=event_name,
