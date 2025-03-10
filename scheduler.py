@@ -2169,9 +2169,8 @@ class AvailabilityButtons(View):
                 participant.set_full_availability()
                 self.event.update_availabilities_to(participant)
                 remove_times_from_availabilities_for_events()
+                await self.event.update_availability_message()
                 await self.event.create_if_possible()
-                if not self.event.created:
-                    await self.event.update_availability_message()
             # Participant no longer has full availability
             else:
                 logger.info(f'[{self.event}] {participant} deselected full availability')
