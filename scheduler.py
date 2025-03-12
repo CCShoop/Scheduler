@@ -461,6 +461,7 @@ class Event:
                 for participant in self.participants:
                     participant.confirm_answered(duration=self.duration, latest_date=self.latest_date)
                 await self.update_availability_message()
+                time.sleep(1)
         # Event has been created
         else:
             if not self.started:
@@ -646,6 +647,7 @@ class Event:
         self.ready_to_create = False
         self.created = False
         self.five_minute_warning_flag = False
+        rescheduler.set_no_availability()
         await self.delete_five_minute_warning_message()
         await self.update_event_buttons_message()
         await self.update_availability_message(rescheduler=rescheduler)
@@ -1387,13 +1389,13 @@ class Event:
                 self.availability_buttons = AvailabilityButtons(event=self)
             # Send a new message
             if self.availability_message is None:
-                if self.rescheduler is not None:
-                    self.rescheduler.set_no_availability()
+                logger.debug(f"[{self}] Sending availability message")
                 self.availability_message = await self.text_channel.send(content=content,
                                                                          embeds=embeds,
                                                                          view=self.availability_buttons)
             # Update existing message
             else:
+                logger.debug(f"[{self}] Editing availability message")
                 try:
                     await self.availability_message.edit(content=content,
                                                          embeds=embeds,
@@ -1420,11 +1422,13 @@ class Event:
                 self.event_buttons = EventButtons(self)
             # Send a new message
             if self.event_buttons_message is None:
+                logger.debug(f"[{self}] Sending event buttons message")
                 self.event_buttons_message = await self.text_channel.send(content=content,
                                                                           embeds=embeds,
                                                                           view=self.event_buttons)
             # Edit existing message
             else:
+                logger.debug(f"[{self}] Editing event buttons message")
                 await self.event_buttons_message.edit(content=content,
                                                       embeds=embeds,
                                                       view=self.event_buttons)
@@ -2101,6 +2105,7 @@ class AvailabilityButtons(View):
                 participant.set_full_availability()
                 self.event.update_availabilities_to(participant)
                 remove_times_from_availabilities_for_events()
+                logger.debug(f"[{self.event}] {participant}'s availability:\n{participant.availability_string}")
                 await self.event.update_availability_message()
                 await self.event.create_if_possible()
             # Participant no longer has full availability
