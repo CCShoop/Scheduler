@@ -2491,7 +2491,6 @@ class ExistingGuildEventsSelect(Select):
                               start_times=start_times,
                               created=True)
                 client.events.append(event)
-                await event.save_image_to_file()
             remove_times_from_availabilities_for_events()
             for guild_event in self.guild.scheduled_events:
                 if guild_event.name == selected_guild_event.name and guild_event.location == selected_guild_event.location:
@@ -2743,7 +2742,6 @@ async def edit_event(event: Event,
         old_image_url = event.image_url
         event.delete_image_file()
         event.image_url = image_url
-        await event.save_image_to_file()
         if event.image_url:
             if old_image_url == event.image_url:
                 embed.add_field(name="Image",
@@ -2751,8 +2749,10 @@ async def edit_event(event: Event,
                                 inline=False)
             else:
                 if event.created:
-                    for scheduled_event in event.scheduled_events:
-                        await scheduled_event.edit(image=event.get_image())
+                    await event.save_image_to_file()
+                    if event.has_image_saved:
+                        for scheduled_event in event.scheduled_events:
+                            await scheduled_event.edit(image=event.get_image())
                 embed.add_field(name="Image",
                                 value=f"{old_image_url} -> {event.image_url}",
                                 inline=False)
@@ -3023,7 +3023,6 @@ async def create_command(interaction: Interaction,
                   image_url=image_url,
                   duration=duration,
                   start_times=start_times)
-    await event.save_image_to_file()
     await event.make_scheduled_events()
     client.events.append(event)
     remove_times_from_availabilities_for_events()
@@ -3178,11 +3177,6 @@ async def schedule(eventName: str,
                   duration=duration,
                   multi_event=multiEvent)
     client.events.append(event)
-    try:
-        await event.save_image_to_file()
-    except Exception as e:
-        logger.error(f'[{eventName}] Error saving image: {e}')
-        raise Exception(f"Failed to save image: {e}")
 
     remove_times_from_availabilities_for_events()
     for other_event in client.events:
