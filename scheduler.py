@@ -238,8 +238,6 @@ class SchedulerClient(Client):
                         event = await Event.from_dict(event_data)
                         if not event:
                             raise Exception('Failed to create event object')
-                        if event.created:
-                            event.event_buttons = EventButtons(event)
                         client.events.append(event)
                         logger.info(f'[{event}] event loaded and added to client event list')
                     except Exception as e:
@@ -2206,9 +2204,9 @@ class EventButtons(View):
     event: :class:`Event`
         The event that the buttons are for.
     start_label: :class:`str`
-        The label for the Start button.
+        The label for the Start version of the Start/End button.
     end_label: :class:`str`
-        The label for the End button.
+        The label for the End version of the Start/End button.
     unsubscribe_label: :class:`str`
         The label for the Unsubscribe button.
     reschedule_label: :class:`str`
@@ -2238,7 +2236,6 @@ class EventButtons(View):
         self.reschedule_button = Button(label=self.reschedule_label, style=ButtonStyle.red)
         self.cancel_button = Button(label=self.cancel_label, style=ButtonStyle.red)
         self.add_start_end_button()
-        self.add_end_button()
         self.add_unsubscribe_button()
         self.add_reschedule_button()
         self.add_cancel_button()
