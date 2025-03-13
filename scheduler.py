@@ -2261,8 +2261,8 @@ class EventButtons(View):
             logger.info(f"[{self.event}] {interaction.user} started by button press")
             self.start_end_button.label = self.end_label
             self.start_end_button.callback = end_button_callback
-            self.reschedule_button.disabled = True
-            self.cancel_button.disabled = True
+            self.remove_item(self.reschedule_button)
+            self.remove_item(self.cancel_button)
             await self.event.start(reason=f"Event started by {interaction.user} pressing start button.")
 
         if not self.event.started:
