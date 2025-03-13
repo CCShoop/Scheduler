@@ -2303,7 +2303,6 @@ class EventButtons(View):
                                                            ephemeral=True)
                 await followup.delete(delay=3)
 
-        self.unsubscribe_button.disabled = self.event.started
         self.unsubscribe_button.callback = unsubscribe_button_callback
         self.add_item(self.unsubscribe_button)
 
