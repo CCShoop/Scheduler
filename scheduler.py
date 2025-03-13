@@ -2269,6 +2269,7 @@ class EventButtons(View):
             self.start_end_button.callback = start_button_callback
             self.start_end_button.disabled = self.event.location_has_active_event
         else:
+            self.start_end_button.label = self.end_label
             self.start_end_button.callback = end_button_callback
         self.add_item(self.start_end_button)
 
