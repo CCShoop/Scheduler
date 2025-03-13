@@ -2316,6 +2316,9 @@ class EventButtons(View):
         button: :class:`Button`
             The Reschedule button.
         """
+        if self.event.started:
+            return
+
         async def reschedule_button_callback(interaction: Interaction):
             await interaction.response.defer(ephemeral=True)
             logger.info(f'[{self.event}] {interaction.user} rescheduled by button press')
@@ -2327,7 +2330,6 @@ class EventButtons(View):
             participant.subscribed = True
             await self.event.reschedule(rescheduler=participant)
 
-        self.reschedule_button.disabled = self.event.started
         self.reschedule_button.callback = reschedule_button_callback
         self.add_item(self.reschedule_button)
 
@@ -2340,6 +2342,9 @@ class EventButtons(View):
         button: :class:`Button`
             The Cancel button.
         """
+        if self.event.started:
+            return
+
         async def cancel_button_callback(interaction: Interaction):
             if interaction.user.id not in [participant.member.id for participant in self.event.participants]:
                 await interaction.response.send_message(content="You are not a participant of this event!",
