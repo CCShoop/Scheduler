@@ -761,36 +761,29 @@ class Event:
         except Exception as e:
             logger.error(f"[{self}] Error in event control end button callback while ending scheduled event: {e}")
         # Update event buttons message
-        end_time: datetime = now()
-        content = self.get_event_buttons_message_content(end_time)
-        embeds = self.get_event_buttons_message_embeds(end_time)
-        try:
-            self.event_buttons = None
-            event_buttons_message = await self.get_event_buttons_message()
-            if event_buttons_message is not None:
-                await event_buttons_message.edit(content=content, embeds=embeds, view=None)
-        except Exception as e:
-            logger.error(f"[{self}] Error in event control end button callback while editing event buttons message: {e}")
-        # Remove start_time and scheduled event from lists
-        future_event = False
-        try:
-            future_event = await self.prep_next_scheduled_event()
-        except Exception as e:
-            logger.error(f"[{self}] Error in event control end button callback while prepping next scheduled event: {e}")
+        self.event_buttons = None
+        if self.event_buttons_message is not None:
+            end_time: datetime = now()
+            content = self.get_event_buttons_message_content(end_time)
+            embeds = self.get_event_buttons_message_embeds(end_time)
+            try:
+                await self.event_buttons_message.edit(content=content, embeds=embeds, view=None)
+            except Exception as e:
+                logger.error(f"[{self}] Error in event control end button callback while editing event buttons message: {e}")
+            self.event_buttons_message = None
         # Re-enable start buttons of appropriate events
         for event in client.events:
             if event == self or not event.created or event.voice_channel != self.voice_channel:
                 continue
-            try:
-                event.event_buttons.start_end_button.disabled = False
-                await event.event_buttons_message.edit(view=event.event_buttons)
-                logger.info(f'[{self}] Re-enabled start button for event with same location: {event}')
-            except Exception as e:
-                logger.error(f'[{self}] Failed to re-enable start button for {event}: {e}')
+            event.event_buttons.start_end_button.disabled = False
+            logger.info(f'[{self}] Re-enabled start button for event with same location: {event}')
+        # Remove first start_time and scheduled event
+        future_event = await self.prep_next_scheduled_event()
         if not future_event:
             self.remove()
             logger.info(f"[{self}] last event ended, removed from memory")
         else:
+            self.started = False
             logger.info(f"[{self}] next event starts at {self.start_times[0]}")
         # Restore removed availabilities
         for event in client.events:
@@ -814,14 +807,16 @@ class Event:
             Whether or not the event has more scheduled events.
         """
         if len(self.scheduled_events) > 1 and len(self.start_times) > 1:
-            self.scheduled_events = self.scheduled_events[1:]
-            self.start_times = self.start_times[1:]
+            try:
+                self.start_times = self.start_times[1:]
+                self.scheduled_events = self.scheduled_events[1:]
+            except Exception as e:
+                logger.error(f"[{self}] Error shifting scheduled_events and start_times: {e}")
             self.five_minute_warning_flag = bool(now() + timedelta(minutes=WARNING_TIME_MINUTES) < self.start_times[0])
             if self.event_buttons_message is not None:
                 await self.event_buttons_message.edit(view=None)
                 self.event_buttons_message = None
             self.event_buttons = None
-            await self.update_event_buttons_message()
             return True
         else:
             return False
@@ -2248,6 +2243,8 @@ class EventButtons(View):
                 await interaction.followup.send(content="You are not a participant of this event.",
                                                 ephemeral=True)
                 return
+            self.remove_item(self.start_end_button)
+            self.remove_item(self.unsubscribe_button)
             await self.event.end(f"Event ended by {interaction.user} pressing end button.")
 
         async def start_button_callback(interaction: Interaction):
