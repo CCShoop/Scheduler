@@ -240,12 +240,6 @@ class SchedulerClient(Client):
                             raise Exception('Failed to create event object')
                         if event.created:
                             event.event_buttons = EventButtons(event)
-                            if event.started:
-                                event.event_buttons.start_button.style = ButtonStyle.green
-                                event.event_buttons.start_button.disabled = True
-                                event.event_buttons.end_button.disabled = False
-                                event.event_buttons.reschedule_button.disabled = True
-                                event.event_buttons.cancel_button.disabled = True
                         client.events.append(event)
                         logger.info(f'[{event}] event loaded and added to client event list')
                     except Exception as e:
@@ -256,7 +250,7 @@ class SchedulerClient(Client):
                             if other_event == event or other_event.voice_channel != event.voice_channel:
                                 continue
                             if other_event.started:
-                                event.event_buttons.start_button.disabled = True
+                                event.event_buttons.start_end_button.disabled = True
                 for event in client.events:
                     await event.update_messages()
             else:
@@ -299,8 +293,7 @@ def handle_signal(signum, frame):
             event.availability_buttons.unsub_button.disabled = True
             event.availability_buttons.cancel_button.disabled = True
         if event.event_buttons is not None:
-            event.event_buttons.start_button.disabled = True
-            event.event_buttons.end_button.disabled = True
+            event.event_buttons.start_end_button.disabled = True
             event.event_buttons.unsubscribe_button.disabled = True
             event.event_buttons.reschedule_button.disabled = True
             event.event_buttons.cancel_button.disabled = True
@@ -716,11 +709,6 @@ class Event:
             logger.warning(f"[{self}] Error getting start time: {e}")
             self.start_times.append(now())
         self.started = True
-        self.event_buttons.start_button.style = ButtonStyle.green
-        self.event_buttons.start_button.disabled = True
-        self.event_buttons.end_button.disabled = False
-        self.event_buttons.reschedule_button.disabled = True
-        self.event_buttons.cancel_button.disabled = True
         await self.update_event_buttons_message()
         # Push back start times of all other events that share
         # this location to start after the end of this event
@@ -741,7 +729,7 @@ class Event:
         for event in client.events:
             if event == self or not event.created or event.voice_channel != self.voice_channel:
                 continue
-            event.event_buttons.start_button.disabled = True
+            event.event_buttons.start_end_button.disabled = True
             await event.update_event_buttons_message()
 
     async def start_if_participants_in_vc(self) -> None:
@@ -796,7 +784,7 @@ class Event:
             if event == self or not event.created or event.voice_channel != self.voice_channel:
                 continue
             try:
-                event.event_buttons.start_button.disabled = False
+                event.event_buttons.start_end_button.disabled = False
                 await event.event_buttons_message.edit(view=event.event_buttons)
                 logger.info(f'[{self}] Re-enabled start button for event with same location: {event}')
             except Exception as e:
@@ -2227,10 +2215,8 @@ class EventButtons(View):
         The label for the Reschedule button.
     cancel_label: :class:`str`
         The label for the Cancel button.
-    start_button: :class:`Button`
-        The Start button.
-    end_button: :class:`Button`
-        The End button.
+    start_end_button: :class:`Button`
+        The Start/End button.
     unsubscribe_button: :class:`Button`
         The Unsubscribe button.
     reschedule_button: :class:`Button`
@@ -2247,26 +2233,26 @@ class EventButtons(View):
         self.unsubscribe_label = "Unsubscribe"
         self.reschedule_label = "Reschedule Event"
         self.cancel_label = "Cancel Event"
-        self.start_button = Button(label=self.start_label, style=ButtonStyle.blurple)
-        self.end_button = Button(label=self.end_label, style=ButtonStyle.blurple)
+        self.start_end_button = Button(label=self.start_label, style=ButtonStyle.blurple)
         self.unsubscribe_button = Button(label=self.unsubscribe_label, style=ButtonStyle.red)
         self.reschedule_button = Button(label=self.reschedule_label, style=ButtonStyle.red)
         self.cancel_button = Button(label=self.cancel_label, style=ButtonStyle.red)
-        self.add_start_button()
+        self.add_start_end_button()
         self.add_end_button()
         self.add_unsubscribe_button()
         self.add_reschedule_button()
         self.add_cancel_button()
 
-    def add_start_button(self) -> None:
-        """
-        Sets up the Start button.
+    def add_start_end_button(self) -> None:
+        """Sets up the Start/End button."""
+        async def end_button_callback(interaction: Interaction):
+            await interaction.response.defer(ephemeral=True)
+            if interaction.user.id not in [participant.member.id for participant in self.event.participants]:
+                await interaction.followup.send(content="You are not a participant of this event.",
+                                                ephemeral=True)
+                return
+            await self.event.end(f"Event ended by {interaction.user} pressing end button.")
 
-        Returns
-        --------
-        button: :class:`Button`
-            The Start button.
-        """
         async def start_button_callback(interaction: Interaction):
             await interaction.response.defer(ephemeral=True)
             self.event.add_user_as_participant(interaction.user)
@@ -2276,32 +2262,18 @@ class EventButtons(View):
                 await interaction.followup.send(content=content, ephemeral=True)
                 return
             logger.info(f"[{self.event}] {interaction.user} started by button press")
+            self.start_end_button.label = self.end_label
+            self.start_end_button.callback = end_button_callback
+            self.reschedule_button.disabled = True
+            self.cancel_button.disabled = True
             await self.event.start(reason=f"Event started by {interaction.user} pressing start button.")
-        self.start_button.callback = start_button_callback
-        if self.event.location_has_active_event:
-            self.start_button.disabled = True
-        self.add_item(self.start_button)
 
-    def add_end_button(self) -> None:
-        """
-        Sets up the End button.
-
-        Returns
-        --------
-        button: :class:`Button`
-            The End button.
-        """
-        self.end_button.disabled = True
-
-        async def end_button_callback(interaction: Interaction):
-            await interaction.response.defer(ephemeral=True)
-            if interaction.user.id not in [participant.member.id for participant in self.event.participants]:
-                await interaction.followup.send(content="You are not a participant of this event.",
-                                                ephemeral=True)
-                return
-            await self.event.end(f"Event ended by {interaction.user} pressing end button.")
-        self.end_button.callback = end_button_callback
-        self.add_item(self.end_button)
+        if not self.event.started:
+            self.start_end_button.callback = start_button_callback
+            self.start_end_button.disabled = self.event.location_has_active_event
+        else:
+            self.start_end_button.callback = end_button_callback
+        self.add_item(self.start_end_button)
 
     def add_unsubscribe_button(self) -> None:
         """
@@ -2333,6 +2305,8 @@ class EventButtons(View):
                                                            silent=True,
                                                            ephemeral=True)
                 await followup.delete(delay=3)
+
+        self.unsubscribe_button.disabled = self.event.started
         self.unsubscribe_button.callback = unsubscribe_button_callback
         self.add_item(self.unsubscribe_button)
 
@@ -2355,6 +2329,8 @@ class EventButtons(View):
             participant.set_no_availability()
             participant.subscribed = True
             await self.event.reschedule(rescheduler=participant)
+
+        self.reschedule_button.disabled = self.event.started
         self.reschedule_button.callback = reschedule_button_callback
         self.add_item(self.reschedule_button)
 
@@ -2377,6 +2353,8 @@ class EventButtons(View):
                 title = f"{title[:34]}..."
             await interaction.response.send_modal(CancelModal(event=self.event,
                                                               title=title))
+
+        self.cancel_button.disabled = self.event.started
         self.cancel_button.callback = cancel_button_callback
         self.add_item(self.cancel_button)
 
