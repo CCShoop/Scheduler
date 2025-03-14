@@ -706,6 +706,7 @@ class Event:
             logger.warning(f"[{self}] Error getting start time: {e}")
             self.start_times.append(now())
         self.started = True
+        self.event_buttons.convert()
         await self.update_event_buttons_message()
         # Push back start times of all other events that share
         # this location to start after the end of this event
@@ -2225,6 +2226,8 @@ class EventButtons(View):
         self.unsubscribe_label = "Unsubscribe"
         self.reschedule_label = "Reschedule Event"
         self.cancel_label = "Cancel Event"
+        self.start_callback = None
+        self.end_callback = None
         self.start_end_button = Button(label=self.start_label, style=ButtonStyle.blurple)
         self.unsubscribe_button = Button(label=self.unsubscribe_label, style=ButtonStyle.red)
         self.reschedule_button = Button(label=self.reschedule_label, style=ButtonStyle.red)
@@ -2245,6 +2248,7 @@ class EventButtons(View):
             self.remove_item(self.start_end_button)
             self.remove_item(self.unsubscribe_button)
             await self.event.end(f"Event ended by {interaction.user} pressing end button.")
+        self.end_callback = end_button_callback
 
         async def start_button_callback(interaction: Interaction):
             await interaction.response.defer(ephemeral=True)
@@ -2255,11 +2259,8 @@ class EventButtons(View):
                 await interaction.followup.send(content=content, ephemeral=True)
                 return
             logger.info(f"[{self.event}] {interaction.user} started by button press")
-            self.start_end_button.label = self.end_label
-            self.start_end_button.callback = end_button_callback
-            self.remove_item(self.reschedule_button)
-            self.remove_item(self.cancel_button)
             await self.event.start(reason=f"Event started by {interaction.user} pressing start button.")
+        self.start_callback = start_button_callback
 
         if not self.event.started:
             self.start_end_button.callback = start_button_callback
@@ -2355,6 +2356,12 @@ class EventButtons(View):
         self.cancel_button.disabled = self.event.started
         self.cancel_button.callback = cancel_button_callback
         self.add_item(self.cancel_button)
+
+    def convert(self) -> None:
+        self.start_end_button.label = self.end_label
+        self.start_end_button.callback = self.end_button_callback
+        self.remove_item(self.reschedule_button)
+        self.remove_item(self.cancel_button)
 
 
 class CancelButtons(View):
