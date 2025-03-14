@@ -239,11 +239,10 @@ class SchedulerClient(Client):
                         if not event:
                             raise Exception('Failed to create event object')
                         client.events.append(event)
+                        await event.update_messages()
                         logger.info(f'[{event}] event loaded and added to client event list')
                     except Exception as e:
                         logger.error(f'Could not add event to client event list: {e}')
-                for event in client.events:
-                    await event.update_messages()
             else:
                 logger.info('No json data found')
 
