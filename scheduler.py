@@ -243,13 +243,6 @@ class SchedulerClient(Client):
                     except Exception as e:
                         logger.error(f'Could not add event to client event list: {e}')
                 for event in client.events:
-                    if event.created and not event.started:
-                        for other_event in client.events:
-                            if other_event == event or other_event.voice_channel != event.voice_channel:
-                                continue
-                            if other_event.started:
-                                event.event_buttons.start_end_button.disabled = True
-                for event in client.events:
                     await event.update_messages()
             else:
                 logger.info('No json data found')
