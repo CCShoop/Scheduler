@@ -349,6 +349,8 @@ class Event:
         Indicator of whether or not the event has had (a) guild event(s) created.
     started: :class:`bool`
         Indicator of whether or not the first in line guild event has been started.
+    ended: :class:`bool`
+        Indicator of whether or not the first in line guild event has been ended.
     scheduled_events: :class:`list`
         List of guild scheduled event objects.
     five_minute_warning_flag: :class:`bool`
@@ -411,6 +413,7 @@ class Event:
         self.ready_to_create: bool = ready_to_create
         self.created: bool = created
         self.started: bool = started
+        self.ended: bool = False
         self.scheduled_events: list[ScheduledEvent] = scheduled_events if scheduled_events is not None else []
         self.five_minute_warning_flag: bool = five_minute_warning_flag
         self.five_minute_warning_message: Message = five_minute_warning_message
@@ -755,6 +758,7 @@ class Event:
             The reason to provide to the audit log for ending the guild event.
         """
         logger.info(f"[{self}] Ending, reason: {reason}")
+        self.ended = True
         # Delete scheduled event
         try:
             await self.scheduled_events[0].delete(reason=reason)
@@ -777,18 +781,12 @@ class Event:
                 continue
             event.event_buttons.start_end_button.disabled = False
             logger.info(f'[{self}] Re-enabled start button for event with same location: {event}')
-        # Remove first start_time and scheduled event
-        future_event = await self.prep_next_scheduled_event()
-        if not future_event:
-            self.remove()
-            logger.info(f"[{self}] last event ended, removed from memory")
-        else:
-            self.started = False
-            logger.info(f"[{self}] next event starts at {self.start_times[0]}")
+        await self.prep_next_scheduled_event()
         # Restore removed availabilities
         for event in client.events:
-            event.restore_availabilities(self)
-            await event.update_messages()
+            if event is not self:
+                event.restore_availabilities(self)
+                await event.update_messages()
 
     async def end_if_participants_leave_vc(self) -> None:
         """
@@ -797,15 +795,8 @@ class Event:
         if not any(participant.member in self.voice_channel.members for participant in self.participants):
             await self.end(f'Event ended by {client.user} because no users were in the voice channel.')
 
-    async def prep_next_scheduled_event(self) -> bool:
-        """
-        Preps the next guild scheduled event and update the event control buttons message.
-
-        Returns
-        --------
-        :class:`bool`
-            Whether or not the event has more scheduled events.
-        """
+    async def prep_next_scheduled_event(self) -> None:
+        """Preps the next guild scheduled event and update the event control buttons message."""
         if len(self.scheduled_events) > 1 and len(self.start_times) > 1:
             try:
                 self.start_times = self.start_times[1:]
@@ -817,9 +808,13 @@ class Event:
                 await self.event_buttons_message.edit(view=None)
                 self.event_buttons_message = None
             self.event_buttons = None
-            return True
+            self.started = False
+            self.ended = False
+            await self.update_event_buttons_message()
+            logger.info(f"[{self}] next event starts at {self.start_times[0]}")
         else:
-            return False
+            self.remove()
+            logger.info(f"[{self}] last event ended, removed from memory")
 
     async def make_scheduled_events(self) -> None:
         """
@@ -1511,10 +1506,12 @@ class Event:
         status: :class:`str`
             A string describing the current status of the event.
         """
+        if self.ended:
+            return "Event ended"
         if self.started:
-            return "Started event"
+            return "Event started"
         if self.created:
-            return "Created event"
+            return "Event created"
         if self.ready_to_create:
             return "Creating event"
         if self.everyone_answered:
