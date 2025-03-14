@@ -769,8 +769,9 @@ class Event:
             end_time: datetime = now()
             content = self.get_event_buttons_message_content(end_time)
             embeds = self.get_event_buttons_message_embeds(end_time)
+            buttons = self.get_after_buttons()
             try:
-                await self.event_buttons_message.edit(content=content, embeds=embeds, view=AfterButtons(self))
+                await self.event_buttons_message.edit(content=content, embeds=embeds, view=buttons)
             except Exception as e:
                 logger.error(f"[{self}] Error in event control end button callback while editing event buttons message: {e}")
             self.event_buttons_message = None
@@ -1447,9 +1448,8 @@ class Event:
                     break
         return embed
 
-    def get_cancel_buttons(self) -> View:
+    def get_after_buttons(self) -> View:
         return AfterButtons(self)
-
 
     async def cancel(self, reason: Optional[str] = "", canceller: Optional[str] = "") -> None:
         """
@@ -1464,7 +1464,7 @@ class Event:
         """
         content = self.get_names_string(subscribed_only=True, mention=True)
         embed = self.get_cancel_embed(reason, canceller)
-        buttons = self.get_cancel_buttons()
+        buttons = self.get_after_buttons()
         await self.text_channel.send(content=content, embed=embed, view=buttons)
         if not self.created:
             await self.delete_availability_message()
