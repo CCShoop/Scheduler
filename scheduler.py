@@ -771,7 +771,7 @@ class Event:
             content = self.get_event_buttons_message_content(end_time)
             embeds = self.get_event_buttons_message_embeds(end_time)
             try:
-                await self.event_buttons_message.edit(content=content, embeds=embeds, view=None)
+                await self.event_buttons_message.edit(content=content, embeds=embeds, view=AfterButtons(self))
             except Exception as e:
                 logger.error(f"[{self}] Error in event control end button callback while editing event buttons message: {e}")
             self.event_buttons_message = None
@@ -1449,7 +1449,7 @@ class Event:
         return embed
 
     def get_cancel_buttons(self) -> View:
-        return CancelButtons(self)
+        return AfterButtons(self)
 
 
     async def cancel(self, reason: Optional[str] = "", canceller: Optional[str] = "") -> None:
@@ -2361,7 +2361,7 @@ class EventButtons(View):
         self.remove_item(self.cancel_button)
 
 
-class CancelButtons(View):
+class AfterButtons(View):
     """
     Represents the buttons attached to the cancellation message.
 
