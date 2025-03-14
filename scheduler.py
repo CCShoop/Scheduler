@@ -441,6 +441,12 @@ class Event:
             Start the event if all participants are in the voice channel.
             End the event if nobody is in the voice channel.
         """
+        # Remove participants who are not longer in the text channel
+        keep_participants = []
+        for participant in self.participants:
+            if participant.member in self.text_channel.members:
+                keep_participants.append(participant)
+        self.participants = keep_participants
         if not self.created:
             # Timeout check
             cancelled = await self.update_timeout()
@@ -3003,6 +3009,7 @@ async def create_command(interaction: Interaction,
     await event.make_scheduled_events()
     client.events.append(event)
     remove_times_from_availabilities_for_events()
+    await event.update_event_buttons_message()
     other_events = get_events_that_share_participants(event)
     for other_event in other_events:
         await other_event.update_messages()
