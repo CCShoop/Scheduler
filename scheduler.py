@@ -2355,7 +2355,7 @@ class EventButtons(View):
 
     def convert(self) -> None:
         self.start_end_button.label = self.end_label
-        self.start_end_button.callback = self.end_button_callback
+        self.start_end_button.callback = self.end_callback
         self.remove_item(self.reschedule_button)
         self.remove_item(self.cancel_button)
 
