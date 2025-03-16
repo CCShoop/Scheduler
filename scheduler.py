@@ -3146,6 +3146,11 @@ async def create(event_name: str,
             raise Exception(f"Failed to generate participants list: {e}")
     elif isinstance(usernames, list) and all(isinstance(un, Participant) for un in usernames):
         participants = usernames
+    elif usernames is None or not usernames:
+        participants = get_participants_from_channel(event_name=event_name,
+                                                     guild=guild,
+                                                     channel=text_channel,
+                                                     user=scheduler_user)
     else:
         logger.error(f"Invalid usernames type in schedule: {type(usernames)}")
         raise Exception(f"This is a code error, please inform the developer!\nInvalid usernames type in create: {type(usernames)}")
@@ -3361,6 +3366,11 @@ async def schedule(event_name: str,
             raise Exception(f"Failed to generate participants list: {e}")
     elif isinstance(usernames, list) and all(isinstance(un, Participant) for un in usernames):
         participants = usernames
+    elif usernames is None or not usernames:
+        participants = get_participants_from_channel(event_name=event_name,
+                                                     guild=guild,
+                                                     channel=text_channel,
+                                                     user=scheduler_user)
     else:
         logger.error(f"Invalid usernames type in schedule: {type(usernames)}")
         raise Exception(f"This is a code error, please inform the developer!\nInvalid usernames type in schedule: {type(usernames)}")
