@@ -100,7 +100,7 @@ def get_time_str_from_minutes(minutes: int) -> str:
     Makes a formatted string including weeks, days, hours, and minutes.
 
     Arguments
-    ----------
+    ---------
     minutes: :class:`int`
         The number of minutes to format.
     """
@@ -130,12 +130,12 @@ def double_digit_string(digit_string: str) -> str:
     Adds 0 if a digit string is < 10.
 
     Arguments
-    ----------
+    ---------
     digit_string: :class`str`
         The digit string that may need a 0 inserted at the beginning.
 
     Returns
-    --------
+    -------
     digit_string: :class`str`
         The digit string with a 0 appended if appropriate.
 
@@ -152,6 +152,32 @@ def double_digit_string(digit_string: str) -> str:
     except Exception as e:
         raise e
     return digit_string
+
+
+# Parse start time string
+def parse_start_time(start_time: str) -> datetime:
+    try:
+        start_time_obj = datetime.fromisoformat(start_time)
+    except Exception as e:
+        try:
+            start_time = start_time.strip()
+            start_time = start_time.replace(':', '')
+            if len(start_time) == 1 or len(start_time) == 2:
+                start_time = start_time + '00'
+            if len(start_time) == 3:
+                start_time = '0' + start_time
+            elif len(start_time) != 4:
+                logger.info(f"Start time was not in iso format: {e}")
+                raise Exception("Invalid start time format. Examples: \"1630\" or \"00:30\"")
+            hour = int(start_time[:2])
+            minute = int(start_time[2:])
+            start_time_obj = now().replace(hour=hour, minute=minute)
+        except Exception:
+            logger.info(f"Start time was not in iso format: {e}")
+            raise Exception("Invalid start time format. Examples: \"1630\" or \"00:30\"")
+    while start_time_obj <= now():
+        start_time_obj += timedelta(days=1)
+    return start_time_obj
 
 
 class SchedulerClient(Client):
@@ -199,25 +225,25 @@ class SchedulerClient(Client):
         The callback to process an event scheduling json packet.
 
         Arguments
-        ----------
+        ---------
         data: :class:`dict`
             The json packet with the information necessary for scheduling an event.
         """
         logger.info(f"[{data['name']}] Schedule from dict triggered")
         guild = self.get_guild(data["guildId"])
-        textChannel = guild.get_channel(data["textChannelId"])
-        voiceChannel = guild.get_channel(data["voiceChannelId"])
-        await schedule(eventName=data["name"],
+        text_channel = guild.get_channel(data["textChannelId"])
+        voice_channel = guild.get_channel(data["voiceChannelId"])
+        await schedule(event_name=data["name"],
                        guild=guild,
-                       textChannel=textChannel,
-                       voiceChannel=voiceChannel,
-                       schedulerId=data["notifierId"],
-                       imageUrl=data["imageUrl"],
-                       includeExclude=data["includeExclude"],
+                       text_channel=text_channel,
+                       voice_channel=voice_channel,
+                       scheduler_id=data["notifierId"],
+                       image_url=data["image_url"],
+                       include_exclude=data["include_exclude"],
                        usernames=data["usernames"],
                        roles=data["roles"],
                        duration=data["duration"],
-                       multiEvent=data["multiEvent"])
+                       multi_event=data["multi_event"])
 
     async def retrieve_events(self) -> None:
         """
@@ -252,7 +278,7 @@ class SchedulerClient(Client):
         Shove all events into a dictionary for writing to the data file.
 
         Returns
-        --------
+        -------
         events_data: :class:`dict`
             A dict containing all of the data for each event.
         """
@@ -480,7 +506,7 @@ class Event:
         and cancels the event if it times out.
 
         Returns
-        --------
+        -------
         cancelled: :class:`bool`
             Whether or not the event timed out and was cancelled.
         """
@@ -525,14 +551,14 @@ class Event:
         Gets all timeblocks in the two availabilities that intersect.
 
         Arguments
-        ----------
+        ---------
         timeblocks1: :class:`list`
             The first availability to compare.
         timeblocks2: :class:`list`
             The second availability to compare.
 
         Returns
-        --------
+        -------
         intersected_time_blocks: :class:`list`
             A list of timeblocks representing the overlapping time between the two availabilities.
         """
@@ -692,7 +718,7 @@ class Event:
         Starts the event.
 
         Arguments
-        ----------
+        ---------
         reason: :class:`Optional[str]`
             Reason to provide for guild event start in audit log.
         """
@@ -752,7 +778,7 @@ class Event:
         Ends the event. If there are more scheduled events in this event, shift them forward and prep them.
 
         Arguments
-        ----------
+        ---------
         reason: :class:`Optional[str]`
             The reason to provide to the audit log for ending the guild event.
         """
@@ -811,10 +837,10 @@ class Event:
             self.started = False
             self.ended = False
             await self.update_event_buttons_message()
-            logger.info(f"[{self}] next event starts at {self.start_times[0]}")
+            logger.info(f"[{self}] Next event starts at {self.start_times[0]}")
         else:
+            logger.info(f"[{self}] Last event ended")
             self.remove()
-            logger.info(f"[{self}] last event ended, removed from memory")
 
     async def make_scheduled_events(self) -> None:
         """
@@ -844,12 +870,12 @@ class Event:
         Gets the general embed for the event with status, image thumbnail, duration, location, etc.
 
         Arguments
-        ----------
+        ---------
         end_time: :class:`Optional[datetime]`
             If the event has ended, includes the provided end time in the embed.
 
         Returns
-        --------
+        -------
         embed: :class:`Embed`
             The general embed for the event.
         """
@@ -939,7 +965,7 @@ class Event:
         Gets the image from the file as bytes for use in messages.
 
         Returns
-        --------
+        -------
         image_bytes: :class:`bytes`
             The image file loaded as bytes.
         """
@@ -967,7 +993,7 @@ class Event:
         Gets a string of names meeting the criteria provided through arguments.
 
         Arguments
-        ----------
+        ---------
         subscribed_only: :class:`bool`
             Only include subscribed participants in the string.
         unsubscribed_only: :class:`bool`
@@ -1032,7 +1058,7 @@ class Event:
         Adds the user to the event as a participant if they are not one already.
 
         Arguments
-        ----------
+        ---------
         user: :class:`User` or :class:`Member`
             The user to add to the event.
         """
@@ -1046,12 +1072,12 @@ class Event:
         Gets a participant with their nickname, username, or id.
 
         Arguments
-        ----------
+        ---------
         username_or_id: :class:`str` or :class:`int`
             The nickname, username, or id to get the participant object for.
 
         Returns
-        --------
+        -------
         participant: :class:`Participant`
             If a participant with that nickname, username, or id is found.
         None:
@@ -1077,12 +1103,12 @@ class Event:
         Indicates whether this event shares participants with the event provided.
 
         Arguments
-        ----------
+        ---------
         event: :class:`Event`
             The event to compare participants with.
 
         Returns
-        --------
+        -------
         True:
             If a participant with a matching member id is found.
         False:
@@ -1099,12 +1125,12 @@ class Event:
         Gets the list of this event's participants shared with the provided event.
 
         Arguments
-        ----------
+        ---------
         event: :class:`Event`
             The event to compare participants with.
 
         Returns
-        --------
+        -------
         participants: :class:`list`
             The list of this event's participants shared with the other event.
             Empty if the events are the same or do not share participants.
@@ -1122,12 +1148,12 @@ class Event:
         Gets the list of the other event's participants shared with this event.
 
         Arguments
-        ----------
+        ---------
         event: :class:`Event`
             The event to compare participants with.
 
         Returns
-        --------
+        -------
         other_participants: :class:`list`
             The list of the other event's participants shared with this event.
             Empty if the events are the same or do not share participants.
@@ -1146,12 +1172,12 @@ class Event:
         Gets availability of a participant from another event that they are in.
 
         Arguments
-        ----------
+        ---------
         participant: :class:`Participant`
             The participant to get availability for.
 
         Returns
-        --------
+        -------
         event_availabilities: :class:`list`
             The list of availabilities from other events the participant is in.
         """
@@ -1191,13 +1217,13 @@ class Event:
         Gets the string for the start time at the provided index.
 
         Arguments
-        ----------
+        ---------
         index: :class:`int`
             Optional. Index of the start time to get the string for.
             Default: 0
 
         Returns
-        --------
+        -------
         start_time: :class:`str`
             The string for the start time.
         """
@@ -1210,7 +1236,7 @@ class Event:
         Gets the content string for the availability message.
 
         Returns
-        --------
+        -------
         output: :class:`str`
             The content string for the availability message.
         """
@@ -1230,7 +1256,7 @@ class Event:
         Gets the embeds for the availability message.
 
         Returns
-        --------
+        -------
         embeds: :class:`list[Embed]`
             The list of embeds for the availability message.
         """
@@ -1245,7 +1271,7 @@ class Event:
         Gets the availability embed.
 
         Returns
-        --------
+        -------
         embed: :class:`Embed`
             The embed containing each participant's availability.
         """
@@ -1264,7 +1290,7 @@ class Event:
         Restores availabilities that were modified by the provided event's creation.
 
         Arguments
-        ----------
+        ---------
         event: :class:`Event`
             The name of the event to restore availability for shared participants.
         """
@@ -1280,7 +1306,7 @@ class Event:
         Updates end time of full flag availabilities to the latest time.
 
         Arguments
-        ----------
+        ---------
         participant: :class:`Participant`
             The participant to update all other participants to.
         """
@@ -1301,7 +1327,7 @@ class Event:
         Gets the content for the event buttons message.
 
         Returns
-        --------
+        -------
         content: :class:`str`
             The content for the event buttons message.
         """
@@ -1318,12 +1344,12 @@ class Event:
         Gets the embeds for the event buttons message.
 
         Arguments
-        ----------
+        ---------
         end_time: :class:`Optional[datetime]`
             The end time of the event to put in the embed.
 
         Returns
-        --------
+        -------
         embed: :class:`list[Embed]`
             The embeds for the event buttons message.
         """
@@ -1345,7 +1371,7 @@ class Event:
         Update the availability message.
 
         Arguments
-        ----------
+        ---------
         rescheduler: :class:`Participant`
             Optional. The participant who rescheduled the event.
             Default: None
@@ -1416,14 +1442,14 @@ class Event:
         Get the embed for the cancel message.
 
         Arguments
-        ----------
+        ---------
         reason: :class:`str`
             The reason the event is being cancelled.
         canceller: :class:`str`
             The name of the canceller of the event.
 
         Returns
-        --------
+        -------
         embed: :class:`Embed`
             The cancel message embed.
         """
@@ -1456,7 +1482,7 @@ class Event:
         Cancels the event.
 
         Arguments
-        ----------
+        ---------
         reason: :class:`str`
             The reason for the cancellation of the event.
         canceller: :class:`str`
@@ -1476,12 +1502,7 @@ class Event:
                 await self.scheduled_events[0].delete(reason=f'Cancel button pressed by {canceller}: {reason}')
         except Exception as e:
             logger.error(f'[{self}] Error in cancel while deleting scheduled event: {e}')
-        try:
-            anotherEvent = await self.prep_next_scheduled_event()
-        except Exception as e:
-            logger.error(f'[{self}] Error in cancel while prepping next scheduled event: {e}')
-        if not anotherEvent:
-            self.remove()
+        await self.prep_next_scheduled_event()
         # Restore removed availabilities
         for event in client.events:
             event.restore_availabilities(self)
@@ -1501,7 +1522,7 @@ class Event:
         Gets the current event status.
 
         Returns
-        --------
+        -------
         status: :class:`str`
             A string describing the current status of the event.
         """
@@ -1523,7 +1544,7 @@ class Event:
         Indicates whether or not all participants have responded.
 
         Returns
-        --------
+        -------
         True
             If all participants have responded.
         False
@@ -1543,7 +1564,7 @@ class Event:
         Indicates whether the event has an image saved.
 
         Returns
-        --------
+        -------
         True
             If an image is saved.
         False
@@ -1557,7 +1578,7 @@ class Event:
         Gets the number of participants who are subscribed and have responded to the event.
 
         Returns
-        --------
+        -------
         responded: :class:`int`
             The number of participants who are subscribed and have responded to the event.
         """
@@ -1573,7 +1594,7 @@ class Event:
         Gets the latest date of all start times in all participants' availabilities.
 
         Returns
-        --------
+        -------
         latest_date: :class:`datetime.date`
             The latest date of all start times in all participants' availabilities.
             None if this event is not a multi-event.
@@ -1593,7 +1614,7 @@ class Event:
         Indicates if the event's :class:`VoiceChannel` has a different active event in it.
 
         Returns
-        --------
+        -------
         True
             If the voice channel has an active event.
         False
@@ -1624,7 +1645,7 @@ class Event:
 
     @property
     def duration_minutes(self) -> int:
-        return self.duration.total_seconds() // 60
+        return int(self.duration.total_seconds() // 60)
 
     @property
     def duration_string(self) -> str:
@@ -1640,12 +1661,12 @@ class Event:
         Constructs an :class:`Event` from a data dict.
 
         Arguments
-        ----------
+        ---------
         data: :class:`dict`
             The data to create the :class:`Event` from.
 
         Returns
-        --------
+        -------
         class: :class:`Event`
             The :class:`Event` object.
         """
@@ -1814,7 +1835,7 @@ class Event:
         Packs the event into a dict for saving.
 
         Returns
-        --------
+        -------
         data: :class:`dict`
             The event data dict.
         """
@@ -1885,11 +1906,98 @@ class Event:
         Gets the name of the event for string formatting purposes.
 
         Returns
-        --------
+        -------
         name: :class:`str`
             The name of the event.
         """
         return f'{self.name}'
+
+
+class ScheduleAgainModal(Modal):
+    """
+    Represents a modal for scheduling an event again.
+
+    Attributes
+    ----------
+    event_name: :class:`str`
+        The name for the reused event.
+    event_duration: :class:`str`
+        The duration for the reused event.
+    image_url: :class:`str`
+        The image url for the reused event.
+    """
+
+    def __init__(self, event: Event, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.event = event
+        self.event_name = TextInput(label="Name",
+                                    default=event.name,
+                                    placeholder=event.name)
+        self.event_duration = TextInput(label="Duration",
+                                        default=str(event.duration_minutes),
+                                        placeholder=str(event.duration_minutes))
+        self.event_image_url = TextInput(label="Image URL",
+                                         default=event.image_url,
+                                         placeholder=event.image_url,
+                                         required=False)
+        self.event_start_time = TextInput(label="Start Time",
+                                          placeholder="ISO 8601 format or a 24-hour time",
+                                          required=False)
+        self.add_item(self.event_name)
+        self.add_item(self.event_duration)
+        self.add_item(self.event_image_url)
+        self.add_item(self.event_start_time)
+
+    async def on_submit(self, interaction: Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        logger.info(f"[{self.event_name.value}] {interaction.user.name} scheduled again")
+        event_name = self.event_name.value
+        try:
+            event_duration = int(self.event_duration.value)
+        except Exception as e:
+            logger.exception(f"[{event_name}] Error scheduling again: {e}")
+            await interaction.followup.send(content=f"Error scheduling again: {e}",
+                                            ephemeral=True)
+            return
+        event_image_url = self.event_image_url.value
+        if self.event_start_time.value != "":
+            try:
+                event_start_time: datetime = parse_start_time(self.event_start_time.value)
+                await create(event_name=event_name,
+                             guild=self.event.guild,
+                             text_channel=self.event.text_channel,
+                             voice_channel=self.event.voice_channel,
+                             start_time=event_start_time,
+                             scheduler_id=interaction.user.id,
+                             image_url=event_image_url,
+                             usernames=self.event.participants,
+                             duration=event_duration)
+                followup = await interaction.followup.send(content="Event created!",
+                                                           silent=True,
+                                                           ephemeral=True)
+                await followup.delete(delay=3)
+            except Exception as e:
+                content = f"Error: {e}\n"
+                content += "You can get the correct format from https://time.lol."
+                await interaction.followup.send(content=content, ephemeral=True)
+        else:
+            await schedule(event_name=event_name,
+                           guild=self.event.guild,
+                           text_channel=self.event.text_channel,
+                           voice_channel=self.event.voice_channel,
+                           scheduler_id=self.event.scheduler.member.id,
+                           image_url=event_image_url,
+                           usernames=", ".join([str(p.member.id) for p in self.event.participants]),
+                           duration=event_duration)
+            followup = await interaction.followup.send(content="Event scheduling started!",
+                                                       silent=True,
+                                                       ephemeral=True)
+            await followup.delete(delay=3)
+
+    async def on_error(self, interaction: Interaction, error: Exception) -> None:
+        await interaction.response.send_message(content=f"Error scheduling again: {error}",
+                                                ephemeral=True)
+        logger.exception(f"[{self.event_name.value}] Error scheduling again: {error}")
 
 
 class CancelModal(Modal):
@@ -1897,7 +2005,7 @@ class CancelModal(Modal):
     Represents a modal for cancelling an event.
 
     Attributes
-    -----------
+    ----------
     event: :class:`Event`
         The event that is being cancelled.
     reason: :class:`TextInput`
@@ -1929,7 +2037,7 @@ class AvailabilityModal(Modal):
     Represents a modal for inputting availability for an event.
 
     Attributes
-    -----------
+    ----------
     event: :class:`Event`
         The event that the availability is being collected for.
     timeslot1: :class`TextInput`
@@ -1992,7 +2100,7 @@ class AvailabilityButtons(View):
     Represents the availability buttons tied to an availability message.
 
     Attributes
-    -----------
+    ----------
     event: :class:`Event`
         The event that the buttons are for.
     respond_label: :class:`str`
@@ -2036,7 +2144,7 @@ class AvailabilityButtons(View):
         Sets up and gets the Respond button.
 
         Returns
-        --------
+        -------
         button: :class:`Button`
             The Respond button.
         """
@@ -2057,7 +2165,7 @@ class AvailabilityButtons(View):
         Sets up and gets the Full Availability button.
 
         Returns
-        --------
+        -------
         button: :class:`Button`
             The Full Availability button.
         """
@@ -2093,7 +2201,7 @@ class AvailabilityButtons(View):
         Sets up and gets the Reuse Availability button.
 
         Returns
-        --------
+        -------
         button: :class:`Button`
             The Reuse Availability button.
         """
@@ -2129,7 +2237,7 @@ class AvailabilityButtons(View):
         Sets up and gets the Unsubscribe button.
 
         Returns
-        --------
+        -------
         button: :class:`Button`
             The Unsubscribe button.
         """
@@ -2169,7 +2277,7 @@ class AvailabilityButtons(View):
         Sets up and gets the Cancel button.
 
         Returns
-        --------
+        -------
         button: :class:`Button`
             The Cancel button.
         """
@@ -2191,7 +2299,7 @@ class EventButtons(View):
     Represents the event buttons attached to an event control message.
 
     Attributes
-    -----------
+    ----------
     event: :class:`Event`
         The event that the buttons are for.
     start_label: :class:`str`
@@ -2271,7 +2379,7 @@ class EventButtons(View):
         Sets up the Unsubscribe button.
 
         Returns
-        --------
+        -------
         button: :class:`Button`
             The Unsubscribe button.
         """
@@ -2305,7 +2413,7 @@ class EventButtons(View):
         Sets up the Reschedule button.
 
         Returns
-        --------
+        -------
         button: :class:`Button`
             The Reschedule button.
         """
@@ -2331,7 +2439,7 @@ class EventButtons(View):
         Sets up the Cancel button.
 
         Returns
-        --------
+        -------
         button: :class:`Button`
             The Cancel button.
         """
@@ -2383,32 +2491,16 @@ class AfterButtons(View):
         Sets up and gets the Schedule Again button.
 
         Returns
-        --------
+        -------
         button: :class:`Button`
             The Respond button.
         """
         button = Button(label=self.schedule_again_label, style=ButtonStyle.blurple)
 
         async def schedule_again_button_callback(interaction: Interaction):
-            await interaction.response.defer(ephemeral=True)
             logger.info(f"[{self.event}] scheduled again by {interaction.user.name}")
-            scheduler_id = 0
-            if self.event.scheduler is not None:
-                scheduler_id = self.event.scheduler.member.id
-            if self.event.rescheduler is not None:
-                scheduler_id = self.event.rescheduler.member.id
-            await schedule(eventName=self.event.name,
-                           guild=self.event.guild,
-                           textChannel=self.event.text_channel,
-                           voiceChannel=self.event.voice_channel,
-                           schedulerId=scheduler_id,
-                           imageUrl=self.event.image_url,
-                           duration=self.event.duration_minutes,
-                           multiEvent=self.event.multi_event)
-            followup = await interaction.followup.send(content=f"Started scheduling for new instance of {self.event.name}.",
-                                                       silent=True,
-                                                       ephemeral=True)
-            await followup.delete(delay=3)
+            await interaction.response.send_modal(ScheduleAgainModal(event=self.event,
+                                                                     title="Schedule Event Again"))
         button.callback = schedule_again_button_callback
         self.add_item(button)
         return button
@@ -2584,7 +2676,7 @@ def get_participants_from_channel(event_name: str,
     Gets participants for an event from a channel using the included guidelines.
 
     Arguments
-    ----------
+    ---------
     event_name: :class:`str`
         The name of the event for logging purposes.
     guild: :class:`Guild`
@@ -2603,7 +2695,7 @@ def get_participants_from_channel(event_name: str,
         A comma separated list of roles to include/exclude.
 
     Returns
-    --------
+    -------
     participants: :class:`list[Participant]`
         The list of participants for the event.
     """
@@ -2909,51 +3001,167 @@ async def create_command(interaction: Interaction,
                          roles: Optional[str] = None,
                          duration: Optional[int] = DEFAULT_EVENT_DURATION):
     await interaction.response.defer(ephemeral=True)
-    logger.info(f'[{event_name}] Received event creation request from {interaction.user.name}')
+    logger.info(f"[{event_name}] Received event creation request from {interaction.user.name}")
     if not interaction.guild.voice_channels:
-        raise Exception('The server must have at least one voice channel to schedule an event.')
+        raise Exception("The server must have at least one voice channel to schedule an event.")
 
-    if event_name in [event.name for event in client.events]:
-        await interaction.followup.send(content=f"Sorry, I already have an event called \"{event_name}\". Please choose a different name.",
-                                        ephemeral=True)
-        return
-
-    # Parse start time
-    try:
-        start_time_obj = datetime.fromisoformat(start_time)
-    except Exception as e:
-        try:
-            start_time = start_time.strip()
-            start_time = start_time.replace(':', '')
-            if len(start_time) == 1 or len(start_time) == 2:
-                start_time = start_time + '00'
-            if len(start_time) == 3:
-                start_time = '0' + start_time
-            elif len(start_time) != 4:
-                await interaction.followup.send(content="Invalid start time format. Examples: \"1630\" or \"00:30\"",
-                                                ephemeral=True)
-                logger.info(f"[{event_name}] Start time was not in iso format: {e}")
-            hour = int(start_time[:2])
-            minute = int(start_time[2:])
-            start_time_obj = now().replace(hour=hour, minute=minute)
-        except Exception:
-            await interaction.followup.send(content="Invalid start time format. Examples: \"1630\" or \"00:30\"",
-                                            ephemeral=True)
-            logger.info(f"[{event_name}] Start time was not in iso format: {e}")
-            return
-    while start_time_obj <= now():
-        start_time_obj += timedelta(days=1)
-
-    scheduler = None
     participants = get_participants_from_interaction(event_name=event_name,
                                                      interaction=interaction,
                                                      include_exclude=include_exclude,
                                                      usernames=usernames,
                                                      roles=roles)
+    try:
+        await create(event_name=event_name,
+                     guild=interaction.guild,
+                     text_channel=interaction.channel,
+                     voice_channel=voice_channel,
+                     start_time=start_time,
+                     scheduler_id=interaction.user.id,
+                     image_url=image_url,
+                     include_exclude=include_exclude,
+                     usernames=participants,
+                     roles=roles,
+                     duration=duration)
+    except Exception as e:
+        await interaction.followup.send(content=f"Error creating event: {e}",
+                                        ephemeral=True)
+        return
+    followup = await interaction.followup.send(content=f"Created event {event_name}.",
+                                               silent=True,
+                                               ephemeral=True)
+    await followup.delete(delay=3)
+
+
+async def create(event_name: str,
+                 guild: Guild,
+                 text_channel: TextChannel,
+                 voice_channel: VoiceChannel,
+                 start_time: datetime or str,
+                 scheduler_id: Optional[int] = 0,
+                 image_url: Optional[str] = None,
+                 include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
+                 usernames: Optional[str] or Optional[list[str]] or Optional[list[int]] or Optional[list[Participant]] = None,
+                 roles: Optional[str] = None,
+                 duration: Optional[int] = DEFAULT_EVENT_DURATION,
+                 multi_event: Optional[bool] = False):
+    """
+    Creates an event with a specified start time.
+
+    Arguments
+    ---------
+    event_name: :class:`str`
+        The name of the event.
+    guild: :class:`Guild`
+        The guild that the event is occurring in.
+    text_channel: :class:`TextChannel`
+        The text channel that the event sends messages in.
+    voice_channel: :class:`VoiceChannel`
+        The voice channel that the event occurs in.
+    start_time: :class:`datetime` or :class:`str`
+        The start time for the event.
+    scheduler_id: :class:`Optional[int]`
+        The ID of the member who scheduled the event.
+    image_url: :class:`Optional[str]`
+        The URL for the image.
+    include_exclude: :class:`Optional[INCLUDE_EXCLUDE]`
+        Whether to include or exclude the usernames/ids/roles.
+        Default: INCLUDE
+        REQUIRES usernames or roles.
+    usernames: :class:`Optional[str]`
+        Comma separated list of usernames or ids to include/exclude.
+    roles: :class:`Optional[str]`
+        Comma separated list of roles to include/exclude.
+    duration: :class:`Optional[int]`
+        The duration of the event in minutes.
+        Default: 30
+    multi_event: :class:`Optional[bool]`
+        Whether or not the event is a multi event.
+        Default: False
+
+    Returns
+    -------
+    event: :class:`Event`
+        The event object created for scheduling.
+
+    Exceptions
+    -----------
+    Exception: :class:`Exception`
+        A string message describing the error.
+     """
+    # Voice channel
+    if not guild.voice_channels:
+        logger.info(f"[{event_name}] Scheduling cancelled due to no voice channel in guild")
+        raise Exception("The server must have at least one voice channel to schedule an event.")
+
+    # Event name
+    if event_name in [event.name for event in client.events]:
+        raise Exception(f"Sorry, I already have an event called \"{event_name}\". Please choose a different name.")
+
+    # Start time
+    if isinstance(start_time, datetime):
+        start_time_obj = start_time
+        if start_time_obj <= now():
+            raise Exception("Start time must be in the future!")
+    elif isinstance(start_time, str):
+        try:
+            start_time_obj = parse_start_time(start_time)
+        except Exception as e:
+            raise Exception(f"Error while creating event: {e}")
+    else:
+        raise Exception(f"This is a code error, please inform the developer!\nInvalid start_time type: {type(start_time)}")
+
+    # Scheduler
+    scheduler_user = None
+    if scheduler_id != 0:
+        scheduler_user = guild.get_member(scheduler_id)
+    if scheduler_user is None:
+        scheduler_user = guild.members[0]
+
+    # Participants
+    if isinstance(usernames, str):
+        try:
+            participants = get_participants_from_channel(event_name=event_name,
+                                                         guild=guild,
+                                                         channel=text_channel,
+                                                         user=scheduler_user,
+                                                         include_exclude=include_exclude,
+                                                         usernames=usernames,
+                                                         roles=roles)
+        except Exception as e:
+            logger.error(f"[{event_name}] Error getting participants: {e}")
+            raise Exception(f"Failed to generate participants list: {e}")
+    elif isinstance(usernames, list) and (
+            all(isinstance(un, str) for un in usernames) or (
+            all(isinstance(un, int) for un in usernames))):
+        try:
+            participants = get_participants_from_channel(event_name=event_name,
+                                                         guild=guild,
+                                                         channel=text_channel,
+                                                         user=scheduler_user,
+                                                         include_exclude=include_exclude,
+                                                         usernames=", ".join(usernames),
+                                                         roles=roles)
+        except Exception as e:
+            logger.error(f"[{event_name}] Error getting participants: {e}")
+            raise Exception(f"Failed to generate participants list: {e}")
+    elif isinstance(usernames, list) and all(isinstance(un, Participant) for un in usernames):
+        participants = usernames
+    else:
+        logger.error(f"Invalid usernames type in schedule: {type(usernames)}")
+        raise Exception(f"This is a code error, please inform the developer!\nInvalid usernames type in create: {type(usernames)}")
+
+    # Scheduler
+    scheduler = None
     for participant in participants:
         participant.answered = True
-        if participant.member.id == interaction.user.id:
+        if participant.member.id == scheduler_id:
             scheduler = participant
+    if scheduler is None:
+        scheduler = participants[0]
+
+    # Image URL
+    if image_url == "":
+        image_url = None
 
     # Check event won't overlap with another event in the same voice channel
     # or another event with a shared participant
@@ -2982,37 +3190,34 @@ async def create_command(interaction: Interaction,
                 if other_event.voice_channel == voice_channel:
                     if timeblock.overlaps_with(other_timeblock):
                         content = f"**Specified time overlaps with** ***{other_event}*** **in the same location!**"
-                        await interaction.followup.send(content=content, ephemeral=True)
-                        return
+                        raise Exception(content)
                 for other_participant in other_event.participants:
                     if other_participant.member.id in [participant.member.id for participant in participants]:
                         for other_participant_removed_time in other_participant.removed_times:
                             if timeblock.overlaps_with(other_participant_removed_time):
                                 content = f"**Specified time overlaps with an event that** ***{other_participant}*** **is in!**"
-                                await interaction.followup.send(content=content, ephemeral=True)
-                                return
+                                raise Exception(content)
 
     # Make event
     event = Event(name=event_name,
                   voice_channel=voice_channel,
                   scheduler=scheduler,
                   participants=participants,
-                  guild=interaction.guild,
-                  text_channel=interaction.channel,
+                  guild=guild,
+                  text_channel=text_channel,
                   image_url=image_url,
                   duration=duration,
                   start_times=start_times)
     await event.make_scheduled_events()
     client.events.append(event)
+
     remove_times_from_availabilities_for_events()
     await event.update_event_buttons_message()
+
     other_events = get_events_that_share_participants(event)
     for other_event in other_events:
         await other_event.update_messages()
-    followup = await interaction.followup.send(content=f"Created event {event_name}.",
-                                               silent=True,
-                                               ephemeral=True)
-    await followup.delete()
+    return event
 
 
 @client.tree.command(name='schedule', description='Schedule an event.')
@@ -3036,17 +3241,17 @@ async def schedule_command(interaction: Interaction,
     await interaction.response.defer(ephemeral=True)
     logger.info(f'[{event_name}] Received event schedule request from {interaction.user.name}')
     try:
-        await schedule(eventName=event_name,
+        await schedule(event_name=event_name,
                        guild=interaction.guild,
-                       textChannel=interaction.channel,
-                       voiceChannel=voice_channel,
-                       schedulerId=interaction.user.id,
-                       imageUrl=image_url,
-                       includeExclude=include_exclude,
+                       text_channel=interaction.channel,
+                       voice_channel=voice_channel,
+                       scheduler_id=interaction.user.id,
+                       image_url=image_url,
+                       include_exclude=include_exclude,
                        usernames=usernames,
                        roles=roles,
                        duration=duration,
-                       multiEvent=multi_event)
+                       multi_event=multi_event)
         followup = await interaction.followup.send(content=f"Scheduling started for {event_name}.",
                                                    silent=True,
                                                    ephemeral=True)
@@ -3057,51 +3262,51 @@ async def schedule_command(interaction: Interaction,
         await interaction.followup.send(content=content, ephemeral=True)
 
 
-async def schedule(eventName: str,
+async def schedule(event_name: str,
                    guild: Guild,
-                   textChannel: TextChannel,
-                   voiceChannel: VoiceChannel,
-                   schedulerId: Optional[int] = 0,
-                   imageUrl: Optional[str] = None,
-                   includeExclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
+                   text_channel: TextChannel,
+                   voice_channel: VoiceChannel,
+                   scheduler_id: Optional[int] = 0,
+                   image_url: Optional[str] = None,
+                   include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
                    usernames: Optional[str] = None,
                    roles: Optional[str] = None,
                    duration: Optional[int] = DEFAULT_EVENT_DURATION,
-                   multiEvent: Optional[bool] = False):
+                   multi_event: Optional[bool] = False):
     """
     Starts the scheduling of an event.
 
     Arguments
-    ----------
-    eventName: :class:`str`
+    ---------
+    event_name: :class:`str`
         The name of the event.
     guild: :class:`Guild`
         The guild that the event is occurring in.
-    textChannel: :class:`TextChannel`
+    text_channel: :class:`TextChannel`
         The text channel that the event sends messages in.
-    voiceChannel: :class:`VoiceChannel`
+    voice_channel: :class:`VoiceChannel`
         The voice channel that the event occurs in.
-    schedulerId: :class:`int`
-        Optional. The ID of the member who scheduled the event.
-    imageUrl: :class:`str`
-        Optional. The URL for the image.
-    includeExclude: :class:`INCLUDE_EXCLUDE`
-        Optional. Whether to include or exclude the usernames/ids/roles.
+    scheduler_id: :class:`Optional[int]`
+        The ID of the member who scheduled the event.
+    image_url: :class:`Optional[str]`
+        The URL for the image.
+    include_exclude: :class:`Optional[INCLUDE_EXCLUDE]`
+        Whether to include or exclude the usernames/ids/roles.
         Default: INCLUDE
         REQUIRES usernames or roles.
-    usernames: :class:`str` or :class:`int`
-        Optional. Comma separated list of usernames or ids to include/exclude.
-    roles: :class:`str`
-        Optional. Comma separated list of roles to include/exclude.
-    duration: :class:`int`
-        Optional. The duration of the event in minutes.
+    usernames: :class:`Optional[str]` or :class:`Optional[list[str]]` or :class:`Optional[list[int]]` or :class:`Optional[list[Participant]]`
+        Comma separated list of usernames or ids to include/exclude.
+    roles: :class:`Optional[str]`
+        Comma separated list of roles to include/exclude.
+    duration: :class:`Optional[int]`
+        The duration of the event in minutes.
         Default: 30
-    multiEvent: :class:`bool`
-        Optional. Whether or not the event is a multi event.
+    multi_event: :class:`Optional[bool]`
+        Whether or not the event is a multi event.
         Default: False
 
     Returns
-    --------
+    -------
     event: :class:`Event`
         The event object created for scheduling.
 
@@ -3110,52 +3315,79 @@ async def schedule(eventName: str,
     Exception: :class:`Exception`
         A string message describing the error.
     """
+    # Voice channel
     if not guild.voice_channels:
-        logger.info(f"[{eventName}] Scheduling cancelled due to no voice channel in guild")
+        logger.info(f"[{event_name}] Scheduling cancelled due to no voice channel in guild")
         raise Exception("The server must have at least one voice channel to schedule an event.")
 
-    schedulerUser = None
-    if schedulerId != 0:
-        schedulerUser = guild.get_member(schedulerId)
-    if schedulerUser is None:
-        schedulerUser = guild.members[0]
+    # Event name
+    if event_name in [event.name for event in client.events]:
+        logger.info(f"[{event_name}] Scheduling cancelled due to existing name")
+        raise Exception(f"Sorry, I already have an event called {event_name}. Please choose a different name.")
 
-    if eventName in [event.name for event in client.events]:
-        logger.info(f"[{eventName}] Scheduling cancelled due to existing name")
-        raise Exception(f"Sorry, I already have an event called {eventName}. Please choose a different name.")
+    # Scheduler
+    scheduler_user = None
+    if scheduler_id != 0:
+        scheduler_user = guild.get_member(scheduler_id)
+    if scheduler_user is None:
+        scheduler_user = guild.members[0]
 
-    # Generate participants list
-    try:
-        participants = get_participants_from_channel(event_name=eventName,
-                                                     guild=guild,
-                                                     channel=textChannel,
-                                                     user=schedulerUser,
-                                                     include_exclude=includeExclude,
-                                                     usernames=usernames,
-                                                     roles=roles)
-    except Exception as e:
-        logger.error(f"[{eventName}] Error getting participants: {e}")
-        raise Exception(f"Failed to generate participants list: {e}")
+    # Participants
+    if isinstance(usernames, str):
+        try:
+            participants = get_participants_from_channel(event_name=event_name,
+                                                         guild=guild,
+                                                         channel=text_channel,
+                                                         user=scheduler_user,
+                                                         include_exclude=include_exclude,
+                                                         usernames=usernames,
+                                                         roles=roles)
+        except Exception as e:
+            logger.error(f"[{event_name}] Error getting participants: {e}")
+            raise Exception(f"Failed to generate participants list: {e}")
+    elif isinstance(usernames, list) and (
+            all(isinstance(un, str) for un in usernames) or (
+            all(isinstance(un, int) for un in usernames))):
+        try:
+            participants = get_participants_from_channel(event_name=event_name,
+                                                         guild=guild,
+                                                         channel=text_channel,
+                                                         user=scheduler_user,
+                                                         include_exclude=include_exclude,
+                                                         usernames=", ".join(usernames),
+                                                         roles=roles)
+        except Exception as e:
+            logger.error(f"[{event_name}] Error getting participants: {e}")
+            raise Exception(f"Failed to generate participants list: {e}")
+    elif isinstance(usernames, list) and all(isinstance(un, Participant) for un in usernames):
+        participants = usernames
+    else:
+        logger.error(f"Invalid usernames type in schedule: {type(usernames)}")
+        raise Exception(f"This is a code error, please inform the developer!\nInvalid usernames type in schedule: {type(usernames)}")
 
+    # Scheduler
     scheduler = None
     for participant in participants:
-        if participant.member.id == schedulerId:
+        if participant.member.id == scheduler_id:
             scheduler = participant
+    if scheduler is None:
+        scheduler = participants[0]
 
-    if imageUrl == "":
-        imageUrl = None
+    # Image URL
+    if image_url == "":
+        image_url = None
 
     # Make event object
     duration = timedelta(minutes=duration)
-    event = Event(name=eventName,
-                  voice_channel=voiceChannel,
+    event = Event(name=event_name,
+                  voice_channel=voice_channel,
                   scheduler=scheduler,
                   participants=participants,
                   guild=guild,
-                  text_channel=textChannel,
-                  image_url=imageUrl,
+                  text_channel=text_channel,
+                  image_url=image_url,
                   duration=duration,
-                  multi_event=multiEvent)
+                  multi_event=multi_event)
     client.events.append(event)
 
     remove_times_from_availabilities_for_events()
@@ -3369,12 +3601,12 @@ def first_start_time(event):
     Gets the first start time of the event.
 
     Arguments
-    ----------
+    ---------
     event: :class:`Event`
         The event to get the start time from.
 
     Returns
-    --------
+    -------
     time: :class:`datetime`
         The first start time of the event.
     """

@@ -86,3 +86,23 @@ instructions.add_field(name="General Information",
                        value="The event will be either created or cancelled within a minute after the last person responds.",
                        inline=False)
 HELP_EMBEDS.append(instructions)
+# Other Buttons
+other_buttons = Embed(title="Other Buttons",
+                      description="How to utilize other buttons:",
+                      color=Color.magenta())
+other_buttons.add_field(name="Start End Button",
+                        value="Starts an event and converts itself to an End button to end the event."
+                        "\nEvents will start and end automatically when all participants join or leave the voice channel.",
+                        inline=False)
+other_buttons.add_field(name="Schedule Again",
+                        value="Allows you to reuse data from an ended or cancelled event."
+                        "\nThe modal will allow you to modify the following event details:"
+                        "\nName"
+                        "\nDuration"
+                        "\nImage URL"
+                        "\nStart Time"
+                        "\nLeaving the Start Time field blank will start scheduling the event."
+                        "\nEntering a Start Time will create the event at that time."
+                        "\nEvent voice channel and participants are recycled.",
+                        inline=False)
+HELP_EMBEDS.append(other_buttons)
