@@ -230,14 +230,14 @@ class SchedulerClient(Client):
             The json packet with the information necessary for scheduling an event.
         """
         logger.info(f"[{data['name']}] Schedule from dict triggered")
-        guild = self.get_guild(data["guildId"])
-        text_channel = guild.get_channel(data["textChannelId"])
-        voice_channel = guild.get_channel(data["voiceChannelId"])
+        guild = self.get_guild(data["guild_id"])
+        text_channel = guild.get_channel(data["text_channel_id"])
+        voice_channel = guild.get_channel(data["voice_channel_id"])
         await schedule(event_name=data["name"],
                        guild=guild,
                        text_channel=text_channel,
                        voice_channel=voice_channel,
-                       scheduler_id=data["notifierId"],
+                       scheduler_id=data["notifier_id"],
                        image_url=data["image_url"],
                        include_exclude=data["include_exclude"],
                        usernames=data["usernames"],
