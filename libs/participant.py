@@ -720,6 +720,7 @@ class Participant:
     def to_dict(self) -> dict:
         return {
             'member_id': self.member.id,
+            'member_name': self.member.name,
             'answered': self.answered,
             'subscribed': self.subscribed,
             'unavailable': self.unavailable,

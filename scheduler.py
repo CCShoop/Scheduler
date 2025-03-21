@@ -80,9 +80,6 @@ RESEND_INTERVAL: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * RESEND_INTERVAL_H
 
 OFFSET = EVENT_TIMEOUT % RESEND_INTERVAL
 
-# Shutdown handler
-EXITING = False
-
 
 def now() -> datetime:
     return datetime.now().astimezone().replace(second=0, microsecond=0)
@@ -193,6 +190,8 @@ class SchedulerClient(Client):
         The command tree for slash commands.
     loaded_json: :class:`bool`
         Whether or not the client has loaded the json file.
+    exiting: :class:`bool`
+        Whether or not the client has received a shutdown signal.
     server_is_running: :class:`bool`
         Whether or not the client's server is running to accept event scheduling from json packets.
     server: :class:`Server`
@@ -207,6 +206,7 @@ class SchedulerClient(Client):
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
         self.loaded_json = False
+        self.exiting = False
         self.server_is_running = False
         self.server = Server()
         self.server.callback = self.schedule_from_dict
@@ -265,10 +265,13 @@ class SchedulerClient(Client):
                         if not event:
                             raise Exception('Failed to create event object')
                         client.events.append(event)
-                        await event.update_messages()
                         logger.info(f'[{event}] event loaded and added to client event list')
                     except Exception as e:
-                        logger.error(f'Could not add event to client event list: {e}')
+                        logger.error(f"[{event}] Could not add event to client event list: {e}")
+                    try:
+                        await event.update_messages()
+                    except Exception as e:
+                        logger.error(f"[{event}] Error updating messages: {e}")
             else:
                 logger.info('No json data found')
 
@@ -300,8 +303,9 @@ client = SchedulerClient(intents=Intents.all())
 
 
 def handle_signal(signum, frame):
-    logger.info(f"Received signal {signum}; disabling buttons, updating messages, and shutting down.")
+    logger.info(f"Received signal {signum}")
     for event in client.events:
+        logger.info(f"[{event}] Disabling buttons")
         if event.availability_buttons is not None:
             event.availability_buttons.respond_button.disabled = True
             event.availability_buttons.full_button.disabled = True
@@ -313,8 +317,7 @@ def handle_signal(signum, frame):
             event.event_buttons.unsubscribe_button.disabled = True
             event.event_buttons.reschedule_button.disabled = True
             event.event_buttons.cancel_button.disabled = True
-    global EXITING
-    EXITING = True
+    client.exiting = True
 
 
 signal.signal(signal.SIGINT, handle_signal)
@@ -3701,9 +3704,14 @@ async def update():
     for event in client.events:
         await event.update()
     save()
-    if EXITING:
+    if client.exiting:
+        update.stop()
+        logger.info(f"[{event}] Exiting")
         for event in client.events:
+            logger.info(f"[{event}] Updating messages")
             await event.update_messages()
+            time.sleep(1)
+        logger.info(f"[{event}] Closing client")
         await client.close()
 
 
