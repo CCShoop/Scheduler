@@ -2798,11 +2798,7 @@ async def edit_event(event: Event,
                             value=f"Unchanged; name is already {event.name}",
                             inline=False)
         else:
-            for other_event in client.events:
-                other_event.restore_availabilities(event)
-                for shared_participant in event.other_shared_participants(other_event):
-                    shared_participant.remove_availability_for_event(event_name=event.name,
-                                                                     event_timeblocks=event.timeblocks)
+            remove_times_from_availabilities_for_events()
             if event.created:
                 for scheduled_event in event.scheduled_events:
                     await scheduled_event.edit(name=event.name)
@@ -2857,11 +2853,7 @@ async def edit_event(event: Event,
                             value=f"Unchanged; duration already {event.duration_string}",
                             inline=False)
         else:
-            for other_event in client.events:
-                other_event.restore_availabilities(event)
-                for shared_participant in event.other_shared_participants(other_event):
-                    shared_participant.remove_availability_for_event(event_name=event.name,
-                                                                     event_timeblocks=event.timeblocks)
+            remove_times_from_availabilities_for_events()
             embed.add_field(name="Duration",
                             value=f"{get_time_str_from_minutes(old_duration.total_seconds() // 60)}"
                             f" -> {get_time_str_from_minutes(event.duration.total_seconds() // 60)}",
