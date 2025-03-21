@@ -657,6 +657,18 @@ class Participant:
         self.removed_times = new_removed_times
 
     @property
+    def name(self) -> str:
+        return self.member.name
+
+    @property
+    def nick(self) -> str:
+        return self.__repr__()
+
+    @property
+    def id(self) -> int:
+        return self.member.id
+
+    @property
     def availability_string(self) -> str:
         """
         Gets the availability string of the participant.

@@ -1710,10 +1710,6 @@ class Event:
         if not event_voice_channel:
             raise Exception(f'[{event_name}] Could not find voice channel, discarding event')
 
-        # Scheduler
-        event_scheduler = event_guild.get_member(data['scheduler_id'])
-        event_rescheduler = event_guild.get_member(data['rescheduler_id'])
-
         # Participants
         event_participants = [Participant.from_dict(event_guild, participant) for participant in data["participants"]]
         for participant in event_participants.copy():
@@ -1729,12 +1725,23 @@ class Event:
                                                                channel=event_guild.get_channel(event_text_channel))
             logger.warning(f'[{event_name}] no participant(s) found, added everyone in the text channel')
 
-        # Set (re)scheduler to a participant
-        for participant in event_participants:
-            if type(event_scheduler) is Member and event_scheduler.id == participant.member.id:
-                event_scheduler = participant
-            if type(event_rescheduler) is Member and event_rescheduler.id == participant.member.id:
-                event_rescheduler = participant
+        # Scheduler
+        event_scheduler_id = data['scheduler_id']
+        event_scheduler = None
+        if event_scheduler_id != 0:
+            for participant in event_participants:
+                if participant.member.id == event_scheduler_id:
+                    event_scheduler = participant
+                    break
+
+        # Rescheduler
+        event_rescheduler_id = data['rescheduler_id']
+        event_rescheduler = None
+        if event_rescheduler_id != 0:
+            for participant in event_participants:
+                if participant.member.id == event_rescheduler_id:
+                    event_rescheduler = participant
+                    break
 
         # Availability message id
         event_availability_message_id = data["availability_message_id"]
