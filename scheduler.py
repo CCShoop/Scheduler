@@ -531,6 +531,7 @@ class Event:
     async def create_if_possible(self) -> None:
         if not self.created:
             if self.everyone_answered:
+                logger.debug(f"[{self}] Everyone has answered, comparing availabilities")
                 self.compare_availabilities()
                 # Create the event
                 if self.ready_to_create:
@@ -612,6 +613,7 @@ class Event:
         dates_scheduled = []
         cur_date = current_time.date()
         if all_participants_and_vc_available:
+            logger.debug(f"[{self}] All participants and voice channel are available for immediate start")
             self.start_times.append(current_time)
             self.five_minute_warning_flag = True
             self.ready_to_create = True
@@ -623,11 +625,13 @@ class Event:
 
         # Get all availabilities
         available_timeblocks = [participant.availability for participant in subbed_participants]
+        logger.debug(f"[{self}] Available timeblocks:\n{available_timeblocks}")
 
         # Get intersected availability
         intersected_timeblocks = available_timeblocks[0]
         for timeblocks in available_timeblocks[1:]:
             intersected_timeblocks = self.intersect_time_blocks(intersected_timeblocks, timeblocks)
+        logger.debug(f"[{self}] Intersected timeblocks:\n{intersected_timeblocks}")
 
         # Remove conflicting time blocks
         filtered_timeblocks = []
@@ -639,6 +643,7 @@ class Event:
                     new_blocks.extend(block.subtract(occupied_timeblock))
                 remaining_blocks = new_blocks
             filtered_timeblocks.extend(remaining_blocks)
+        logger.debug(f"[{self}] Filtered timeblocks:\n{filtered_timeblocks}")
 
         # Find valid start times
         for timeblock in filtered_timeblocks:
@@ -649,9 +654,15 @@ class Event:
                     date_scheduled = True
                     break
             if timeblock.duration >= self.duration and not date_scheduled:
+                logger.debug(f"[{self}] Using timeblock {timeblock}")
                 self.start_times.append(timeblock.start_time)
                 self.ready_to_create = True
                 dates_scheduled.append(tb_date)
+            else:
+                if timeblock.duration < self.duration:
+                    logger.debug(f"[{self}] TOO SHORT: Not using timeblock {timeblock}")
+                if date_scheduled:
+                    logger.debug(f"[{self}] DATE ALREADY SCHEDULED: Not using timeblock {timeblock}")
 
     async def reschedule(self, rescheduler: Participant) -> None:
         self.reset_timeout_counter()
@@ -2916,13 +2927,30 @@ async def on_message(message: Message):
         await message.channel.send(content='Synced', reference=message)
 
     # Owner requests to see all events
-    if message.author.id == OWNER_ID and 'scheduler: list all' in message.content:
+    if message.author.id == OWNER_ID and 'scheduler: events' in message.content:
         logger.info(f"User {message.author.name} listed all events")
         embed = Embed(title="All events", color=Color.blue())
         for event in client.events:
             eventStatus = event.scheduling_status
             embed.add_field(name=event.name, value=eventStatus, inline=True)
         await message.channel.send(embed=embed, reference=message)
+
+    # Owner requests a recount
+    if message.author.id == OWNER_ID and 'scheduler: check' in message.content:
+        content = ""
+        for event in client.events:
+            await event.create_if_possible()
+            content += f"Checked {event}\n"
+        await message.channel.send(content=content, reference=message)
+
+    # Owner toggles debug
+    if message.author.id == OWNER_ID and 'scheduler: debug' in message.content:
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.setLevel(logging.INFO)
+            await message.channel.send(content="Debugging disabled.", reference=message)
+        else:
+            logger.setLevel(logging.DEBUG)
+            await message.channel.send(content="Debugging enabled.", reference=message)
 
     # Owner subscribes another user
     if message.author.id == OWNER_ID and 'scheduler: subscribe' in message.content:
