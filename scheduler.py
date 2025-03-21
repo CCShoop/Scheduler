@@ -566,10 +566,16 @@ class Event:
         intersected_time_blocks = []
         for block1 in timeblocks1:
             for block2 in timeblocks2:
+                logger.debug(f"[{self}] Checking overlap of {block1} with {block2}")
                 start_time = max(block1.start_time, block2.start_time)
                 end_time = min(block1.end_time, block2.end_time)
+                logger.debug(f"[{self}] start_time: {start_time}")
+                logger.debug(f"[{self}] end_time:   {end_time}")
                 if start_time < end_time:
+                    logger.debug(f"[{self}] Appending timeblock")
                     intersected_time_blocks.append(TimeBlock(start_time, end_time))
+                else:
+                    logger.debug(f"[{self}] Ignoring timeblock")
         return intersected_time_blocks
 
     def compare_availabilities(self) -> None:
