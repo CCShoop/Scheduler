@@ -1293,6 +1293,9 @@ class Event:
             The embed containing each participant's availability.
         """
         embed = Embed(title='Availabilities', color=Color.blue())
+        status = self.scheduling_status
+        if status == "No common availability" or status == "Awaiting availability":
+            embed.description = status
         for participant in self.participants:
             participantName = f'{participant}'
             availString = participant.availability_string
@@ -2237,7 +2240,7 @@ class AvailabilityButtons(View):
                                                 ephemeral=True)
                 return
             if len(found_availabilities) == 1:
-                participant.availability = found_availabilities[0].avail.copy()
+                participant.availability = found_availabilities[0].avail
                 participant.full_availability_flag = found_availabilities[0].full_flag
                 participant.answered = True
                 await self.event.update_availability_message()
