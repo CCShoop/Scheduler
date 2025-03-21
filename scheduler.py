@@ -2643,13 +2643,12 @@ class ExistingAvailabilitiesSelect(Select):
                 self.participant.full_availability_flag = event_avail.full_flag
                 self.participant.answered = True
                 self.participant.subscribed = True
+                await event_avail.event.update_availability_message()
                 followup = await interaction.followup.send(content="**Availability retrieved!**",
                                                            silent=True,
                                                            ephemeral=True)
                 await followup.delete(delay=3)
                 await event_avail.event.create_if_possible()
-                if not event_avail.event.created:
-                    await event_avail.event.update_availability_message()
                 return
         await interaction.followup.send(content="**Failed to get your availability.**",
                                         ephemeral=True)
