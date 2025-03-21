@@ -237,7 +237,7 @@ class SchedulerClient(Client):
                        guild=guild,
                        text_channel=text_channel,
                        voice_channel=voice_channel,
-                       scheduler_id=data["notifier_id"],
+                       scheduler_id=data["scheduler_id"],
                        image_url=data["image_url"],
                        include_exclude=data["include_exclude"],
                        usernames=data["usernames"],
@@ -3363,12 +3363,14 @@ async def schedule(event_name: str,
         logger.info(f"[{event_name}] Scheduling cancelled due to existing name")
         raise Exception(f"Sorry, I already have an event called {event_name}. Please choose a different name.")
 
-    # Scheduler
+    # Scheduler user
+    logger.debug(f"[{event_name}] Scheduler ID provided is {scheduler_id}")
     scheduler_user = None
     if scheduler_id != 0:
         scheduler_user = guild.get_member(scheduler_id)
-    if scheduler_user is None:
-        scheduler_user = guild.members[0]
+        logger.debug(f"[{event_name}] Got scheduler user: {scheduler_user}")
+    else:
+        logger.debug(f"[{event_name}] Scheduler ID is 0, will use first participant in a second...")
 
     # Participants
     if isinstance(usernames, str):
@@ -3408,12 +3410,14 @@ async def schedule(event_name: str,
         logger.error(f"Invalid usernames type in schedule: {type(usernames)}")
         raise Exception(f"This is a code error, please inform the developer!\nInvalid usernames type in schedule: {type(usernames)}")
 
-    # Scheduler
+    # Scheduler participant
     scheduler = None
     for participant in participants:
-        if participant.member.id == scheduler_id:
+        if participant.member.id == scheduler_user.id:
+            logger.debug(f"[{event_name}] Scheduler participant found: {participant}")
             scheduler = participant
     if scheduler is None:
+        logger.debug(f"[{event_name}] Scheduler participant not found, grabbing first participant: {participants[0]}")
         scheduler = participants[0]
 
     # Image URL
