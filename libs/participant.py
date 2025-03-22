@@ -588,7 +588,7 @@ class Participant:
                 self.remove_from_availability(removed_timeblock)
             existing_removed_time = next(
                 (rt for rt in self.removed_times
-                 if rt.event_name == event_name and rt.event_timeblock.start_time == event_timeblock.start_time),
+                 if rt.event_name == event_name and rt.event_timeblock.start_time.date() == event_timeblock.start_time.date()),
                 None)
             if existing_removed_time:
                 existing_removed_time.event_timeblock = event_timeblock
