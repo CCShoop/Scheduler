@@ -2015,7 +2015,7 @@ class ScheduleAgainModal(Modal):
                            guild=self.event.guild,
                            text_channel=self.event.text_channel,
                            voice_channel=self.event.voice_channel,
-                           scheduler_id=self.event.scheduler.member.id,
+                           scheduler_id=interaction.user.id,
                            image_url=event_image_url,
                            usernames=", ".join([str(p.member.id) for p in self.event.participants]),
                            duration=event_duration)
@@ -2025,8 +2025,8 @@ class ScheduleAgainModal(Modal):
             await followup.delete(delay=3)
 
     async def on_error(self, interaction: Interaction, error: Exception) -> None:
-        await interaction.response.send_message(content=f"Error scheduling again: {error}",
-                                                ephemeral=True)
+        await interaction.followup.send(content=f"Error scheduling again: {error}",
+                                        ephemeral=True)
         logger.exception(f"[{self.event_name.value}] Error scheduling again: {error}")
 
 
