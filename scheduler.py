@@ -2811,6 +2811,9 @@ async def edit_event(event: Event,
                             value=f"Unchanged; name is already {event.name}",
                             inline=False)
         else:
+            for other_event in client.events:
+                if other_event is not event:
+                    other_event.restore_availabilities(event)
             remove_times_from_availabilities_for_events()
             if event.created:
                 for scheduled_event in event.scheduled_events:
