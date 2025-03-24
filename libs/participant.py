@@ -245,7 +245,7 @@ class Participant:
                                             hour=HOURS_PAST_MIDNIGHT_CUTOFF,
                                             minute=0)
                 end_time += timedelta(days=1)
-            self.availability.append(TimeBlock(start_time, end_time))
+            self.add_to_availability(TimeBlock(start_time, end_time))
             self.answered = True
             self.full_availability_flag = True
             self.clean_availability()
@@ -508,8 +508,7 @@ class Participant:
                 start_time += timedelta(days=1)
                 end_time += timedelta(days=1)
 
-            self.availability.append(TimeBlock(start_time, end_time))
-            self.clean_availability()
+            self.add_to_availability(TimeBlock(start_time, end_time))
 
     def clean_availability(self) -> None:
         """Cleans the participant's availability by sorting and then combining overlapping/touching timeblocks."""
@@ -553,6 +552,10 @@ class Participant:
                              end_time=min(event_timeblock.end_time, timeblock.end_time))
         return None
 
+    def add_to_availability(self, timeblock: TimeBlock) -> None:
+        self.availability.append(timeblock)
+        self.clean_availability()
+
     def remove_from_availability(self, timeblock: TimeBlock) -> None:
         """Removes a timeblock from availability."""
         new_availability = []
@@ -584,13 +587,12 @@ class Participant:
         """
         for event_timeblock in event_timeblocks:
             removed_timeblock = self.get_availability_overlap(event_timeblock)
-            if removed_timeblock:
-                self.remove_from_availability(removed_timeblock)
             existing_removed_time = next(
                 (rt for rt in self.removed_times
                  if rt.event_name == event_name and rt.event_timeblock.start_time.date() == event_timeblock.start_time.date()),
                 None)
             if existing_removed_time:
+                self.add_to_availability(existing_removed_time.removed_timeblock)
                 existing_removed_time.event_timeblock = event_timeblock
                 existing_removed_time.removed_timeblock = removed_timeblock
             else:
@@ -599,6 +601,8 @@ class Participant:
                                            event_timeblock=event_timeblock,
                                            removed_timeblock=removed_timeblock)
                 self.removed_times.append(removed_time)
+            if removed_timeblock:
+                self.remove_from_availability(removed_timeblock)
 
     def restore_availability_for_event(self, event_name: str) -> None:
         """
@@ -611,7 +615,10 @@ class Participant:
         """
         new_removed_times = []
         for removed_time in self.removed_times:
-            if not removed_time.event_name == event_name:
+            if removed_time.event_name == event_name:
+                if removed_time.removed_timeblock:
+                    self.add_to_availability(removed_time.removed_timeblock)
+            else:
                 new_removed_times.append(removed_time)
         self.removed_times = new_removed_times
         self.update_removed_times()
