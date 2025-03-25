@@ -553,8 +553,9 @@ class Participant:
         return None
 
     def add_to_availability(self, timeblock: TimeBlock) -> None:
-        self.availability.append(timeblock)
-        self.clean_availability()
+        if timeblock is not None:
+            self.availability.append(timeblock)
+            self.clean_availability()
 
     def remove_from_availability(self, timeblock: TimeBlock) -> None:
         """Removes a timeblock from availability."""
@@ -592,7 +593,8 @@ class Participant:
                  if rt.event_name == event_name and rt.event_timeblock.start_time.date() == event_timeblock.start_time.date()),
                 None)
             if existing_removed_time:
-                self.add_to_availability(existing_removed_time.removed_timeblock)
+                if existing_removed_time.removed_timeblock is not None:
+                    self.add_to_availability(existing_removed_time.removed_timeblock)
                 existing_removed_time.event_timeblock = event_timeblock
                 existing_removed_time.removed_timeblock = removed_timeblock
             else:
