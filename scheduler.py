@@ -3711,6 +3711,10 @@ def remove_times_from_availabilities_for_events() -> None:
 async def update():
     for event in client.events:
         await event.update()
+        for participant in event.participants:
+            for removed_time in participant.removed_times.copy():
+                if removed_time.event_name not in [event.name for event in client.events]:
+                    participant.restore_availability_for_event(removed_time.event_name)
     save()
     if client.exiting:
         update.stop()
