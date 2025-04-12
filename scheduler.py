@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from discord import (app_commands, Interaction, Intents, Client, Embed, Color, Activity,
                      ButtonStyle, EntityType, TextChannel, ActivityType, Status,
                      VoiceChannel, Message, SelectOption, ScheduledEvent, Member,
-                     Guild, PrivacyLevel, User, utils, NotFound)
+                     Guild, PrivacyLevel, User, utils, NotFound, DiscordServerError)
 from discord.ui import View, Button, Modal, TextInput, Select
 from discord.ext import tasks
 
@@ -725,7 +725,12 @@ class Event:
     async def update_five_minute_warning_message(self) -> None:
         if self.five_minute_warning_message is not None:
             content = self.get_five_minute_warning_message_content()
-            await self.five_minute_warning_message.edit(content=content)
+            try:
+                await self.five_minute_warning_message.edit(content=content)
+            except DiscordServerError as e:
+                logger.error(f"[{self}] Discord server error while editing five minute warning message: {e}")
+            except Exception as e:
+                logger.exception(f"[{self}] Error editing five minute warning message: {e}")
 
     async def delete_five_minute_warning_message(self) -> None:
         """Deletes the 5 minute warning message."""
