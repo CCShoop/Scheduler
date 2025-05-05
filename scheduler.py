@@ -1268,7 +1268,7 @@ class Event:
         output = ""
         if not self.everyone_answered:
             latest_date = self.latest_date
-            if latest_date and now() < latest_date:
+            if latest_date and now().date() < latest_date:
                 output += f'\n\n**Input availability with start time on latest availability date: {latest_date.strftime("%m/%d")}**'
             mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
             output += f'\n\nWaiting for a response from:{mentions}'
