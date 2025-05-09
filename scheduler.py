@@ -2124,6 +2124,10 @@ class AvailabilityModal(Modal):
                     await other_event.update_messages()
         except Exception as e:
             logger.exception(f"[{self.event}] Error setting specific availability: {e}")
+        embed = get_participants_other_unanswered_events_embed(self.event, participant)
+        if embed:
+            await interaction.followup.send(embed=embed,
+                                            ephemeral=True)
 
     async def on_error(self, interaction: Interaction, error: Exception) -> None:
         await interaction.response.send_message(f"Error getting availability: {error}", ephemeral=True)
@@ -2227,6 +2231,10 @@ class AvailabilityButtons(View):
                 logger.info(f'[{self.event}] {participant} deselected full availability')
                 participant.set_no_availability()
                 await self.event.update_availability_message()
+            embed = get_participants_other_unanswered_events_embed(self.event, participant)
+            if embed:
+                await interaction.followup.send(embed=embed,
+                                                ephemeral=True)
         button.callback = full_button_callback
         self.add_item(button)
         return button
@@ -2262,6 +2270,10 @@ class AvailabilityButtons(View):
             else:
                 await interaction.followup.send(content="Select another event from which to grab your availability.",
                                                 view=ExistingAvailabilitiesSelectView(found_availabilities, participant),
+                                                ephemeral=True)
+            embed = get_participants_other_unanswered_events_embed(self.event, participant)
+            if embed:
+                await interaction.followup.send(embed=embed,
                                                 ephemeral=True)
         button.callback = reuse_button_callback
         self.add_item(button)
@@ -3694,6 +3706,23 @@ def get_participants_other_events(event: Event, participant: Participant) -> lis
         if other_event != event and participant.member.id in [p.member.id for p in other_event.participants]:
             events.append(other_event)
     return events
+
+
+def get_participants_other_unanswered_events_embed(event: Event, participant: Participant) -> list[Embed]:
+    valid = False
+    embed = Embed(title="Your Other Events",
+                  description="Other events that you are in that require your availability.",
+                  color=Color.yellow())
+    for other_event in get_participants_other_events(event, participant):
+        for other_participant in other_event.participants:
+            if other_participant.member.id == participant.member.id:
+                if not other_participant.answered:
+                    valid = True
+                    embed.add_field(name=other_event.name,
+                                    value=other_event.text_channel.mention,
+                                    inline=False)
+                break
+    return embed if valid else None
 
 
 def remove_times_from_availabilities_for_events() -> None:
