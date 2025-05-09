@@ -1192,7 +1192,7 @@ class Event:
                         break
         return other_participants
 
-    def get_other_availability(self, participant: Participant) -> list:
+    def get_other_availabilities(self, participant: Participant) -> list:
         """
         Gets availability of a participant from another event that they are in.
 
@@ -2257,15 +2257,17 @@ class AvailabilityButtons(View):
                 await interaction.followup.send(content="Could not add you as a participant.",
                                                 ephemeral=True)
                 return
-            found_availabilities = self.event.get_other_availability(participant)
+            found_availabilities = self.event.get_other_availabilities(participant)
             if not found_availabilities:
-                await interaction.followup.send(content="No existing availability found.",
+                await interaction.followup.send(content="No existing availabilities found.",
                                                 ephemeral=True)
                 return
             if len(found_availabilities) == 1:
-                participant.availability = found_availabilities[0].avail
+                participant.set_no_availability()
+                participant.availability = found_availabilities[0].avail.copy()
                 participant.full_availability_flag = found_availabilities[0].full_flag
                 participant.answered = True
+                participant.subscribed = True
                 await self.event.update_availability_message()
             else:
                 await interaction.followup.send(content="Select another event from which to grab your availability.",
