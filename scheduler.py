@@ -1544,6 +1544,11 @@ class Event:
         client.events.remove(self)
         logger.info(f'[{self}] Removed from client events list')
 
+    def get_limited_name(self, length: int) -> str:
+        if length < 3:
+            raise Exception("Invalid name length; must be at least 3.")
+        return self.name if len(self.name) <= length else f"{self.name[:length-3]}..."
+
     @property
     def scheduling_status(self) -> str:
         """
@@ -1967,13 +1972,13 @@ class ScheduleAgainModal(Modal):
         self.event = event
         self.event_name = TextInput(label="Name",
                                     default=event.name,
-                                    placeholder=event.name)
+                                    placeholder=event.get_limited_name(100))
         self.event_duration = TextInput(label="Duration",
                                         default=str(event.duration_minutes),
-                                        placeholder=str(event.duration_minutes))
+                                        placeholder=str(event.duration_minutes)[:100])
         self.event_image_url = TextInput(label="Image URL",
                                          default=event.image_url,
-                                         placeholder=event.image_url,
+                                         placeholder=event.image_url[:100],
                                          required=False)
         self.event_start_time = TextInput(label="Start Time",
                                           placeholder="ISO 8601 format or a 24-hour time",
@@ -2333,9 +2338,7 @@ class AvailabilityButtons(View):
         button = Button(label=self.cancel_label, style=ButtonStyle.red)
 
         async def cancel_button_callback(interaction: Interaction):
-            title = f"Cancel {self.event.name}"
-            if len(title) >= 38:
-                title = f"{title[:34]}..."
+            title = f"Cancel {self.event.get_limited_name(38)}"
             await interaction.response.send_modal(CancelModal(event=self.event,
                                                               title=title))
         button.callback = cancel_button_callback
@@ -2568,7 +2571,7 @@ class ExistingGuildEventsSelect(Select):
     def __init__(self, guild: Guild):
         self.guild = guild
         options = [
-            SelectOption(label=guild_event.name, description=guild_event.description, value=str(guild_event.id))
+            SelectOption(label=guild_event.get_limited_name(25), description=guild_event.description[:50], value=str(guild_event.id))
             for guild_event in self.guild.scheduled_events
         ]
         super().__init__(placeholder='Guild Event', options=options)
@@ -2659,7 +2662,7 @@ class ExistingAvailabilitiesSelect(Select):
         self.participant = participant
         options = []
         for event_avail in self.event_avails:
-            name = event_avail.event.name[:99]
+            name = event_avail.event.get_limited_name(99)
             options.append(SelectOption(label=name, value=name))
         super().__init__(placeholder="Event Availabilities", options=options)
 
@@ -2667,7 +2670,7 @@ class ExistingAvailabilitiesSelect(Select):
     async def callback(self, interaction: Interaction):
         await interaction.response.defer(ephemeral=True)
         for event_avail in self.event_avails:
-            name = event_avail.event.name[:99]
+            name = event_avail.event.get_limited_name(99)
             if name == self.values[0]:
                 logger.info(f'{interaction.user.name} reused availability from {self.values[0]}')
                 self.participant.set_no_availability()
@@ -2827,7 +2830,7 @@ async def edit_event(event: Event,
         event.name = name
         if old_name == event.name:
             embed.add_field(name="Name",
-                            value=f"Unchanged; name is already {event.name}",
+                            value=f"Unchanged; name is already {event.get_limited_name(25)}",
                             inline=False)
         else:
             for other_event in client.events:
@@ -2838,7 +2841,7 @@ async def edit_event(event: Event,
                 for scheduled_event in event.scheduled_events:
                     await scheduled_event.edit(name=event.name)
             embed.add_field(name="Name",
-                            value=f"{old_name} -> {event.name}",
+                            value=f"{old_name[:20]} -> {event.get_limited_name(20)}",
                             inline=False)
     # Voice Channel
     if voice_channel is not None:
@@ -2964,7 +2967,7 @@ async def on_message(message: Message):
         embed = Embed(title="All events", color=Color.blue())
         for event in client.events:
             eventStatus = event.scheduling_status
-            embed.add_field(name=event.name, value=eventStatus, inline=True)
+            embed.add_field(name=event.get_limited_name(25), value=eventStatus, inline=True)
         await message.channel.send(embed=embed, reference=message)
 
     # Owner requests a recount
@@ -3519,13 +3522,13 @@ async def edit_command(interaction: Interaction,
         await interaction.followup.send(embed=embed, ephemeral=True)
     # Multiple events in text channel/guild, select one to edit from a dropdown
     else:
-        options = [SelectOption(label=event.name, value=event.name) for event in events]
+        options = [SelectOption(label=event.get_limited_name(25), value=event.get_limited_name(25)) for event in events]
         select = Select(placeholder="Select an event to edit", options=options)
 
         async def select_callback(interaction: Interaction):
             await interaction.response.defer(ephemeral=True, thinking=True)
             for event in events:
-                if event.name == select.values[0]:
+                if event.get_limited_name(25) == select.values[0]:
                     embed = await edit_event(event=event,
                                              name=name,
                                              voice_channel=voice_channel,
@@ -3640,13 +3643,13 @@ async def availability_command(interaction: Interaction):
         embed = events[0].get_availability_embed()
         await interaction.followup.send(embed=embed, ephemeral=True)
     else:
-        options = [SelectOption(label=event.name, value=event.name) for event in client.events]
+        options = [SelectOption(label=event.get_limited_name(25), value=event.get_limited_name(25)) for event in client.events]
         select = Select(placeholder="Select an event", options=options)
 
         async def select_callback(interaction: Interaction):
             await interaction.response.defer(ephemeral=True, thinking=True)
             for event in events:
-                if event.name == select.values[0]:
+                if event.get_limited_name(25) == select.values[0]:
                     embed = event.get_availability_embed()
                     await interaction.followup.send(embed=embed)
                     return
@@ -3720,7 +3723,7 @@ def get_participants_other_unanswered_events_embed(event: Event, participant: Pa
             if other_participant.member.id == participant.member.id:
                 if not other_participant.answered:
                     valid = True
-                    embed.add_field(name=other_event.name,
+                    embed.add_field(name=other_event.get_limited_name(25),
                                     value=other_event.text_channel.mention,
                                     inline=False)
                 break
