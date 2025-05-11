@@ -481,7 +481,9 @@ class Event:
                 self.previous_countdown = self.timeout_minutes
                 for participant in self.participants:
                     participant.confirm_answered(duration=self.duration, latest_date=self.latest_date)
-                await self.update_availability_message()
+                await self.create_if_possible()
+                if not self.created:
+                    await self.update_availability_message()
                 time.sleep(1)
         # Event has been created
         else:
