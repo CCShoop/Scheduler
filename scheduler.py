@@ -1429,6 +1429,11 @@ class Event:
                     await self.availability_message.edit(content=content,
                                                          embeds=embeds,
                                                          view=self.availability_buttons)
+                except NotFound as e:
+                    logger.warning(f'[{self}] Availability message not found, sending a new one: {e}')
+                    self.availability_message = await self.text_channel.send(content=content,
+                                                                             embeds=embeds,
+                                                                             view=self.availability_buttons)
                 except Exception as e:
                     logger.error(f'[{self}] Failed to edit availability message: {e}')
 
@@ -1456,9 +1461,17 @@ class Event:
                                                                           view=self.event_buttons)
             # Edit existing message
             else:
-                await self.event_buttons_message.edit(content=content,
-                                                      embeds=embeds,
-                                                      view=self.event_buttons)
+                try:
+                    await self.event_buttons_message.edit(content=content,
+                                                          embeds=embeds,
+                                                          view=self.event_buttons)
+                except NotFound as e:
+                    logger.warning(f'[{self}] Event buttons message not found, sending a new one: {e}')
+                    self.event_buttons_message = await self.text_channel.send(content=content,
+                                                                              embeds=embeds,
+                                                                              view=self.event_buttons)
+                except Exception as e:
+                    logger.error(f'[{self}] Failed to edit event buttons message: {e}')
 
     async def delete_event_buttons_message(self) -> None:
         """Deletes the event buttons message."""
