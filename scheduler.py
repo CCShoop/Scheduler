@@ -3684,6 +3684,25 @@ async def listevents_command(interaction: Interaction):
         await interaction.followup.send(content=content, ephemeral=True)
 
 
+@client.tree.command(name='listmyevents', description='List all events that you are in.')
+async def listmyevents_command(interaction: Interaction):
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    foundEvents = False
+    content = ""
+    embeds = [Embed(title="All events you are in", color=Color.blue())]
+    for event in client.events:
+        if interaction.user.id in [p.member.id for p in event.participants]:
+            foundEvents = True
+            embed = event.get_general_embed()
+            embed.color = Color.dark_green()
+            embeds.append(embed)
+    if foundEvents:
+        await interaction.followup.send(embeds=embeds, ephemeral=True)
+    else:
+        content = "**You are not in any events.**"
+        await interaction.followup.send(content=content, ephemeral=True)
+
+
 @client.tree.command(name='availability', description='Show availabilities of an event.')
 async def availability_command(interaction: Interaction):
     await interaction.response.defer(ephemeral=True, thinking=True)
