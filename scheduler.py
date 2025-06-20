@@ -75,6 +75,9 @@ HOURS_PER_DAY: int = 24
 EVENT_TIMEOUT_DAYS: int = 3
 EVENT_TIMEOUT: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * HOURS_PER_DAY * EVENT_TIMEOUT_DAYS
 
+SCHEDULE_AGAIN_TIMEOUT_DAYS: int = 5
+SCHEDULE_AGAIN_TIMEOUT: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * HOURS_PER_DAY * SCHEDULE_AGAIN_TIMEOUT_DAYS
+
 RESEND_INTERVAL_HOURS: int = 23
 RESEND_INTERVAL: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * RESEND_INTERVAL_HOURS
 
@@ -211,6 +214,7 @@ class SchedulerClient(Client):
         self.server = Server()
         self.server.callback = self.schedule_from_dict
         self.events = []
+        self.schedule_again_events = []
         self.cur_presence_index = -1
 
     async def start_server(self):
@@ -2551,7 +2555,16 @@ class AfterButtons(View):
         super().__init__(timeout=None)
         self.event = event
         self.schedule_again_label = "Schedule Again"
+        self.forget_label = "Forget"
         self.schedule_again_button = self.add_schedule_again_button()
+        self.forget_button = self.add_forget_button()
+        self.schedule_again_timeout = SCHEDULE_AGAIN_TIMEOUT
+
+    def update(self):
+        self.schedule_again_timeout -= 1
+        if self.schedule_again_timeout == 0:
+            logger.info(f"[{self.event}] schedule again timed out, forgetting")
+            self.remove()
 
     def add_schedule_again_button(self):
         """
@@ -2560,7 +2573,7 @@ class AfterButtons(View):
         Returns
         -------
         button: :class:`Button`
-            The Respond button.
+            The Schedule Again button.
         """
         button = Button(label=self.schedule_again_label, style=ButtonStyle.blurple)
 
@@ -2571,6 +2584,32 @@ class AfterButtons(View):
         button.callback = schedule_again_button_callback
         self.add_item(button)
         return button
+
+    def add_forget_button(self):
+        """
+        Sets up and gets the Forget button.
+
+        Returns
+        -------
+        button: :class:`Button`
+            The Forget button.
+        """
+        button = Button(label=self.forget_label, style=ButtonStyle.red)
+
+        async def forget_button_callback(interaction: Interaction):
+            logger.info(f"[{self.event}] forget button pressed by {interaction.user.name}")
+            self.remove()
+        button.callback = forget_button_callback
+        self.add_item(button)
+        return button
+
+    def remove(self):
+        logger.info(f"[{self.event}] forgotten")
+        client.schedule_again_events.remove(self)
+        self.schedule_again_button.disabled = True
+        self.forget_button.disabled = True
+        self.clear_items()
+        self.stop()
 
 
 class ExistingGuildEventsSelect(Select):
@@ -3758,12 +3797,22 @@ def remove_times_from_availabilities_for_events() -> None:
 
 @tasks.loop(seconds=UPDATE_INTERVAL)
 async def update():
-    for event in client.events:
-        await event.update()
-        for participant in event.participants:
-            for removed_time in participant.removed_times.copy():
-                if removed_time.event_name not in [event.name for event in client.events]:
-                    participant.restore_availability_for_event(removed_time.event_name)
+    for event in client.events.copy():
+        # This looks silly, but it may prevent bugs
+        # such as the Forget button being pressed
+        # while it is looping through the events.
+        if event in client.events:
+            await event.update()
+            for participant in event.participants:
+                for removed_time in participant.removed_times.copy():
+                    if removed_time.event_name not in [event.name for event in client.events]:
+                        participant.restore_availability_for_event(removed_time.event_name)
+    for schedule_again_event in client.schedule_again_events.copy():
+        # This looks silly, but it may prevent bugs
+        # such as the Forget button being pressed
+        # while it is looping through the events.
+        if schedule_again_event in client.schedule_again_events:
+            schedule_again_event.update()
     save()
     if client.exiting:
         update.stop()
