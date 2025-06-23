@@ -2559,6 +2559,7 @@ class AfterButtons(View):
         self.schedule_again_button = self.add_schedule_again_button()
         self.forget_button = self.add_forget_button()
         self.schedule_again_timeout = SCHEDULE_AGAIN_TIMEOUT
+        client.schedule_again_events.append(self)
 
     def update(self):
         self.schedule_again_timeout -= 1
@@ -2598,6 +2599,10 @@ class AfterButtons(View):
 
         async def forget_button_callback(interaction: Interaction):
             logger.info(f"[{self.event}] forget button pressed by {interaction.user.name}")
+            await interaction.response.send_message(content=f"{self.event} forgotten!",
+                                                    silent=True,
+                                                    ephemeral=True,
+                                                    delete_after=3)
             self.remove()
         button.callback = forget_button_callback
         self.add_item(button)
