@@ -308,19 +308,6 @@ client = SchedulerClient(intents=Intents.all())
 
 def handle_signal(signum, frame):
     logger.info(f"Received signal {signum}")
-    for event in client.events:
-        logger.info(f"[{event}] Disabling buttons")
-        if event.availability_buttons is not None:
-            event.availability_buttons.respond_button.disabled = True
-            event.availability_buttons.full_button.disabled = True
-            event.availability_buttons.reuse_button.disabled = True
-            event.availability_buttons.unsub_button.disabled = True
-            event.availability_buttons.cancel_button.disabled = True
-        if event.event_buttons is not None:
-            event.event_buttons.start_end_button.disabled = True
-            event.event_buttons.unsubscribe_button.disabled = True
-            event.event_buttons.reschedule_button.disabled = True
-            event.event_buttons.cancel_button.disabled = True
     client.exiting = True
 
 
@@ -3846,11 +3833,24 @@ async def update():
     save()
     if client.exiting:
         update.stop()
-        logger.info(f"[{event}] Exiting")
-        for event in client.events:
-            logger.info(f"[{event}] Updating messages")
+        logger.info("Exiting")
+        for event in client.events.copy():
+            if event.availability_buttons is not None:
+                event.availability_buttons.respond_button.disabled = True
+                event.availability_buttons.full_button.disabled = True
+                event.availability_buttons.reuse_button.disabled = True
+                event.availability_buttons.unsub_button.disabled = True
+                event.availability_buttons.cancel_button.disabled = True
+            if event.event_buttons is not None:
+                event.event_buttons.start_end_button.disabled = True
+                event.event_buttons.unsubscribe_button.disabled = True
+                event.event_buttons.reschedule_button.disabled = True
+                event.event_buttons.cancel_button.disabled = True
+            logger.info(f"[{event}] Updating message with disabled buttons")
             await event.update_messages()
             time.sleep(1)
+        for schedule_again_event in client.schedule_again_events.copy():
+            await schedule_again_event.remove()
         logger.info(f"[{event}] Closing client")
         await client.close()
 
