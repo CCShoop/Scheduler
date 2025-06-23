@@ -828,7 +828,7 @@ class Event:
             embeds = self.get_event_buttons_message_embeds(end_time)
             buttons = self.get_after_buttons()
             try:
-                await self.event_buttons_message.edit(content=content, embeds=embeds, view=buttons)
+                buttons.message = await self.event_buttons_message.edit(content=content, embeds=embeds, view=buttons)
             except Exception as e:
                 logger.error(f"[{self}] Error in event control end button callback while editing event buttons message: {e}")
             self.event_buttons_message = None
@@ -1538,7 +1538,7 @@ class Event:
         content = self.get_names_string(subscribed_only=True, mention=True)
         embed = self.get_cancel_embed(reason, canceller)
         buttons = self.get_after_buttons()
-        await self.text_channel.send(content=content, embed=embed, view=buttons)
+        buttons.message = await self.text_channel.send(content=content, embed=embed, view=buttons)
         if not self.created:
             await self.delete_availability_message()
         else:
@@ -2559,13 +2559,14 @@ class AfterButtons(View):
         self.schedule_again_button = self.add_schedule_again_button()
         self.forget_button = self.add_forget_button()
         self.schedule_again_timeout = SCHEDULE_AGAIN_TIMEOUT
+        self.message = None
         client.schedule_again_events.append(self)
 
-    def update(self):
+    async def update(self):
         self.schedule_again_timeout -= 1
         if self.schedule_again_timeout == 0:
             logger.info(f"[{self.event}] schedule again timed out, forgetting")
-            self.remove()
+            await self.remove()
 
     def add_schedule_again_button(self):
         """
@@ -2603,18 +2604,23 @@ class AfterButtons(View):
                                                     silent=True,
                                                     ephemeral=True,
                                                     delete_after=3)
-            self.remove()
+            await self.remove()
         button.callback = forget_button_callback
         self.add_item(button)
         return button
 
-    def remove(self):
+    async def remove(self):
         logger.info(f"[{self.event}] forgotten")
         client.schedule_again_events.remove(self)
         self.schedule_again_button.disabled = True
         self.forget_button.disabled = True
         self.clear_items()
         self.stop()
+        if self.message:
+            try:
+                await self.message.edit(view=None)
+            except Exception as e:
+                logger.error(f"[{self}] Error in AfterButtons remove while editing message: {e}")
 
 
 class ExistingGuildEventsSelect(Select):
@@ -3836,7 +3842,7 @@ async def update():
         # such as the Forget button being pressed
         # while it is looping through the events.
         if schedule_again_event in client.schedule_again_events:
-            schedule_again_event.update()
+            await schedule_again_event.update()
     save()
     if client.exiting:
         update.stop()
