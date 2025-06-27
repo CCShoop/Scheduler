@@ -2098,13 +2098,14 @@ class AvailabilityModal(Modal):
         The timezone that the time input is in.
     """
 
-    def __init__(self, event, *args, **kwargs) -> None:
+    def __init__(self, event, participant, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.event = event
+        self.participant = participant
         date = now().strftime('%m/%d/%Y')
         self.timeslot1 = TextInput(label='Timeslot 1', placeholder='8-11, 1pm-3pm (i.e. Available 0800-1100, 1300-1500)', default='', required=False)
         self.timeslot2 = TextInput(label='Timeslot 2', placeholder='15:30-17 (i.e. Available 1530-1700)', default='', required=False)
-        self.note = TextInput(label='Note', placeholder='A note to show with your availability', default='', required=False)
+        self.note = TextInput(label='Note', placeholder='A note to show with your availability', default=self.participant.note, required=False)
         self.date = TextInput(label='Date', placeholder='MM/DD/YYYY', default=date)
         self.timezone = TextInput(label='Timezone', placeholder='AT|AST|ADT|ET|EST|EDT|CT|CST|CDT|MT|MST|MDT|PT|PST|PDT', default='ET')
         self.add_item(self.timeslot1)
@@ -2116,18 +2117,13 @@ class AvailabilityModal(Modal):
     async def on_submit(self, interaction: Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
         # Participant availability
-        participant = self.event.get_participant(interaction.user.name)
-        if participant is None:
-            member = self.event.guild.get_member(interaction.user.id)
-            participant = Participant(member=member)
-            self.event.participants.append(participant)
-        participant.subscribed = True
         avail_string = f'{self.timeslot1.value}, {self.timeslot2.value} {self.timezone.value}'
         try:
             logger.info(f'[{self.event}] Received availability from {interaction.user.name}')
             logger.info(f'[{self.event}] Raw input: "{avail_string}"')
-            participant.set_specific_availability(avail_string, self.date.value, self.note.value)
-            participant.confirm_answered(duration=self.event.duration, latest_date=self.event.latest_date)
+            self.participant.note = self.note.value
+            self.participant.set_specific_availability(avail_string, self.date.value)
+            self.participant.confirm_answered(duration=self.event.duration, latest_date=self.event.latest_date)
             remove_times_from_availabilities_for_events()
             await self.event.create_if_possible()
             if not self.event.created:
@@ -2135,7 +2131,7 @@ class AvailabilityModal(Modal):
                     await other_event.update_messages()
         except Exception as e:
             logger.exception(f"[{self.event}] Error setting specific availability: {e}")
-        embed = get_participants_other_unanswered_events_embed(self.event, participant)
+        embed = get_participants_other_unanswered_events_embed(self.event, self.participant)
         if embed:
             await interaction.followup.send(embed=embed,
                                             ephemeral=True)
@@ -2204,7 +2200,13 @@ class AvailabilityButtons(View):
             am_title = f'Availability for {self.event}'
             if len(am_title) >= 45:
                 am_title = f"{am_title[:41]}..."
+            participant = self.event.get_participant(interaction.user.name)
+            if participant is None:
+                member = self.event.guild.get_member(interaction.user.id)
+                participant = Participant(member=member)
+                self.event.participants.append(participant)
             await interaction.response.send_modal(AvailabilityModal(event=self.event,
+                                                                    participant=participant,
                                                                     title=am_title))
         button.callback = respond_button_callback
         self.add_item(button)

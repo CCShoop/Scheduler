@@ -174,7 +174,7 @@ class Participant:
                  unavailable: bool = False,
                  removed_times: list = None,
                  full_availability_flag: bool = False,
-                 note: str = None) -> None:
+                 note: str = "") -> None:
         self.member = member
         self.availability = availability or []
         self.answered = answered
@@ -280,7 +280,7 @@ class Participant:
                     new_availability.append(timeblock)
             self.availability = new_availability
 
-    def set_specific_availability(self, avail_string: str, date_string: str, note: str) -> None:
+    def set_specific_availability(self, avail_string: str, date_string: str) -> None:
         """
         Sets a specific availability for the user with string parsing.
 
@@ -290,17 +290,7 @@ class Participant:
             The combined string from the Discord TextInputs.
         date_string: :class:`str`
             The date that the availability is for.
-        note: :class:`str`
-            A note to place with availability.
         """
-        if avail_string == '' and note == '':
-            return
-
-        if note != '':
-            self.note = note
-        else:
-            self.note = None
-
         if avail_string == '':
             return
         avail_string = avail_string.lower()
@@ -690,7 +680,7 @@ class Participant:
         self.removed_times.sort(key=lambda rt: rt.start_time)
         removed_index = 0
         response = ''
-        if self.note:
+        if self.note != "":
             response += f"[Note] \"{self.note}\"\n"
         if self.full_availability_flag:
             response += "[Full Availability]\n"
