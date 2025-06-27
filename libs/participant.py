@@ -274,9 +274,9 @@ class Participant:
         else:
             new_availability = []
             for timeblock in self.availability:
-                if timeblock.start_time.day is not day or \
-                        timeblock.start_time.month is not month or \
-                        timeblock.start_time.year is not year:
+                if timeblock.start_time.day != day or \
+                        timeblock.start_time.month != month or \
+                        timeblock.start_time.year != year:
                     new_availability.append(timeblock)
             self.availability = new_availability
 
