@@ -1983,9 +1983,13 @@ class ScheduleAgainModal(Modal):
         self.event_duration = TextInput(label="Duration",
                                         default=str(event.duration_minutes),
                                         placeholder=str(event.duration_minutes)[:100])
+        if event.image_url:
+            image_url = event.image_url
+        else:
+            image_url = ""
         self.event_image_url = TextInput(label="Image URL",
-                                         default=event.image_url,
-                                         placeholder=event.image_url[:100],
+                                         default=image_url,
+                                         placeholder=image_url[:100],
                                          required=False)
         self.event_start_time = TextInput(label="Start Time",
                                           placeholder="ISO 8601 format or a 24-hour time",
