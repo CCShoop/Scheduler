@@ -1973,9 +1973,10 @@ class ScheduleAgainModal(Modal):
         The image url for the reused event.
     """
 
-    def __init__(self, event: Event, *args, **kwargs) -> None:
+    def __init__(self, event: Event, after_buttons: View = None, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.event = event
+        self.after_buttons = after_buttons
         self.event_name = TextInput(label="Name",
                                     default=event.name,
                                     placeholder=event.get_limited_name(100))
@@ -2039,6 +2040,8 @@ class ScheduleAgainModal(Modal):
                                                        silent=True,
                                                        ephemeral=True)
             await followup.delete(delay=3)
+        if self.after_buttons:
+            await self.after_buttons.remove()
 
     async def on_error(self, interaction: Interaction, error: Exception) -> None:
         await interaction.followup.send(content=f"Error scheduling again: {error}",
@@ -2571,6 +2574,7 @@ class AfterButtons(View):
         async def schedule_again_button_callback(interaction: Interaction):
             logger.info(f"[{self.event}] scheduled again by {interaction.user.name}")
             await interaction.response.send_modal(ScheduleAgainModal(event=self.event,
+                                                                     after_buttons=self,
                                                                      title="Schedule Event Again"))
         button.callback = schedule_again_button_callback
         self.add_item(button)
