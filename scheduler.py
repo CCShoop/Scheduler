@@ -441,6 +441,7 @@ class Event:
         self.multi_event: bool = multi_event
         self.timeout_counter: int = timeout_counter
         self.previous_countdown: int = self.timeout_counter
+        self.after_buttons: AfterButtons = None
 
     async def update(self) -> None:
         """
@@ -1509,7 +1510,11 @@ class Event:
         return embed
 
     def get_after_buttons(self) -> View:
-        return AfterButtons(self)
+        if not self.ended:
+            return None
+        if not self.after_buttons:
+            self.after_buttons = AfterButtons(self)
+        return self.after_buttons
 
     async def cancel(self, reason: Optional[str] = "", canceller: Optional[str] = "") -> None:
         """
@@ -2455,12 +2460,9 @@ class EventButtons(View):
             self.remove_item(self.start_end_button)
             self.remove_item(self.unsubscribe_button)
             await self.event.end(f"Event ended by {interaction.user} pressing end button.")
-            after_buttons = AfterButtons(self.event)
-            await interaction.response.send_message(content=f"{self.event} ended and forgotten!",
-                                                    silent=True,
-                                                    ephemeral=True,
-                                                    delete_after=3)
-            await after_buttons.remove()
+            after_buttons = self.event.get_after_buttons()
+            if after_buttons:
+                await after_buttons.remove()
         self.end_and_forget_button.callback = end_and_forget_button_callback
         if self.event.started:
             self.add_item(self.end_and_forget_button)
