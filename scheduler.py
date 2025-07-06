@@ -2394,16 +2394,19 @@ class EventButtons(View):
         self.event = event
         self.start_label = "Start Event"
         self.end_label = "End Event"
+        self.end_and_forget_label = "End and Forget"
         self.unsubscribe_label = "Unsubscribe"
         self.reschedule_label = "Reschedule Event"
         self.cancel_label = "Cancel Event"
         self.start_callback = None
         self.end_callback = None
         self.start_end_button = Button(label=self.start_label, style=ButtonStyle.blurple)
+        self.end_and_forget_button = Button(label=self.end_and_forget_label, style=ButtonStyle.blurple)
         self.unsubscribe_button = Button(label=self.unsubscribe_label, style=ButtonStyle.red)
         self.reschedule_button = Button(label=self.reschedule_label, style=ButtonStyle.red)
         self.cancel_button = Button(label=self.cancel_label, style=ButtonStyle.red)
         self.add_start_end_button()
+        self.add_end_and_forget_button()
         self.add_unsubscribe_button()
         self.add_reschedule_button()
         self.add_cancel_button()
@@ -2440,6 +2443,27 @@ class EventButtons(View):
             self.start_end_button.label = self.end_label
             self.start_end_button.callback = end_button_callback
         self.add_item(self.start_end_button)
+
+    def add_end_and_forget_button(self) -> None:
+        """Sets up the End and Forget button."""
+        async def end_and_forget_button_callback(interaction: Interaction):
+            await interaction.response.defer(ephemeral=True)
+            if interaction.user.id not in [participant.member.id for participant in self.event.participants]:
+                await interaction.followup.send(content="You are not a participant of this event.",
+                                                ephemeral=True)
+                return
+            self.remove_item(self.start_end_button)
+            self.remove_item(self.unsubscribe_button)
+            await self.event.end(f"Event ended by {interaction.user} pressing end button.")
+            after_buttons = AfterButtons(self.event)
+            await interaction.response.send_message(content=f"{self.event} ended and forgotten!",
+                                                    silent=True,
+                                                    ephemeral=True,
+                                                    delete_after=3)
+            await after_buttons.remove()
+        self.end_and_forget_button.callback = end_and_forget_button_callback
+        if self.event.started:
+            self.add_item(self.end_and_forget_button)
 
     def add_unsubscribe_button(self) -> None:
         """
