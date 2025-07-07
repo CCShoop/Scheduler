@@ -3882,6 +3882,7 @@ async def update():
                 event.availability_buttons.cancel_button.disabled = True
             if event.event_buttons is not None:
                 event.event_buttons.start_end_button.disabled = True
+                event.event_buttons.end_and_forget_button.disabled = True
                 event.event_buttons.unsubscribe_button.disabled = True
                 event.event_buttons.reschedule_button.disabled = True
                 event.event_buttons.cancel_button.disabled = True
