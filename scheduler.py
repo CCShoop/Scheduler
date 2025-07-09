@@ -1530,7 +1530,8 @@ class Event:
         content = self.get_names_string(subscribed_only=True, mention=True)
         embed = self.get_cancel_embed(reason, canceller)
         buttons = self.get_after_buttons()
-        buttons.message = await self.text_channel.send(content=content, embed=embed, view=buttons)
+        if buttons:
+            buttons.message = await self.text_channel.send(content=content, embed=embed, view=buttons)
         if not self.created:
             await self.delete_availability_message()
         else:
