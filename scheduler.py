@@ -940,7 +940,9 @@ class Event:
                                 value=f'{end_time.strftime("%A, %m/%d at %H:%M %Z")}',
                                 inline=False)
         if len(self.start_times) > 1:
-            start_times = '\n'.join(repr(self.start_times[1:]))
+            start_times = ""
+            for start_time in self.start_times[1:]:
+                start_times += f"{start_time.strftime('%A, %B %d, %Y at %I:%M %p')}"
             embed.add_field(name="Future Occurrences",
                             value=start_times,
                             inline=False)
@@ -3897,7 +3899,7 @@ async def update():
             time.sleep(1)
         for schedule_again_event in client.schedule_again_events.copy():
             await schedule_again_event.remove()
-        logger.info(f"[{event}] Closing client")
+        logger.info("Closing client")
         await client.close()
 
 
