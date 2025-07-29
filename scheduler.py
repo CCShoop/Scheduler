@@ -2939,8 +2939,8 @@ async def edit_event(event: Event,
         old_name = event.name
         event.name = name
         if old_name == event.name:
-            embed.add_field(name="Name",
-                            value=f"Unchanged; name is already {event.get_limited_name(25)}",
+            embed.add_field(name="Name (Unchanged)",
+                            value="The new name is the same as the old name",
                             inline=False)
         else:
             for other_event in client.events:
@@ -2958,8 +2958,8 @@ async def edit_event(event: Event,
         old_vc = event.voice_channel
         event.voice_channel = voice_channel
         if old_vc == event.voice_channel:
-            embed.add_field(name="Voice Channel",
-                            value=f"Unchanged; voice channel is already {event.voice_channel.mention}",
+            embed.add_field(name="Voice Channel (Unchanged)",
+                            value=f"Voice channel is already {event.voice_channel.mention}",
                             inline=False)
         else:
             if event.created:
@@ -2975,8 +2975,8 @@ async def edit_event(event: Event,
         event.image_url = image_url
         if event.image_url:
             if old_image_url == event.image_url:
-                embed.add_field(name="Image",
-                                value=f"Unchanged; image is already {event.image_url}",
+                embed.add_field(name="Image (Unchanged)",
+                                value=f"image is already {event.image_url}",
                                 inline=False)
             else:
                 if event.created:
@@ -2989,16 +2989,16 @@ async def edit_event(event: Event,
                                 inline=False)
         else:
             event.image_url = old_image_url
-            embed.add_field(name="ERROR: Image",
-                            value="The new image could not be downloaded.\nThe old one was kept.",
+            embed.add_field(name="Image (Unchanged)",
+                            value="The new image could not be downloaded",
                             inline=False)
     # Duration
     if duration is not None:
         old_duration = event.duration
         event.duration = timedelta(minutes=duration)
         if old_duration.total_seconds() == event.duration.total_seconds():
-            embed.add_field(name="Duration",
-                            value=f"Unchanged; duration already {event.duration_string}",
+            embed.add_field(name="Duration (Unchanged)",
+                            value="The new duration is the same as the old duration",
                             inline=False)
         else:
             remove_times_from_availabilities_for_events()
@@ -3008,22 +3008,22 @@ async def edit_event(event: Event,
                             inline=False)
     # Multi event
     if multi_event is not None:
-        if event.created:
-            embed.add_field(name="Multi Event",
-                            value="Unchanged; event already created",
+        if event.started:
+            embed.add_field(name="Multi Event (Unchanged)",
+                            value="Multi Event cannot be changed after starting the event",
                             inline=False)
         else:
             old_multi_event = event.multi_event
             event.multi_event = multi_event
             if old_multi_event == event.multi_event:
-                embed.add_field(name="Multi Event",
-                                value=f"Unchanged; Multi Event already {event.multi_event}",
+                embed.add_field(name="Multi Event (Unchanged)",
+                                value=f"Multi Event already {event.multi_event}",
                                 inline=False)
             else:
                 embed.add_field(name="Multi Event",
                                 value=f"{old_multi_event} -> {event.multi_event}",
                                 inline=False)
-                if event.multi_event and event.created and not event.started:
+                if event.multi_event and event.created:
                     await event.reschedule()
                     await event.create_if_possible()
     if event.image_url:
