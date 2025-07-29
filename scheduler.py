@@ -939,6 +939,11 @@ class Event:
                 embed.add_field(name="Ended",
                                 value=f'{end_time.strftime("%A, %m/%d at %H:%M %Z")}',
                                 inline=False)
+        if len(self.start_times) > 1:
+            start_times = '\n'.join(repr(self.start_times[1:]))
+            embed.add_field(name="Future Occurrences",
+                            value=start_times,
+                            inline=False)
         if self.created:
             embed.timestamp = self.start_times[0]
         if self.scheduler:
