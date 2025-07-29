@@ -667,11 +667,18 @@ class Event:
                 if date_scheduled:
                     logger.debug(f"[{self}] DATE ALREADY SCHEDULED: Not using timeblock {timeblock}")
 
-    async def reschedule(self, rescheduler: Participant) -> None:
+        # Limit to one event if not scheduled as a multi event
+        if not self.multi_event and len(self.start_times) > 1:
+            self.start_times = self.start_times[:1]
+
+    async def reschedule(self, rescheduler: Participant = None) -> None:
         self.reset_timeout_counter()
         for scheduled_event in self.scheduled_events:
             try:
-                await scheduled_event.delete(reason=f"Reschedule button pressed by {rescheduler}.")
+                if rescheduler is not None:
+                    await scheduled_event.delete(reason=f"Event rescheduled by {rescheduler}.")
+                else:
+                    await scheduled_event.delete(reason="Event rescheduled.")
             except Exception as e:
                 logger.error(f"[{self}] Error cancelling guild event to reschedule: {e}")
         self.scheduled_events.clear()
@@ -679,10 +686,14 @@ class Event:
         self.ready_to_create = False
         self.created = False
         self.five_minute_warning_flag = False
-        rescheduler.set_no_availability()
+        if rescheduler is not None:
+            rescheduler.set_no_availability()
         await self.delete_five_minute_warning_message()
         await self.update_event_buttons_message()
-        await self.update_availability_message(rescheduler=rescheduler)
+        if rescheduler is not None:
+            await self.update_availability_message(rescheduler=rescheduler)
+        else:
+            await self.update_availability_message()
         # Restore removed availabilities
         for other_event in client.events:
             other_event.restore_availabilities(self)
@@ -3012,6 +3023,9 @@ async def edit_event(event: Event,
                 embed.add_field(name="Multi Event",
                                 value=f"{old_multi_event} -> {event.multi_event}",
                                 inline=False)
+                if event.multi_event and event.created and not event.started:
+                    await event.reschedule()
+                    await event.create_if_possible()
     if event.image_url:
         embed.set_thumbnail(url=event.image_url)
     return embed
