@@ -114,10 +114,10 @@ def get_time_str_from_minutes(minutes: int) -> str:
     if days != 0:
         output.append(f"{days} days" if days != 1 else "1 day")
     hours = int(minutes // 60 % 24)
-    if hours != 0:
+    if hours != 0 and weeks == 0:
         output.append(f"{hours} hours" if hours != 1 else "1 hour")
     mins = int(minutes % 60)
-    if mins != 0:
+    if mins != 0 and weeks == 0 and days == 0:
         output.append(f"{mins} minutes" if mins != 1 else "1 minute")
     if mins == 0 and hours == 0 and days == 0 and weeks == 0:
         output.append("0 minutes")
