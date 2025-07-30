@@ -825,9 +825,12 @@ class Event:
             end_time: datetime = now()
             content = self.get_event_buttons_message_content(end_time)
             embeds = self.get_event_buttons_message_embeds(end_time)
-            buttons = self.get_after_buttons()
+            buttons = self.get_after_buttons() if not self.multi_event else None
             try:
-                buttons.message = await self.event_buttons_message.edit(content=content, embeds=embeds, view=buttons)
+                if buttons is not None:
+                    buttons.message = await self.event_buttons_message.edit(content=content, embeds=embeds, view=buttons)
+                else:
+                    buttons.message = await self.event_buttons_message.edit(content=content, embeds=embeds)
             except Exception as e:
                 logger.error(f"[{self}] Error in event control end button callback while editing event buttons message: {e}")
             self.event_buttons_message = None
