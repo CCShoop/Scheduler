@@ -1553,6 +1553,8 @@ class Event:
         buttons = self.get_after_buttons()
         if buttons:
             buttons.message = await self.text_channel.send(content=content, embed=embed, view=buttons)
+        else:
+            await self.text_channel.send(content=content, embed=embed)
         if not self.created:
             await self.delete_availability_message()
         else:
