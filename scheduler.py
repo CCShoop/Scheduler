@@ -827,7 +827,7 @@ class Event:
             embeds = self.get_event_buttons_message_embeds(end_time)
             buttons = self.get_after_buttons() if not self.multi_event else None
             try:
-                if buttons is not None:
+                if buttons:
                     buttons.message = await self.event_buttons_message.edit(content=content, embeds=embeds, view=buttons)
                 else:
                     buttons.message = await self.event_buttons_message.edit(content=content, embeds=embeds)
