@@ -313,6 +313,7 @@ def handle_signal(signum, frame):
 
 signal.signal(signal.SIGINT, handle_signal)
 signal.signal(signal.SIGTERM, handle_signal)
+signal.signal(signal.SIGKILL, handle_signal)
 
 
 class Event:
