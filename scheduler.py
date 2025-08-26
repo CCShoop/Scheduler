@@ -847,6 +847,10 @@ class Event:
             if self.event_buttons_message is not None:
                 await self.event_buttons_message.edit(view=None)
                 self.event_buttons_message = None
+            if self.reminder_message is not None:
+                await self.reminder_message.delete()
+                self.reminder_message = None
+            self.reminder_message = False
             self.event_buttons = None
             self.started = False
             self.ended = False
