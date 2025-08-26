@@ -193,8 +193,6 @@ class SchedulerClient(Client):
         The command tree for slash commands.
     loaded_json: :class:`bool`
         Whether or not the client has loaded the json file.
-    exiting: :class:`bool`
-        Whether or not the client has received a shutdown signal.
     server_is_running: :class:`bool`
         Whether or not the client's server is running to accept event scheduling from json packets.
     server: :class:`Server`
@@ -209,7 +207,6 @@ class SchedulerClient(Client):
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
         self.loaded_json = False
-        self.exiting = False
         self.server_is_running = False
         self.server = Server()
         self.server.callback = self.schedule_from_dict
@@ -308,12 +305,33 @@ client = SchedulerClient(intents=Intents.all())
 
 def handle_signal(signum, frame):
     logger.info(f"Received signal {signum}")
-    client.exiting = True
+    update.stop()
+    logger.info("Saving and exiting")
+    save()
+    for event in client.events:
+        if event.availability_buttons is not None:
+            event.availability_buttons.respond_button.disabled = True
+            event.availability_buttons.full_button.disabled = True
+            event.availability_buttons.reuse_button.disabled = True
+            event.availability_buttons.unsub_button.disabled = True
+            event.availability_buttons.cancel_button.disabled = True
+        if event.event_buttons is not None:
+            event.event_buttons.start_end_button.disabled = True
+            event.event_buttons.end_and_forget_button.disabled = True
+            event.event_buttons.unsubscribe_button.disabled = True
+            event.event_buttons.reschedule_button.disabled = True
+            event.event_buttons.cancel_button.disabled = True
+        logger.info(f"[{event}] Updating message with disabled buttons")
+        await event.update_messages()
+    for schedule_again_event in client.schedule_again_events.copy():
+        await schedule_again_event.remove()
+    logger.info("Closing client")
+    await client.close()
+    sys.exit(0)
 
 
 signal.signal(signal.SIGINT, handle_signal)
 signal.signal(signal.SIGTERM, handle_signal)
-signal.signal(signal.SIGKILL, handle_signal)
 
 
 class Event:
@@ -3895,29 +3913,6 @@ async def update():
         if schedule_again_event in client.schedule_again_events:
             await schedule_again_event.update()
     save()
-    if client.exiting:
-        update.stop()
-        logger.info("Exiting")
-        for event in client.events.copy():
-            if event.availability_buttons is not None:
-                event.availability_buttons.respond_button.disabled = True
-                event.availability_buttons.full_button.disabled = True
-                event.availability_buttons.reuse_button.disabled = True
-                event.availability_buttons.unsub_button.disabled = True
-                event.availability_buttons.cancel_button.disabled = True
-            if event.event_buttons is not None:
-                event.event_buttons.start_end_button.disabled = True
-                event.event_buttons.end_and_forget_button.disabled = True
-                event.event_buttons.unsubscribe_button.disabled = True
-                event.event_buttons.reschedule_button.disabled = True
-                event.event_buttons.cancel_button.disabled = True
-            logger.info(f"[{event}] Updating message with disabled buttons")
-            await event.update_messages()
-            time.sleep(1)
-        for schedule_again_event in client.schedule_again_events.copy():
-            await schedule_again_event.remove()
-        logger.info("Closing client")
-        await client.close()
 
 
 client.run(DISCORD_TOKEN)
