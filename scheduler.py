@@ -308,6 +308,11 @@ def handle_signal(signum, frame):
     update.stop()
     logger.info("Saving and exiting")
     save()
+    loop = asyncio.get_running_loop()
+    loop.create_task(cleanup())
+
+
+async def cleanup():
     for event in client.events:
         if event.availability_buttons is not None:
             event.availability_buttons.respond_button.disabled = True
@@ -3528,13 +3533,9 @@ async def schedule(event_name: str,
         raise Exception(f"Sorry, I already have an event called {event_name}. Please choose a different name.")
 
     # Scheduler user
-    logger.debug(f"[{event_name}] Scheduler ID provided is {scheduler_id}")
     scheduler_user = None
     if scheduler_id != 0:
         scheduler_user = guild.get_member(scheduler_id)
-        logger.debug(f"[{event_name}] Got scheduler user: {scheduler_user}")
-    else:
-        logger.debug(f"[{event_name}] Scheduler ID is 0, will use first participant in a second...")
 
     # Participants
     if isinstance(usernames, str):
