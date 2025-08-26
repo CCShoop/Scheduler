@@ -54,7 +54,7 @@ INCLUDE_EXCLUDE: Literal = Literal[INCLUDE, EXCLUDE]
 START_TIME_DELAY = 11
 
 # Time in minutes before an event to send warning
-WARNING_TIME_MINUTES = 6
+REMINDER_TIME_MINUTES = 6
 
 # Time in seconds between updates
 UPDATE_INTERVAL: int = 1
@@ -372,10 +372,10 @@ class Event:
         Indicator of whether or not the first in line guild event has been ended.
     scheduled_events: :class:`list`
         List of guild scheduled event objects.
-    five_minute_warning_flag: :class:`bool`
-        Indicator of whether a five minute warning message has been sent.
-    five_minute_warning_message: :class:`Message`
-        The message object warning participants that an event is starting in 5 minutes.
+    reminder_flag: :class:`bool`
+        Indicator of whether a reminder message has been sent.
+    reminder_message: :class:`Message`
+        The message object warning participants that an event is starting soon.
     timeout_counter: :class:`int`
         The event's time to live. Also used to resend the availability message for visibility.
     """
@@ -400,8 +400,8 @@ class Event:
                  created: Optional[bool] = False,
                  started: Optional[bool] = False,
                  scheduled_events: Optional[list] = None,
-                 five_minute_warning_flag: Optional[bool] = False,
-                 five_minute_warning_message: Optional[Message] = None,
+                 reminder_flag: Optional[bool] = False,
+                 reminder_message: Optional[Message] = None,
                  timeout_counter: Optional[int] = EVENT_TIMEOUT) -> None:
         self.name: str = name
         self.guild: Guild = guild
@@ -434,8 +434,8 @@ class Event:
         self.started: bool = started
         self.ended: bool = False
         self.scheduled_events: list[ScheduledEvent] = scheduled_events if scheduled_events is not None else []
-        self.five_minute_warning_flag: bool = five_minute_warning_flag
-        self.five_minute_warning_message: Message = five_minute_warning_message
+        self.reminder_flag: bool = reminder_flag
+        self.reminder_message: Message = reminder_message
         self.start_times: list[datetime] = start_times or []
         self.duration: timedelta = duration
         self.multi_event: bool = multi_event
@@ -453,7 +453,7 @@ class Event:
             Cancel the event if everyone responded and no common availability was found.
             Ensure start time is in the future and create the event.
         Event Created:
-            Send 5 minute warning when appropriate.
+            Send reminder message when appropriate.
             Start the event if all participants are in the voice channel.
             End the event if nobody is in the voice channel.
         """
@@ -484,11 +484,11 @@ class Event:
                 if self.mins_until_start != self.previous_countdown:
                     self.previous_countdown = self.mins_until_start
                     await self.update_event_buttons_message()
-                # If 5 minute warning has not been sent yet
-                if not self.five_minute_warning_flag:
-                    if now() + timedelta(minutes=WARNING_TIME_MINUTES) == self.start_times[0]:
-                        await self.send_five_minute_warning_message()
-                # 5 minute warning has been sent
+                # If reminder message has not been sent yet
+                if not self.reminder_flag:
+                    if now() + timedelta(minutes=REMINDER_TIME_MINUTES) == self.start_times[0]:
+                        await self.send_reminder_message()
+                # Reminder message has been sent
                 else:
                     await self.start_if_participants_in_vc()
             # Event has started
@@ -528,7 +528,6 @@ class Event:
     async def create_if_possible(self) -> None:
         if not self.created:
             if self.everyone_answered:
-                logger.debug(f"[{self}] Everyone has answered, comparing availabilities")
                 self.compare_availabilities()
                 # Create the event
                 if self.ready_to_create:
@@ -563,16 +562,10 @@ class Event:
         intersected_time_blocks = []
         for block1 in timeblocks1:
             for block2 in timeblocks2:
-                logger.debug(f"[{self}] Checking overlap of {block1} with {block2}")
                 start_time = max(block1.start_time, block2.start_time)
                 end_time = min(block1.end_time, block2.end_time)
-                logger.debug(f"[{self}] start_time: {start_time}")
-                logger.debug(f"[{self}] end_time:   {end_time}")
                 if start_time < end_time:
-                    logger.debug(f"[{self}] Appending timeblock")
                     intersected_time_blocks.append(TimeBlock(start_time, end_time))
-                else:
-                    logger.debug(f"[{self}] Ignoring timeblock")
         return intersected_time_blocks
 
     def compare_availabilities(self) -> None:
@@ -601,14 +594,12 @@ class Event:
         for occupied_timeblock in occupied_timeblocks:
             if occupied_timeblock.overlaps_with(self_timeblock):
                 all_participants_and_vc_available = False
-                logger.debug(f"[{self}] voice channel is unavailable for immediate start")
                 break
 
         # Check if all participants are available in [START_TIME_DELAY] minutes
         for participant in subbed_participants:
             if not participant.is_available_at(current_time, self.duration):
                 all_participants_and_vc_available = False
-                logger.debug(f"[{self}] {participant} is unavailable for immediate start")
                 break
 
         # Make an event if all participants are available when the voice channel is next available,
@@ -616,9 +607,8 @@ class Event:
         dates_scheduled = []
         cur_date = current_time.date()
         if all_participants_and_vc_available:
-            logger.debug(f"[{self}] All participants and voice channel are available for immediate start")
             self.start_times.append(current_time)
-            self.five_minute_warning_flag = True
+            self.reminder_flag = True
             self.ready_to_create = True
             if not self.multi_event:
                 return
@@ -628,13 +618,11 @@ class Event:
 
         # Get all availabilities
         available_timeblocks = [participant.availability for participant in subbed_participants]
-        logger.debug(f"[{self}] Available timeblocks:\n{available_timeblocks}")
 
         # Get intersected availability
         intersected_timeblocks = available_timeblocks[0]
         for timeblocks in available_timeblocks[1:]:
             intersected_timeblocks = self.intersect_time_blocks(intersected_timeblocks, timeblocks)
-        logger.debug(f"[{self}] Intersected timeblocks:\n{intersected_timeblocks}")
 
         # Remove conflicting time blocks
         filtered_timeblocks = []
@@ -646,7 +634,6 @@ class Event:
                     new_blocks.extend(block.subtract(occupied_timeblock))
                 remaining_blocks = new_blocks
             filtered_timeblocks.extend(remaining_blocks)
-        logger.debug(f"[{self}] Filtered timeblocks:\n{filtered_timeblocks}")
 
         # Find valid start times
         for timeblock in filtered_timeblocks:
@@ -657,15 +644,9 @@ class Event:
                     date_scheduled = True
                     break
             if timeblock.duration >= self.duration and not date_scheduled:
-                logger.debug(f"[{self}] Using timeblock {timeblock}")
                 self.start_times.append(timeblock.start_time)
                 self.ready_to_create = True
                 dates_scheduled.append(tb_date)
-            else:
-                if timeblock.duration < self.duration:
-                    logger.debug(f"[{self}] TOO SHORT: Not using timeblock {timeblock}")
-                if date_scheduled:
-                    logger.debug(f"[{self}] DATE ALREADY SCHEDULED: Not using timeblock {timeblock}")
 
         # Limit to one event if not scheduled as a multi event
         if not self.multi_event and len(self.start_times) > 1:
@@ -685,10 +666,10 @@ class Event:
         self.start_times.clear()
         self.ready_to_create = False
         self.created = False
-        self.five_minute_warning_flag = False
+        self.reminder_flag = False
         if rescheduler is not None:
             rescheduler.set_no_availability()
-        await self.delete_five_minute_warning_message()
+        await self.delete_reminder_message()
         await self.update_event_buttons_message()
         if rescheduler is not None:
             await self.update_availability_message(rescheduler=rescheduler)
@@ -699,12 +680,12 @@ class Event:
             other_event.restore_availabilities(self)
             await other_event.update_messages()
 
-    def get_five_minute_warning_message_content(self) -> str:
+    def get_reminder_message_content(self) -> str:
         return self.get_names_string(subscribed_only=True, mention=True, not_in_voice_channel_only=True)
 
-    def get_five_minute_warning_message_embed(self) -> Embed:
-        embed = Embed(title="5 Minute Warning!",
-                      description=f"{self} is scheduled to start in 5 minutes.",
+    def get_reminder_message_embed(self) -> Embed:
+        embed = Embed(title="Event Reminder!",
+                      description=f"{self} is scheduled to start in {get_time_str_from_minutes(self.mins_until_start)}.",
                       color=Color.orange())
         embed.timestamp = self.start_times[0]
         if self.image_url:
@@ -712,36 +693,36 @@ class Event:
         embed.set_footer(text="Courtesy of Event Scheduler", icon_url=client.user.avatar.url)
         return embed
 
-    async def send_five_minute_warning_message(self) -> None:
-        """Sends the 5 minute warning."""
-        if self.five_minute_warning_flag:
+    async def send_reminder_message(self) -> None:
+        """Sends the reminder message."""
+        if self.reminder_flag:
             return
-        self.five_minute_warning_flag = True
-        # No need to send 5 minute warning if all
+        self.reminder_flag = True
+        # No need to send reminder message if all
         # participants are already in the voice channel
         if all(participant.member in self.voice_channel.members for participant in self.participants):
             return
-        content = self.get_five_minute_warning_message_content()
-        embed = self.get_five_minute_warning_message_embed()
-        self.five_minute_warning_message = await self.text_channel.send(content=content,
-                                                                        embed=embed,
-                                                                        reference=self.event_buttons_message)
+        content = self.get_reminder_message_content()
+        embed = self.get_reminder_message_embed()
+        self.reminder_message = await self.text_channel.send(content=content,
+                                                             embed=embed,
+                                                             reference=self.event_buttons_message)
 
-    async def update_five_minute_warning_message(self) -> None:
-        if self.five_minute_warning_message is not None:
-            content = self.get_five_minute_warning_message_content()
+    async def update_reminder_message(self) -> None:
+        if self.reminder_message is not None:
+            content = self.get_reminder_message_content()
             try:
-                await self.five_minute_warning_message.edit(content=content)
+                await self.reminder_message.edit(content=content)
             except DiscordServerError as e:
-                logger.error(f"[{self}] Discord server error while editing five minute warning message: {e}")
+                logger.error(f"[{self}] Discord server error while editing reminder message: {e}")
             except Exception as e:
-                logger.exception(f"[{self}] Error editing five minute warning message: {e}")
+                logger.exception(f"[{self}] Error editing reminder message: {e}")
 
-    async def delete_five_minute_warning_message(self) -> None:
-        """Deletes the 5 minute warning message."""
-        if self.five_minute_warning_message is not None:
-            await self.five_minute_warning_message.delete()
-            self.five_minute_warning_message = None
+    async def delete_reminder_message(self) -> None:
+        """Deletes the reminder message."""
+        if self.reminder_message is not None:
+            await self.reminder_message.delete()
+            self.reminder_message = None
 
     async def start(self, reason: Optional[str] = f"Event started by {client.user}.") -> None:
         """
@@ -753,7 +734,7 @@ class Event:
             Reason to provide for guild event start in audit log.
         """
         logger.info(f"[{self}] Starting, reason: {reason}")
-        await self.delete_five_minute_warning_message()
+        await self.delete_reminder_message()
         try:
             await self.scheduled_events[0].start(reason=reason)
         except Exception as e:
@@ -780,7 +761,6 @@ class Event:
             event.start_times[0] = max(event.start_times[0], buffered_end)
             buffered_end = event.start_times[0] + event.duration + buffer_time
             await event.update_event_buttons_message()
-            logger.debug(f"[{self}] Pushed back start of {event} to {event.start_times[0]}")
         # Disable start buttons of events scheduled for the same channel
         for event in client.events:
             if event == self or not event.created or event.voice_channel != self.voice_channel:
@@ -793,7 +773,7 @@ class Event:
         Starts the event if all of the participants are in the voice channel
         and there are no active events in that voice channel.
         """
-        if now() < self.start_times[0] - timedelta(WARNING_TIME_MINUTES):
+        if now() < self.start_times[0] - timedelta(REMINDER_TIME_MINUTES):
             return
         for event in client.events:
             if event is not self and event.voice_channel is self.voice_channel and event.started:
@@ -801,7 +781,7 @@ class Event:
         if all(participant.member in self.voice_channel.members for participant in self.participants):
             await self.start(f"Event started by {client.user} because all users were in the voice channel.")
         else:
-            await self.update_five_minute_warning_message()
+            await self.update_reminder_message()
 
     async def end(self, reason: Optional[str] = f"Event ended by {client.user}.") -> None:
         """
@@ -825,9 +805,9 @@ class Event:
             end_time: datetime = now()
             content = self.get_event_buttons_message_content(end_time)
             embeds = self.get_event_buttons_message_embeds(end_time)
-            buttons = self.get_after_buttons() if not self.multi_event else None
+            buttons = None if self.has_more_events else self.get_after_buttons()
             try:
-                if buttons:
+                if buttons is not None and buttons.message:
                     buttons.message = await self.event_buttons_message.edit(content=content, embeds=embeds, view=buttons)
                 else:
                     buttons.message = await self.event_buttons_message.edit(content=content, embeds=embeds)
@@ -862,7 +842,7 @@ class Event:
                 self.scheduled_events = self.scheduled_events[1:]
             except Exception as e:
                 logger.error(f"[{self}] Error shifting scheduled_events and start_times: {e}")
-            self.five_minute_warning_flag = bool(now() + timedelta(minutes=WARNING_TIME_MINUTES) < self.start_times[0])
+            self.reminder_flag = bool(now() + timedelta(minutes=REMINDER_TIME_MINUTES) < self.start_times[0])
             if self.event_buttons_message is not None:
                 await self.event_buttons_message.edit(view=None)
                 self.event_buttons_message = None
@@ -1375,7 +1355,7 @@ class Event:
             The content for the event buttons message.
         """
         if not self.started:
-            if self.five_minute_warning_flag:
+            if self.reminder_flag:
                 return self.get_names_string(subscribed_only=True, mention=True, not_in_voice_channel_only=True)
             else:
                 return self.get_names_string(subscribed_only=True, mention=True)
@@ -1559,7 +1539,7 @@ class Event:
             await self.delete_availability_message()
         else:
             await self.delete_event_buttons_message()
-            await self.delete_five_minute_warning_message()
+            await self.delete_reminder_message()
         try:
             if len(self.scheduled_events) > 0:
                 await self.scheduled_events[0].delete(reason=f'Cancel button pressed by {canceller}: {reason}')
@@ -1583,6 +1563,17 @@ class Event:
         if length < 3:
             raise Exception("Invalid name length; must be at least 3.")
         return self.name if len(self.name) <= length else f"{self.name[:length-3]}..."
+
+    @property
+    def has_more_events(self) -> bool:
+        """
+        Returns
+        -------
+        more_events: :class:`bool`
+            True if the event has future occurences.
+            False if this is the last occurence.
+        """
+        return self.multi_event and len(self.scheduled_events) > 1
 
     @property
     def scheduling_status(self) -> str:
@@ -1841,21 +1832,21 @@ class Event:
         except Exception as e:
             logger.warning(f'[{event_name}] error getting guild scheduled events: {e}')
 
-        # 5 minute warning flag
-        event_five_minute_warning_flag = data["five_minute_warning_flag"]
+        # Reminder flag
+        event_reminder_flag = data["reminder_flag"]
 
-        # 5 minute warning message
-        event_five_minute_warning_message_id = data["five_minute_warning_message_id"]
-        event_five_minute_warning_message = None
-        if event_five_minute_warning_message_id != 0:
+        # Reminder message
+        event_reminder_message_id = data["reminder_message_id"]
+        event_reminder_message = None
+        if event_reminder_message_id != 0:
             try:
-                event_five_minute_warning_message = await event_text_channel.fetch_message(event_five_minute_warning_message_id)
+                event_reminder_message = await event_text_channel.fetch_message(event_reminder_message_id)
             except NotFound:
-                event_five_minute_warning_message_id = 0
-                logger.warning(f"[{event_name}] five minute warning message not found")
+                event_reminder_message_id = 0
+                logger.warning(f"[{event_name}] reminder message not found")
             except Exception as e:
-                event_five_minute_warning_message_id = 0
-                logger.error(f"[{event_name}] error retrieving five minute warning message: {e}")
+                event_reminder_message_id = 0
+                logger.error(f"[{event_name}] error retrieving reminder message: {e}")
 
         # Start time
         try:
@@ -1897,8 +1888,8 @@ class Event:
             created=event_created,
             started=event_started,
             scheduled_events=event_scheduled_events,
-            five_minute_warning_flag=event_five_minute_warning_flag,
-            five_minute_warning_message=event_five_minute_warning_message,
+            reminder_flag=event_reminder_flag,
+            reminder_message=event_reminder_message,
             start_times=event_start_times,
             duration=event_duration,
             multi_event=event_multi_event,
@@ -1923,9 +1914,9 @@ class Event:
         except Exception:
             event_buttons_message_id = 0
         try:
-            five_minute_warning_message_id = self.five_minute_warning_message.id
+            reminder_message_id = self.reminder_message.id
         except Exception:
-            five_minute_warning_message_id = 0
+            reminder_message_id = 0
         try:
             scheduler_id = self.scheduler.member.id
         except Exception:
@@ -1968,8 +1959,8 @@ class Event:
             'created': self.created,
             'started': self.started,
             'scheduled_event_ids': scheduled_event_ids,
-            'five_minute_warning_flag': self.five_minute_warning_flag,
-            'five_minute_warning_message_id': five_minute_warning_message_id,
+            'reminder_flag': self.reminder_flag,
+            'reminder_message_id': reminder_message_id,
             'start_times': start_times,
             'duration': self.duration_minutes,
             'multi_event': self.multi_event,
@@ -2514,6 +2505,7 @@ class EventButtons(View):
                                                            silent=True,
                                                            ephemeral=True)
                 await followup.delete(delay=3)
+                await self.event.create_if_possible()
             else:
                 logger.info(f'[{self.event}] {interaction.user.name} resubscribed')
                 participant.subscribed = True
@@ -2656,7 +2648,8 @@ class AfterButtons(View):
                                                     delete_after=3)
             await self.remove()
         button.callback = forget_button_callback
-        self.add_item(button)
+        if self.event.has_more_events():
+            self.add_item(button)
         return button
 
     async def remove(self):
@@ -3637,7 +3630,7 @@ async def edit_command(interaction: Interaction,
         remove_times_from_availabilities_for_events()
         for event in client.events:
             await event.update_messages()
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed)
     # Multiple events in text channel/guild, select one to edit from a dropdown
     else:
         options = [SelectOption(label=event.get_limited_name(25), value=event.get_limited_name(25)) for event in events]
@@ -3660,7 +3653,7 @@ async def edit_command(interaction: Interaction,
                     remove_times_from_availabilities_for_events()
                     for event in client.events:
                         await event.update_messages()
-                    await interaction.followup.send(embed=embed, ephemeral=True)
+                    await interaction.followup.send(embed=embed)
                     return
 
         select.callback = select_callback
