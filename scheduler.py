@@ -2676,7 +2676,7 @@ class AfterButtons(View):
                                                     delete_after=3)
             await self.remove()
         button.callback = forget_button_callback
-        if self.event.has_more_events():
+        if self.event.has_more_events:
             self.add_item(button)
         return button
 
