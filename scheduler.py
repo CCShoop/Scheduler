@@ -1595,6 +1595,17 @@ class Event:
         return self.name if len(self.name) <= length else f"{self.name[:length-3]}..."
 
     @property
+    def has_any_events(self) -> bool:
+        """
+        Returns
+        -------
+        more_events: :class:`bool`
+            True if the event has future occurences.
+            False if this is the last occurence.
+        """
+        return len(self.scheduled_events) >= 1
+
+    @property
     def has_more_events(self) -> bool:
         """
         Returns
@@ -2680,8 +2691,7 @@ class AfterButtons(View):
                                                     delete_after=3)
             await self.remove()
         button.callback = forget_button_callback
-        if self.event.has_more_events:
-            self.add_item(button)
+        self.add_item(button)
         return button
 
     async def remove(self):
