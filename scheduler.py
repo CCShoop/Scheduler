@@ -831,9 +831,11 @@ class Event:
             embeds = self.get_event_buttons_message_embeds(end_time)
             buttons = None if self.has_more_events else self.get_after_buttons()
             try:
-                if buttons is not None and buttons.message:
+                if buttons is not None:
+                    logger.debug(f"[{self}] Editing event buttons message with after buttons")
                     buttons.message = await self.event_buttons_message.edit(content=content, embeds=embeds, view=buttons)
                 else:
+                    logger.debug(f"[{self}] Editing event buttons message to remove view")
                     await self.event_buttons_message.edit(content=content, embeds=embeds, view=None)
             except Exception as e:
                 logger.error(f"[{self}] Error in event control end button callback while editing event buttons message: {e}")
