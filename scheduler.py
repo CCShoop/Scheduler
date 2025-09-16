@@ -2823,16 +2823,15 @@ class ExistingAvailabilitiesSelect(Select):
             name = event_avail.event.get_limited_name(99)
             if name == self.values[0]:
                 logger.info(f'{interaction.user.name} reused availability from {self.values[0]}')
-                self.participant.set_no_availability()
                 self.participant.availability = event_avail.avail.copy()
                 self.participant.full_availability_flag = event_avail.full_flag
                 self.participant.answered = True
                 self.participant.subscribed = True
-                await event_avail.event.update_availability_message()
                 followup = await interaction.followup.send(content="**Availability retrieved!**",
                                                            silent=True,
                                                            ephemeral=True)
                 await followup.delete(delay=3)
+                await event_avail.event.update_availability_message()
                 await event_avail.event.create_if_possible()
                 return
         await interaction.followup.send(content="**Failed to get your availability.**",

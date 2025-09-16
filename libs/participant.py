@@ -260,13 +260,13 @@ class Participant:
         ----------
         day: :class:`int`
             Optional. Current entered day.
-            Default: Current
+            Default: None
         month: :class:`int`
             Optional. Current entered month.
-            Default: Current
+            Default: None
         year: :class:`int`
             Optional. Current entered year.
-            Default: Current
+            Default: None
         """
         self.full_availability_flag = False
         if day is None or month is None or year is None:
