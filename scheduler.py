@@ -834,7 +834,7 @@ class Event:
                 if buttons is not None and buttons.message:
                     buttons.message = await self.event_buttons_message.edit(content=content, embeds=embeds, view=buttons)
                 else:
-                    await self.event_buttons_message.edit(content=content, embeds=embeds)
+                    await self.event_buttons_message.edit(content=content, embeds=embeds, view=None)
             except Exception as e:
                 logger.error(f"[{self}] Error in event control end button callback while editing event buttons message: {e}")
             self.event_buttons_message = None
@@ -2502,6 +2502,7 @@ class EventButtons(View):
                                                 ephemeral=True)
                 return
             self.remove_item(self.start_end_button)
+            self.remove_item(self.end_and_forget_button)
             self.remove_item(self.unsubscribe_button)
             await self.event.end(f"Event ended by {interaction.user} pressing end button.")
             after_buttons = self.event.get_after_buttons()
