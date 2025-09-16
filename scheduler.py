@@ -807,7 +807,7 @@ class Event:
         else:
             await self.update_reminder_message()
 
-    async def end(self, reason: Optional[str] = f"Event ended by {client.user}.") -> None:
+    async def end(self, reason: Optional[str] = f"Event ended by {client.user}.", forget: Optional[bool] = False) -> None:
         """
         Ends the event. If there are more scheduled events in this event, shift them forward and prep them.
 
@@ -829,7 +829,7 @@ class Event:
             end_time: datetime = now()
             content = self.get_event_buttons_message_content(end_time)
             embeds = self.get_event_buttons_message_embeds(end_time)
-            buttons = None if self.has_more_events else self.get_after_buttons()
+            buttons = None if (self.has_more_events or forget) else self.get_after_buttons()
             try:
                 if buttons is not None:
                     logger.debug(f"[{self}] Editing event buttons message with after buttons")
@@ -2517,7 +2517,7 @@ class EventButtons(View):
             self.remove_item(self.start_end_button)
             self.remove_item(self.end_and_forget_button)
             self.remove_item(self.unsubscribe_button)
-            await self.event.end(f"Event ended by {interaction.user} pressing end button.")
+            await self.event.end(f"Event ended by {interaction.user} pressing end button.", forget=True)
             after_buttons = self.event.get_after_buttons()
             if after_buttons:
                 await after_buttons.remove()
