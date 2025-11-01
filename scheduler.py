@@ -72,8 +72,9 @@ FOLLOWUP_DELAY_SECONDS: int = 3
 UPDATES_PER_MINUTE: int = 60 // UPDATE_INTERVAL
 MINUTES_PER_HOUR: int = 60
 HOURS_PER_DAY: int = 24
-EVENT_TIMEOUT_DAYS: int = 3
-EVENT_TIMEOUT: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * HOURS_PER_DAY * EVENT_TIMEOUT_DAYS
+DEFAULT_EVENT_TIMEOUT_DAYS: int = 7
+EVENT_TIMEOUT_CONSTANT_DAYS: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * HOURS_PER_DAY
+DEFAULT_EVENT_TIMEOUT: int = EVENT_TIMEOUT_CONSTANT_DAYS * DEFAULT_EVENT_TIMEOUT_DAYS
 
 SCHEDULE_AGAIN_TIMEOUT_DAYS: int = 8
 SCHEDULE_AGAIN_TIMEOUT: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * HOURS_PER_DAY * SCHEDULE_AGAIN_TIMEOUT_DAYS
@@ -81,7 +82,7 @@ SCHEDULE_AGAIN_TIMEOUT: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * HOURS_PER_
 RESEND_INTERVAL_HOURS: int = 23
 RESEND_INTERVAL: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * RESEND_INTERVAL_HOURS
 
-OFFSET = EVENT_TIMEOUT % RESEND_INTERVAL
+OFFSET = DEFAULT_EVENT_TIMEOUT % RESEND_INTERVAL
 
 
 def now() -> datetime:
@@ -356,51 +357,51 @@ class Event:
         The guild that the event will occur in.
     text_channel: :class:`TextChannel`
         The text channel that event related messages will be sent in.
-    image_url: :class:`str`
+    image_url: :class:`Optional[str]`
         The url to an image to use for the event.
-    scheduler: :class:`Participant`
+    scheduler: :class:`Optional[Participant]`
         The :class:`Participant` who scheduled the event.
-    rescheduler: :class:`Participant`
+    rescheduler: :class:`Optional[Participant]`
         The most recent :class:`Participant` to reschedule the event.
-    participants: :class:`list`
+    participants: :class:`Optional[list]`
         The list of :class:`Participant`s invited to the event.
-    duration: :class:`timedelta`
+    duration: :class:`Optional[timedelta]`
         The duration of the event.
-    multi_event: :class:`bool`
+    multi_event: :class:`Optional[bool]`
         Whether or not this :class:`Event` will have multiple guild events.
-    start_times: :class:`list`
+    start_times: :class:`Optional[list]`
         The list of guild event start times.
-    availability_message_lock: :class:`asyncio.Lock`
+    availability_message_lock: :class:`Optional[asyncio].Lock`
         The lock to prevent the availability message update from being called twice simultaneously.
-    availability_message: :class:`Message`
+    availability_message: :class:`Optional[Message]`
         The message object that is requesting availability from participants.
-    availability_buttons: :class:`AvailabilityButtons`
+    availability_buttons: :class:`Optional[AvailabilityButtons]`
         The availability buttons attached to the availability message that users can
         use to submit their availability, unsubscribe, or cancel.
-    event_buttons_message_lock: :class:`asyncio.Lock`
+    event_buttons_message_lock: :class:`Optional[asyncio].Lock`
         The lock to prevent the event buttons message update from being called twice simultaneously.
-    event_buttons_message: :class:`Message`
+    event_buttons_message: :class:`Optional[Message]`
         The event control buttons message. States the start time, time remaining until
         the start time, when the event was started, when the event was rescheduled,
         the event's duration, and when the event was ended.
-    event_buttons: :class:`EventButtons`
+    event_buttons: :class:`Optional[EventButtons]`
         The event control buttons attached to the event_buttons_message. These allow
         for starting, ending, unsubscribing from, rescheduling, and cancelling the event.
-    ready_to_create: :class:`bool`
+    ready_to_create: :class:`Optional[bool]`
         Indicator of whether (a) start time(s) has been set and the event(s) is(/are) ready to create.
-    created: :class:`bool`
+    created: :class:`Optional[bool]`
         Indicator of whether or not the event has had (a) guild event(s) created.
-    started: :class:`bool`
+    started: :class:`Optional[bool]`
         Indicator of whether or not the first in line guild event has been started.
-    ended: :class:`bool`
+    ended: :class:`Optional[bool]`
         Indicator of whether or not the first in line guild event has been ended.
-    scheduled_events: :class:`list`
+    scheduled_events: :class:`Optional[list]`
         List of guild scheduled event objects.
-    reminder_flag: :class:`bool`
+    reminder_flag: :class:`Optional[bool]`
         Indicator of whether a reminder message has been sent.
-    reminder_message: :class:`Message`
+    reminder_message: :class:`Optional[Message]`
         The message object warning participants that an event is starting soon.
-    timeout_counter: :class:`int`
+    timeout_counter: :class:`Optional[int]`
         The event's time to live. Also used to resend the availability message for visibility.
     """
 
@@ -426,7 +427,7 @@ class Event:
                  scheduled_events: Optional[list] = None,
                  reminder_flag: Optional[bool] = False,
                  reminder_message: Optional[Message] = None,
-                 timeout_counter: Optional[int] = EVENT_TIMEOUT) -> None:
+                 timeout_counter: Optional[int] = DEFAULT_EVENT_TIMEOUT) -> None:
         self.name: str = name
         self.guild: Guild = guild
         self.entity_type: EntityType = EntityType.voice
@@ -1260,7 +1261,7 @@ class Event:
         """
         Resets the timeout counter to the default value.
         """
-        self.timeout_counter = EVENT_TIMEOUT
+        self.timeout_counter = DEFAULT_EVENT_TIMEOUT
 
     def get_start_time_string(self, index: int = 0) -> str:
         """
@@ -1910,7 +1911,7 @@ class Event:
             event_timeout_counter = data["timeout_counter"]
         except Exception as e:
             logger.warning(f'Failed to read timeout counter data: {e}')
-            event_timeout_counter = EVENT_TIMEOUT
+            event_timeout_counter = DEFAULT_EVENT_TIMEOUT
 
         return cls(
             name=event_name,
@@ -2969,7 +2970,8 @@ async def edit_event(event: Event,
                      voice_channel: Optional[VoiceChannel] = None,
                      image_url: Optional[str] = None,
                      duration: Optional[int] = None,
-                     multi_event: Optional[bool] = None) -> None:
+                     multi_event: Optional[bool] = None,
+                     timeout_days: Optional[int] = None) -> None:
     embed = Embed(title=f"{event} Edited",
                   description=f"{event} has been edited.",
                   color=Color.orange())
@@ -3065,6 +3067,22 @@ async def edit_event(event: Event,
                 if event.multi_event and event.created:
                     await event.reschedule()
                     await event.create_if_possible()
+
+    # Timeout
+    if timeout_days is not None:
+        timeout = timeout_days * EVENT_TIMEOUT_CONSTANT_DAYS
+        old_timeout = event.timeout_counter
+        if old_timeout == timeout:
+            embed.add_field(name="Timeout (Unchanged)",
+                            value="The new timeout is the same as the old timeout",
+                            inline=False)
+        else:
+            event.timeout_counter = timeout
+            embed.add_field(name="Timeout",
+                            value=f"{get_time_str_from_minutes(old_timeout // UPDATES_PER_MINUTE)}"
+                            f" -> {get_time_str_from_minutes(timeout // UPDATES_PER_MINUTE)}",
+                            inline=False)
+
     if event.image_url:
         embed.set_thumbnail(url=event.image_url)
     return embed
@@ -3447,8 +3465,9 @@ async def create(event_name: str,
 @app_commands.describe(include_exclude='Whether to include or exclude users specified.')
 @app_commands.describe(usernames='Comma separated usernames of users to include/exclude.')
 @app_commands.describe(roles='Comma separated roles of users to include/exclude.')
-@app_commands.describe(duration=f"Event duration in minutes ({DEFAULT_EVENT_DURATION} minutes default).")
+@app_commands.describe(duration=f'Event duration in minutes ({DEFAULT_EVENT_DURATION} minutes default).')
 @app_commands.describe(multi_event='Create an event on each date that everyone is available.')
+@app_commands.describe(timeout=f'Number of days that the event should wait for responses ({DEFAULT_EVENT_TIMEOUT_DAYS} days default).')
 async def schedule_command(interaction: Interaction,
                            event_name: str,
                            voice_channel: VoiceChannel,
@@ -3457,7 +3476,8 @@ async def schedule_command(interaction: Interaction,
                            usernames: Optional[str] = None,
                            roles: Optional[str] = None,
                            duration: Optional[int] = DEFAULT_EVENT_DURATION,
-                           multi_event: Optional[bool] = False):
+                           multi_event: Optional[bool] = False,
+                           timeout: Optional[int] = DEFAULT_EVENT_TIMEOUT_DAYS):
     await interaction.response.defer(ephemeral=True)
     logger.info(f'[{event_name}] Received event schedule request from {interaction.user.name}')
     try:
@@ -3471,7 +3491,8 @@ async def schedule_command(interaction: Interaction,
                        usernames=usernames,
                        roles=roles,
                        duration=duration,
-                       multi_event=multi_event)
+                       multi_event=multi_event,
+                       timeout_days=timeout)
         followup = await interaction.followup.send(content=f"Scheduling started for {event_name}.",
                                                    silent=True,
                                                    ephemeral=True)
@@ -3492,7 +3513,8 @@ async def schedule(event_name: str,
                    usernames: Optional[str] = None,
                    roles: Optional[str] = None,
                    duration: Optional[int] = DEFAULT_EVENT_DURATION,
-                   multi_event: Optional[bool] = False):
+                   multi_event: Optional[bool] = False,
+                   timeout_days: Optional[int] = DEFAULT_EVENT_TIMEOUT_DAYS):
     """
     Starts the scheduling of an event.
 
@@ -3520,10 +3542,13 @@ async def schedule(event_name: str,
         Comma separated list of roles to include/exclude.
     duration: :class:`Optional[int]`
         The duration of the event in minutes.
-        Default: 30
+        Default: DEFAULT_EVENT_DURATION
     multi_event: :class:`Optional[bool]`
         Whether or not the event is a multi event.
         Default: False
+    timeout_days: :class:'Optional[int]'
+        The number of days to make the event's timeout.
+        Default: DEFAULT_EVENT_TIMEOUT_DAYS
 
     Returns
     -------
@@ -3602,6 +3627,9 @@ async def schedule(event_name: str,
     if image_url == "":
         image_url = None
 
+    # Timeout
+    timeout = timeout_days * EVENT_TIMEOUT_CONSTANT_DAYS
+
     # Make event object
     duration = timedelta(minutes=duration)
     event = Event(name=event_name,
@@ -3612,7 +3640,8 @@ async def schedule(event_name: str,
                   text_channel=text_channel,
                   image_url=image_url,
                   duration=duration,
-                  multi_event=multi_event)
+                  multi_event=multi_event,
+                  timeout_counter=timeout)
     client.events.append(event)
 
     remove_times_from_availabilities_for_events()
@@ -3624,15 +3653,17 @@ async def schedule(event_name: str,
 @client.tree.command(name='edit', description='Edit an existing event.')
 @app_commands.describe(name='Name for the event.')
 @app_commands.describe(voice_channel='Voice channel for the event.')
-@app_commands.describe(image_url="URL to an image for the event.")
-@app_commands.describe(duration=f"Event duration in minutes ({DEFAULT_EVENT_DURATION} minutes default).")
+@app_commands.describe(image_url='URL to an image for the event.')
+@app_commands.describe(duration=f'Event duration in minutes ({DEFAULT_EVENT_DURATION} minutes default).')
 @app_commands.describe(multi_event='Create an event on each date that everyone is available.')
+@app_commands.describe(timeout=f'Number of days that the event should wait for responses ({DEFAULT_EVENT_TIMEOUT_DAYS} days default).')
 async def edit_command(interaction: Interaction,
                        name: Optional[str] = None,
                        voice_channel: Optional[VoiceChannel] = None,
                        image_url: Optional[str] = None,
                        duration: Optional[int] = None,
-                       multi_event: Optional[bool] = None):
+                       multi_event: Optional[bool] = None,
+                       timeout: Optional[int] = None):
     await interaction.response.defer(ephemeral=True, thinking=True)
     same_text_channel_events = []
     same_guild_events = []
@@ -3659,7 +3690,8 @@ async def edit_command(interaction: Interaction,
                                  voice_channel=voice_channel,
                                  image_url=image_url,
                                  duration=duration,
-                                 multi_event=multi_event)
+                                 multi_event=multi_event,
+                                 timeout_days=timeout)
         if interaction.user.avatar:
             embed.set_footer(text=f"Edited by {interaction.user}", icon_url=interaction.user.avatar.url)
         else:
@@ -3682,7 +3714,8 @@ async def edit_command(interaction: Interaction,
                                              voice_channel=voice_channel,
                                              image_url=image_url,
                                              duration=duration,
-                                             multi_event=multi_event)
+                                             multi_event=multi_event,
+                                             timeout_days=timeout)
                     if interaction.user.avatar:
                         embed.set_footer(text=f"Edited by {interaction.user}", icon_url=interaction.user.avatar.url)
                     else:
