@@ -51,7 +51,7 @@ EXCLUDE = 'EXCLUDE'
 INCLUDE_EXCLUDE: Literal = Literal[INCLUDE, EXCLUDE]
 
 # Time in minutes to delay "immediate" start
-START_TIME_DELAY = 11
+START_TIME_DELAY = 30
 
 # Time in minutes before an event start time to send reminder
 REMINDER_TIME_MINUTES = 5
