@@ -1447,6 +1447,7 @@ class Event:
                 self.availability_message = await self.text_channel.send(content=content,
                                                                          embeds=embeds,
                                                                          view=self.availability_buttons)
+                await self.availability_message.pin()
             # Update existing message
             else:
                 try:
@@ -1458,6 +1459,7 @@ class Event:
                     self.availability_message = await self.text_channel.send(content=content,
                                                                              embeds=embeds,
                                                                              view=self.availability_buttons)
+                    await self.availability_message.pin()
                 except Exception as e:
                     logger.error(f'[{self}] Failed to edit availability message: {e}')
 
@@ -1483,6 +1485,7 @@ class Event:
                 self.event_buttons_message = await self.text_channel.send(content=content,
                                                                           embeds=embeds,
                                                                           view=self.event_buttons)
+                await self.event_buttons_message.pin()
             # Edit existing message
             else:
                 try:
@@ -1494,6 +1497,7 @@ class Event:
                     self.event_buttons_message = await self.text_channel.send(content=content,
                                                                               embeds=embeds,
                                                                               view=self.event_buttons)
+                    await self.event_buttons_message.pin()
                 except Exception as e:
                     logger.error(f'[{self}] Failed to edit event buttons message: {e}')
 
@@ -2703,6 +2707,10 @@ class AfterButtons(View):
         self.clear_items()
         self.stop()
         if self.message:
+            try:
+                await self.message.unpin()
+            except Exception as e:
+                logger.error(f"[{self}] Error in AfterButtons remove while unpinning message: {e}")
             try:
                 await self.message.edit(view=None)
             except Exception as e:
