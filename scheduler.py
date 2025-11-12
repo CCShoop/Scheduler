@@ -54,7 +54,7 @@ INCLUDE_EXCLUDE: Literal = Literal[INCLUDE, EXCLUDE]
 START_TIME_DELAY = 30
 
 # Time in minutes before an event start time to send reminder
-REMINDER_TIME_MINUTES = 5
+REMINDER_TIME_MINUTES = 15
 
 # Time in seconds between updates
 UPDATE_INTERVAL: int = 1
