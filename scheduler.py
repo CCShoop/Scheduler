@@ -827,6 +827,7 @@ class Event:
         # Update event buttons message
         self.event_buttons = None
         if self.event_buttons_message is not None:
+            await self.event_buttons_message.unpin()
             end_time: datetime = now()
             content = self.get_event_buttons_message_content(end_time)
             embeds = self.get_event_buttons_message_embeds(end_time)
