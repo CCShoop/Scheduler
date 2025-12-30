@@ -322,11 +322,12 @@ class Participant:
         except Exception:
             raise Exception(f'Invalid year: {year}')
 
+        curYear = datetime.now().astimezone().year
         # Convert YY to YYYY
-        if year == (datetime.now().astimezone().year % 100):
-            year += 2000
+        if year < 100:
+            year += curYear - (curYear % 100)
         # Date validity check
-        if year < datetime.now().astimezone().year:
+        if year < curYear:
             raise Exception(f'Cannot schedule for the past: {year}')
         if month < 1 or month > 12:
             raise Exception(f'Invalid month provided by user: {month}')
@@ -334,7 +335,7 @@ class Participant:
             raise Exception(f'Invalid day provided by user: {day}')
         if month == 1 and day > 31:
             raise Exception(f'Invalid day provided by user: {day}')
-        if isleap(datetime.now().astimezone().year):
+        if isleap(curYear):
             if month == 2 and day > 29:
                 raise Exception(f'Invalid day provided by user: {day}')
         else:
