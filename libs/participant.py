@@ -322,6 +322,9 @@ class Participant:
         except Exception:
             raise Exception(f'Invalid year: {year}')
 
+        # Convert YY to YYYY
+        if year == (datetime.now().astimezone().year % 100):
+            year += 2000
         # Date validity check
         if year < datetime.now().astimezone().year:
             raise Exception(f'Cannot schedule for the past: {year}')
