@@ -2225,7 +2225,7 @@ class AvailabilityModal(Modal):
                     await other_event.update_messages()
         except Exception as e:
             embed = Embed(title="Error",
-                          color=Color.red,
+                          color=Color.red(),
                           description=e.__str__())
             logger.exception(f"[{self.event}] Error setting specific availability: {e}")
         embed = get_participants_other_unanswered_events_embed(self.event, self.participant)
