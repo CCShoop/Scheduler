@@ -50,6 +50,9 @@ INCLUDE = 'INCLUDE'
 EXCLUDE = 'EXCLUDE'
 INCLUDE_EXCLUDE: Literal = Literal[INCLUDE, EXCLUDE]
 
+# Time in minutes to wait before making multi-event events
+AVAILABILITY_COOLDOWN_MINUTES = 1
+
 # Time in minutes to delay "immediate" start
 START_TIME_DELAY = 30
 
@@ -465,6 +468,7 @@ class Event:
         self.duration: timedelta = duration
         self.multi_event: bool = multi_event
         self.timeout_counter: int = timeout_counter
+        self.availability_input_timer = None
         self.previous_countdown: int = self.timeout_counter
         self.after_buttons: AfterButtons = None
 
@@ -497,11 +501,10 @@ class Event:
             if self.timeout_minutes != self.previous_countdown:
                 self.previous_countdown = self.timeout_minutes
                 for participant in self.participants:
-                    participant.confirm_answered(duration=self.duration, latest_date=self.latest_date)
+                    participant.confirm_answered(duration=self.duration)
                 await self.create_if_possible()
                 if not self.created:
                     await self.update_availability_message()
-                time.sleep(1)
         # Event has been created
         else:
             if not self.started:
@@ -556,10 +559,6 @@ class Event:
                 self.compare_availabilities()
                 # Create the event
                 if self.ready_to_create:
-                    # Ensure start time is in the future
-                    if self.start_times[0] <= now():
-                        logger.warning(f"[{self}] Tried to create event in the past, moving to {START_TIME_DELAY} minutes from now")
-                        self.start_times[0] = now() + timedelta(minutes=START_TIME_DELAY)
                     # Create the event
                     await self.make_scheduled_events()
                     remove_times_from_availabilities_for_events()
@@ -891,24 +890,72 @@ class Event:
         """
         Creates a scheduled event for each start time and sets the guild event's image if appropriate.
         """
+        ready_to_create = self.ready_to_create
+        created = self.created
         if len(self.name) > 100:
             self.name = self.name[:99]
-        for start_time in self.start_times:
+        for i, start_time in enumerate(self.start_times):
+            # Ensure start time is in the future
+            if start_time <= now() + timedelta(seconds=5):
+                logger.warning(f"[{self}] Tried to create event in the past, moving to {START_TIME_DELAY} minutes from now")
+                self.start_times[i] = now() + timedelta(minutes=START_TIME_DELAY)
+                start_time = self.start_times[i]
             scheduled_event = await self.guild.create_scheduled_event(name=self.name,
                                                                       description='Bot-generated event',
                                                                       start_time=start_time,
                                                                       entity_type=self.entity_type,
                                                                       channel=self.voice_channel,
                                                                       privacy_level=self.privacy_level)
-            await self.save_image_to_file()
-            if self.has_image_saved:
-                await scheduled_event.edit(image=self.get_image())
-            self.scheduled_events.append(scheduled_event)
-            logger.info(f'[{self}] Created event starting {start_time.strftime("%A, %m/%d/%Y: %H:%M %Z")}')
-            if not self.multi_event:
-                break
-        self.ready_to_create = False
-        self.created = True
+            if scheduled_event is not None:
+                await self.save_image_to_file()
+                if self.has_image_saved:
+                    await scheduled_event.edit(image=self.get_image())
+                self.scheduled_events.append(scheduled_event)
+                logger.info(f'[{self}] Created event starting {start_time.strftime("%A, %m/%d/%Y: %H:%M %Z")}')
+                if not self.multi_event:
+                    break
+                ready_to_create = False
+                created = True
+            else:
+                logger.error(f"[{self}] Failed to create event!")
+        self.ready_to_create = ready_to_create
+        self.created = created
+
+    def start_input_timer(self) -> None:
+        """Starts the availability input timer."""
+        self.availability_input_timer = datetime.now().astimezone()
+
+    def stop_input_timer(self) -> None:
+        """Stops the availability input timer."""
+        self.availability_input_timer = None
+
+    @property
+    def input_timer_running(self) -> bool:
+        """
+        Checks if the availability input timer is running.
+
+        Returns
+        -------
+        running: :class:`bool`
+            True if the timer is running, otherwise False.
+        """
+        return self.availability_input_timer is not None
+
+    @property
+    def input_timer_elapsed(self) -> bool:
+        """
+        Checks if the availability input timer has expired.
+
+        Returns
+        -------
+        elapsed: :class:`bool`
+            True if the timer has elapsed, otherwise False.
+        """
+        if self.input_timer_running:
+            if (self.availability_input_timer + timedelta(minutes=AVAILABILITY_COOLDOWN_MINUTES)) <= datetime.now().astimezone():
+                self.stop_input_timer()
+                return True
+        return False
 
     def get_general_embed(self, end_time: Optional[datetime] = None) -> Embed:
         """
@@ -965,14 +1012,14 @@ class Event:
                 embed.add_field(name="Ended",
                                 value=f'{end_time.strftime("%A, %m/%d at %H:%M %Z")}',
                                 inline=False)
-        if len(self.start_times) > 1:
-            start_times = ""
-            for start_time in self.start_times[1:]:
-                start_times += f"{start_time.strftime('%A, %B %d, %Y at %I:%M %p')}"
-            embed.add_field(name="Future Occurrences",
-                            value=start_times,
-                            inline=False)
         if self.created:
+            if len(self.start_times) > 0:
+                start_times = ""
+                for start_time in self.start_times:
+                    start_times += f"{start_time.strftime('%A, %B %d, %Y at %I:%M %p')}\n"
+                embed.add_field(name="Occurrences",
+                                value=start_times,
+                                inline=False)
             embed.timestamp = self.start_times[0]
         if self.scheduler:
             if self.scheduler.member.avatar:
@@ -1294,13 +1341,13 @@ class Event:
         """
         output = ""
         if not self.everyone_answered:
-            latest_date = self.latest_date
-            if latest_date and now().date() < latest_date:
-                output += f'\n\n**Input availability with start time on latest availability date: {latest_date.strftime("%m/%d")}**'
             mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
-            output += f'\n\nWaiting for a response from:{mentions}'
+            if mentions.strip() == "" and self.multi_event and self.input_timer_running:
+                output += f"\n\nWaiting {AVAILABILITY_COOLDOWN_MINUTES} minute(s) for additional multi event availabilities."
+            else:
+                output += f"\n\nWaiting for a response from:{mentions}"
         else:
-            output += '\n\nEveryone has responded.'
+            output += "\n\nEveryone has responded."
         return output
 
     def get_availability_request_embeds(self) -> list[Embed]:
@@ -1353,8 +1400,7 @@ class Event:
             return
         for participant in self.participants:
             participant.restore_availability_for_event(event.name)
-            participant.confirm_answered(duration=self.duration,
-                                         latest_date=self.latest_date)
+            participant.confirm_answered(duration=self.duration)
 
     def update_availabilities_to(self, participant: Participant) -> None:
         """
@@ -1662,6 +1708,8 @@ class Event:
             return "Creating event"
         if self.everyone_answered:
             return "No common availability"
+        elif self.multi_event and self.input_timer_running:
+            return "Waiting for additional availabilities"
         return "Awaiting availability"
 
     @property
@@ -1676,10 +1724,13 @@ class Event:
         False
             If at least one participant has not yet responded.
         """
-        latest_date = self.latest_date
+        if self.multi_event:
+            if self.input_timer_running:
+                if not self.input_timer_elapsed:
+                    return False
         for participant in self.participants:
             if participant.subscribed:
-                participant.confirm_answered(duration=self.duration, latest_date=latest_date)
+                participant.confirm_answered(duration=self.duration)
                 if not participant.answered:
                     return False
         return True
@@ -1713,26 +1764,6 @@ class Event:
             if participant.subscribed and participant.answered:
                 responded += 1
         return responded
-
-    @property
-    def latest_date(self):
-        """
-        Gets the latest date of all start times in all participants' availabilities.
-
-        Returns
-        -------
-        latest_date: :class:`datetime.date`
-            The latest date of all start times in all participants' availabilities.
-            None if this event is not a multi-event.
-        """
-        if not self.multi_event:
-            return None
-        current_time = now() + timedelta(minutes=START_TIME_DELAY)
-        latest_date = current_time.date()
-        for participant in self.participants:
-            for timeblock in participant.availability:
-                latest_date = max((timeblock.start_time - timedelta(hours=HOURS_PAST_MIDNIGHT_CUTOFF)).date(), latest_date)
-        return latest_date
 
     @property
     def location_has_active_event(self) -> bool:
@@ -2215,21 +2246,18 @@ class AvailabilityModal(Modal):
         avail_string = f'{self.timeslot1.value}, {self.timeslot2.value} {self.timezone.value}'
         try:
             logger.info(f'[{self.event}] Received availability from {interaction.user.name}')
-            logger.info(f'[{self.event}] Raw input: "{avail_string}"')
             self.participant.note = self.note.value
             self.participant.set_specific_availability(avail_string, self.date.value)
-            self.participant.confirm_answered(duration=self.event.duration, latest_date=self.event.latest_date)
+            self.participant.confirm_answered(duration=self.event.duration)
+            self.event.start_input_timer()
             embed = get_participants_other_unanswered_events_embed(self.event, self.participant)
             remove_times_from_availabilities_for_events()
-            await self.event.create_if_possible()
-            if not self.event.created:
-                for other_event in client.events:
-                    await other_event.update_messages()
+            await self.event.update_availability_message()
         except Exception as e:
             embed = Embed(title="Error",
                           color=Color.red(),
                           description=e.__str__())
-            logger.exception(f"[{self.event}] Error setting specific availability: {e}")
+            logger.info(f"[{self.event}] Failure setting specific availability: {e}")
         if embed is not None:
             await interaction.followup.send(embed=embed,
                                             ephemeral=True)
@@ -2332,11 +2360,11 @@ class AvailabilityButtons(View):
             # Participant has full availability
             if not participant.full_availability_flag:
                 logger.info(f'[{self.event}] {participant} selected full availability')
+                self.event.start_input_timer()
                 participant.set_full_availability()
                 self.event.update_availabilities_to(participant)
                 remove_times_from_availabilities_for_events()
                 await self.event.update_availability_message()
-                await self.event.create_if_possible()
             # Participant no longer has full availability
             else:
                 logger.info(f'[{self.event}] {participant} deselected full availability')
@@ -2421,8 +2449,7 @@ class AvailabilityButtons(View):
             else:
                 logger.info(f'[{self.event}] {interaction.user.name} resubscribed')
                 participant.subscribed = True
-                participant.confirm_answered(duration=self.event.duration,
-                                             latest_date=self.event.latest_date)
+                participant.confirm_answered(duration=self.event.duration)
                 followup = await interaction.followup.send(content=f"You have been resubscribed to {self.event}.",
                                                            silent=True,
                                                            ephemeral=True)
@@ -2606,8 +2633,7 @@ class EventButtons(View):
             await interaction.response.defer(ephemeral=True)
             logger.info(f'[{self.event}] {interaction.user} rescheduled by button press')
             for participant in self.event.participants:
-                participant.confirm_answered(duration=self.event.duration,
-                                             latest_date=self.event.latest_date)
+                participant.confirm_answered(duration=self.event.duration)
             participant = self.event.get_participant(interaction.user.id)
             participant.set_no_availability()
             participant.subscribed = True

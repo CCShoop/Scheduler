@@ -90,7 +90,10 @@ class TimeBlock():
         }
 
     def __repr__(self):
-        return f'{self.start_time.strftime("%a, %m/%d %H:%M")} - {self.end_time.strftime("%H:%M")}'
+        if self.start_time.year == datetime.now().astimezone().year:
+            return f'{self.start_time.strftime("%a, %m/%d %H:%M")} - {self.end_time.strftime("%H:%M")}'
+        else:
+            return f'{self.start_time.strftime("%a, %m/%d/%y %H:%M")} - {self.end_time.strftime("%H:%M")}'
 
 
 class RemovedTime:
@@ -619,7 +622,7 @@ class Participant:
         self.removed_times = new_removed_times
         self.update_removed_times()
 
-    def confirm_answered(self, duration: timedelta = timedelta(minutes=30), latest_date=None) -> None:
+    def confirm_answered(self, duration: timedelta = timedelta(minutes=30)) -> None:
         """
         Confirms that the participant's availability is valid.
 
@@ -628,8 +631,6 @@ class Participant:
         duration: :class:`timedelta`
             Optional. Duration of the event in minutes.
             Default: 30 minutes
-        latest_date: :class:`datetime.date`
-            Optional: Latest date from other participants in the event.
         """
         self.update_removed_times()
         cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
@@ -640,8 +641,6 @@ class Participant:
                     tb.start_time = max(tb.start_time, cur_time)
                     new_availability.append(tb)
             self.availability = new_availability
-        if self.availability and latest_date is not None:
-            self.answered = self.availability[-1].start_time.date() >= latest_date
         if not self.availability:
             self.answered = False
             self.full_availability_flag = False
