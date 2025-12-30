@@ -2210,6 +2210,7 @@ class AvailabilityModal(Modal):
 
     async def on_submit(self, interaction: Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
+        embed = None
         # Participant availability
         avail_string = f'{self.timeslot1.value}, {self.timeslot2.value} {self.timezone.value}'
         try:
@@ -2218,6 +2219,7 @@ class AvailabilityModal(Modal):
             self.participant.note = self.note.value
             self.participant.set_specific_availability(avail_string, self.date.value)
             self.participant.confirm_answered(duration=self.event.duration, latest_date=self.event.latest_date)
+            embed = get_participants_other_unanswered_events_embed(self.event, self.participant)
             remove_times_from_availabilities_for_events()
             await self.event.create_if_possible()
             if not self.event.created:
@@ -2228,8 +2230,7 @@ class AvailabilityModal(Modal):
                           color=Color.red(),
                           description=e.__str__())
             logger.exception(f"[{self.event}] Error setting specific availability: {e}")
-        embed = get_participants_other_unanswered_events_embed(self.event, self.participant)
-        if embed:
+        if embed is not None:
             await interaction.followup.send(embed=embed,
                                             ephemeral=True)
 
