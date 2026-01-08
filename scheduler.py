@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from typing import Optional
 from datetime import datetime, timedelta
 from discord import (app_commands, Interaction, Intents, Client, Embed, Color, Activity,
-                     ButtonStyle, EntityType, TextChannel, ActivityType, Status,
+                     ButtonStyle, EntityType, TextChannel, ActivityType, Status, EventStatus,
                      VoiceChannel, Message, SelectOption, ScheduledEvent, Member,
                      Guild, PrivacyLevel, User, utils, NotFound, DiscordServerError)
 from discord.ui import View, Button, Modal, TextInput, Select
@@ -508,6 +508,11 @@ class Event:
         # Event has been created
         else:
             if not self.started:
+                # Recreate the event if it was manually cancelled
+                if self.scheduled_events[0].status == EventStatus.cancelled:
+                    self.created = False
+                    self.ready_to_create = True
+                    self.create_if_possible()
                 # Update event buttons message once per minute
                 if self.mins_until_start != self.previous_countdown:
                     self.previous_countdown = self.mins_until_start
@@ -762,7 +767,8 @@ class Event:
         try:
             await self.scheduled_events[0].start(reason=reason)
         except Exception as e:
-            logger.exception(f"[{self}] Failed to start: {e}")
+            logger.error(f"[{self}] Failed to start: {e}")
+            return
         try:
             self.start_times[0] = now()
         except Exception as e:
