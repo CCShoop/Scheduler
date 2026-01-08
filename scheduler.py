@@ -912,8 +912,6 @@ class Event:
                     await scheduled_event.edit(image=self.get_image())
                 self.scheduled_events.append(scheduled_event)
                 logger.info(f'[{self}] Created event starting {start_time.strftime("%A, %m/%d/%Y: %H:%M %Z")}')
-                if not self.multi_event:
-                    break
                 ready_to_create = False
                 created = True
             else:
