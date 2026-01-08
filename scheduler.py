@@ -512,7 +512,12 @@ class Event:
                 if self.scheduled_events[0].status == EventStatus.cancelled:
                     self.created = False
                     self.ready_to_create = True
-                    self.create_if_possible()
+                    await self.create_if_possible()
+                elif self.scheduled_events[0].status == EventStatus.active:
+                    await self.start()
+                elif self.scheduled_events[0].status == EventStatus.ended:
+                    await self.start()
+                    await self.end()
                 # Update event buttons message once per minute
                 if self.mins_until_start != self.previous_countdown:
                     self.previous_countdown = self.mins_until_start
@@ -526,6 +531,10 @@ class Event:
                     await self.start_if_participants_in_vc()
             # Event has started
             else:
+                if self.scheduled_events[0].status == EventStatus.cancelled:
+                    await self.cancel()
+                elif self.scheduled_events[0].status == EventStatus.ended:
+                    await self.end()
                 await self.end_if_participants_leave_vc()
                 return
 
@@ -875,7 +884,7 @@ class Event:
                 self.scheduled_events = self.scheduled_events[1:]
             except Exception as e:
                 logger.error(f"[{self}] Error shifting scheduled_events and start_times: {e}")
-            self.reminder_flag = bool(now() + timedelta(minutes=REMINDER_TIME_MINUTES) < self.start_times[0])
+            self.reminder_flag = bool((now() + timedelta(minutes=REMINDER_TIME_MINUTES)) < self.start_times[0])
             if self.event_buttons_message is not None:
                 await self.event_buttons_message.edit(view=None)
                 self.event_buttons_message = None
@@ -896,8 +905,6 @@ class Event:
         """
         Creates a scheduled event for each start time and sets the guild event's image if appropriate.
         """
-        ready_to_create = self.ready_to_create
-        created = self.created
         if len(self.name) > 100:
             self.name = self.name[:99]
         for i, start_time in enumerate(self.start_times):
@@ -918,12 +925,11 @@ class Event:
                     await scheduled_event.edit(image=self.get_image())
                 self.scheduled_events.append(scheduled_event)
                 logger.info(f'[{self}] Created event starting {start_time.strftime("%A, %m/%d/%Y: %H:%M %Z")}')
-                ready_to_create = False
-                created = True
+                self.ready_to_create = False
+                self.created = True
             else:
                 logger.error(f"[{self}] Failed to create event!")
-        self.ready_to_create = ready_to_create
-        self.created = created
+        self.reminder_flag = bool((now() + timedelta(minutes=REMINDER_TIME_MINUTES)) < self.start_times[0])
 
     def start_input_timer(self) -> None:
         """Starts the availability input timer."""
