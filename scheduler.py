@@ -3515,8 +3515,8 @@ async def create(event_name: str,
                   image_url=image_url,
                   duration=duration,
                   start_times=start_times)
-    await event.make_scheduled_events()
     client.events.append(event)
+    await event.make_scheduled_events()
 
     remove_times_from_availabilities_for_events()
     await event.update_event_buttons_message()
