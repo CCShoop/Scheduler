@@ -1252,7 +1252,7 @@ class Event:
                         participants.append(participant)
         return participants
 
-    def other_shared_participants(self, event) -> list[Participant]:
+    def other_shared_participants(self, event, subscribed_only: Optional[bool] = False) -> list[Participant]:
         """
         Gets the list of the other event's participants shared with this event.
 
@@ -1260,6 +1260,8 @@ class Event:
         ---------
         event: :class:`Event`
             The event to compare participants with.
+        subscribed_only: :class:`Optional[bool]`
+            Default: False. Whether or not to only return subscribed participants.
 
         Returns
         -------
@@ -1272,7 +1274,8 @@ class Event:
             for participant in self.participants:
                 for other_participant in event.participants:
                     if participant.member.id == other_participant.member.id:
-                        other_participants.append(other_participant)
+                        if (subscribed_only and other_participant.subscribed) or not subscribed_only:
+                            other_participants.append(other_participant)
                         break
         return other_participants
 
@@ -4027,7 +4030,7 @@ def remove_times_from_availabilities_for_events() -> None:
         for other_event in client.events:
             if other_event == event:
                 continue
-            for shared_participant in event.other_shared_participants(other_event):
+            for shared_participant in event.other_shared_participants(other_event, True):
                 shared_participant.remove_availability_for_event(event_name=event.name,
                                                                  event_timeblocks=event.timeblocks)
 
