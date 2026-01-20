@@ -2333,6 +2333,8 @@ class AvailabilityButtons(View):
         button = Button(label=self.respond_label, style=ButtonStyle.green)
 
         async def respond_button_callback(interaction: Interaction):
+            if self.event not in client.events:
+                client.events.append(self.event)
             am_title = f'Availability for {self.event}'
             if len(am_title) >= 45:
                 am_title = f"{am_title[:41]}..."
@@ -2360,6 +2362,8 @@ class AvailabilityButtons(View):
         button = Button(label=self.full_label, style=ButtonStyle.green)
 
         async def full_button_callback(interaction: Interaction):
+            if self.event not in client.events:
+                client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
             participant = self.event.get_participant(interaction.user.name)
             if participant is None:
@@ -2400,6 +2404,8 @@ class AvailabilityButtons(View):
         button = Button(label=self.reuse_label, style=ButtonStyle.blurple)
 
         async def reuse_button_callback(interaction: Interaction):
+            if self.event not in client.events:
+                client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
             participant = self.event.get_participant(interaction.user.name)
             if participant is None:
@@ -2442,6 +2448,8 @@ class AvailabilityButtons(View):
         button = Button(label=self.unsub_label, style=ButtonStyle.red)
 
         async def unsub_button_callback(interaction: Interaction):
+            if self.event not in client.events:
+                client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
             if interaction.user.id not in [participant.member.id for participant in self.event.participants]:
                 await interaction.followup.send(content="You are already not part of this event!",
@@ -2481,6 +2489,8 @@ class AvailabilityButtons(View):
         button = Button(label=self.cancel_label, style=ButtonStyle.red)
 
         async def cancel_button_callback(interaction: Interaction):
+            if self.event not in client.events:
+                client.events.append(self.event)
             title = f"Cancel {self.event.get_limited_name(38)}"
             await interaction.response.send_modal(CancelModal(event=self.event,
                                                               title=title))
@@ -2542,6 +2552,8 @@ class EventButtons(View):
     def add_start_end_button(self) -> None:
         """Sets up the Start/End button."""
         async def end_button_callback(interaction: Interaction):
+            if self.event not in client.events:
+                client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
             if interaction.user.id not in [participant.member.id for participant in self.event.participants]:
                 await interaction.followup.send(content="You are not a participant of this event.",
@@ -2554,6 +2566,8 @@ class EventButtons(View):
         self.end_callback = end_button_callback
 
         async def start_button_callback(interaction: Interaction):
+            if self.event not in client.events:
+                client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
             self.event.add_user_as_participant(interaction.user)
             if interaction.user.id not in [member.id for member in self.event.voice_channel.members]:
@@ -2576,6 +2590,8 @@ class EventButtons(View):
     def add_end_and_forget_button(self) -> None:
         """Sets up the End and Forget button."""
         async def end_and_forget_button_callback(interaction: Interaction):
+            if self.event not in client.events:
+                client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
             if interaction.user.id not in [participant.member.id for participant in self.event.participants]:
                 await interaction.followup.send(content="You are not a participant of this event.",
@@ -2602,6 +2618,8 @@ class EventButtons(View):
             The Unsubscribe button.
         """
         async def unsubscribe_button_callback(interaction: Interaction):
+            if self.event not in client.events:
+                client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
             if interaction.user.id not in [participant.member.id for participant in self.event.participants]:
                 await interaction.followup.send(content="You are already not part of this event.",
@@ -2640,6 +2658,8 @@ class EventButtons(View):
             return
 
         async def reschedule_button_callback(interaction: Interaction):
+            if self.event not in client.events:
+                client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
             logger.info(f'[{self.event}] {interaction.user} rescheduled by button press')
             for participant in self.event.participants:
@@ -2665,6 +2685,8 @@ class EventButtons(View):
             return
 
         async def cancel_button_callback(interaction: Interaction):
+            if self.event not in client.events:
+                client.events.append(self.event)
             if interaction.user.id not in [participant.member.id for participant in self.event.participants]:
                 await interaction.response.send_message(content="You are not a participant of this event!",
                                                         ephemeral=True)
