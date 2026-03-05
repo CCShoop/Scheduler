@@ -1008,14 +1008,16 @@ class Event:
         else:
             if end_time is None and not self.started:
                 if self.mins_until_start > 0:
-                    embed.add_field(name="Starting in",
-                                    value=f"{print_time_until(self.start_times[0])}",
+                    embed.add_field(name=f"Starts {print_time_until(self.start_times[0])}",
+                                    value="",
                                     inline=False)
                 elif self.mins_until_start == 0:
-                    embed.add_field(name="Starting soon", value="", inline=False)
+                    embed.add_field(name="Starting soon",
+                                    value="",
+                                    inline=False)
                 else:
-                    embed.add_field(name="Overdue by",
-                                    value=f"{print_time_until(self.start_times[0])}",
+                    embed.add_field(name=f"Start time was {print_time_until(self.start_times[0])}",
+                                    value="",
                                     inline=False)
             # Event is in progress
             elif end_time is None and self.started:
