@@ -3245,9 +3245,12 @@ async def on_message(message: Message):
     # Owner requests a recount
     if message.author.id == OWNER_ID and 'scheduler: check' in message.content:
         content = ""
-        for event in client.events:
-            await event.create_if_possible()
-            content += f"Checked {event}\n"
+        if len(client.events) > 0:
+            for event in client.events:
+                await event.create_if_possible()
+                content += f"Checked {event}\n"
+        else:
+            content = "No events found."
         await message.channel.send(content=content, reference=message)
 
     # Owner toggles debug
