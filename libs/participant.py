@@ -16,6 +16,10 @@ def print_date_time(time: datetime) -> str:
     return f"<t:{int(time.timestamp())}:F>"
 
 
+def print_date_time_abbreviated(time: datetime) -> str:
+    return f"<t:{int(time.timestamp())}>"
+
+
 class TimeBlock():
     """
     Represents a block of time.
@@ -98,7 +102,7 @@ class TimeBlock():
         }
 
     def __repr__(self):
-        return f'{print_date_time(self.start_time)} - {print_date_time(self.end_time)}'
+        return f'{print_date_time_abbreviated(self.start_time)} - {print_date_time_abbreviated(self.end_time)}'
 
 
 class RemovedTime:
