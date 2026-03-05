@@ -998,9 +998,10 @@ class Event:
         embed.add_field(name="Location",
                         value=f"{self.text_channel.mention}\n{self.voice_channel.mention}",
                         inline=False)
-        embed.add_field(name="Multi Event",
-                        value=f"{self.multi_event}",
-                        inline=False)
+        if self.multi_event:
+            embed.add_field(name="Multi Event",
+                            value="",
+                            inline=False)
         if not self.created:
             embed.add_field(name="Times out in",
                             value=f"{get_time_str_from_minutes(self.timeout_minutes)}",
