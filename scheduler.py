@@ -486,6 +486,11 @@ class Event:
             Start the event if all participants are in the voice channel.
             End the event if nobody is in the voice channel.
         """
+        # Cancel the event if the text channel has vaporized
+        text_channel = self.guild.get_channel(self.text_channel.id)
+        if not text_channel:
+            await self.remove()
+            return
         # Remove participants who are not longer in the text channel
         keep_participants = []
         for participant in self.participants:
@@ -532,10 +537,11 @@ class Event:
             # Event has started
             else:
                 if self.scheduled_events[0].status == EventStatus.cancelled:
-                    await self.cancel()
+                    await self.cancel(reason="Event cancelled manually.")
                 elif self.scheduled_events[0].status == EventStatus.ended:
-                    await self.end()
-                await self.end_if_participants_leave_vc()
+                    await self.end(reason="Event ended manually.")
+                else:
+                    await self.end_if_participants_leave_vc()
                 return
 
     async def update_timeout(self) -> bool:
@@ -1854,6 +1860,8 @@ class Event:
 
         # Text channel
         event_text_channel = event_guild.get_channel(data["text_channel_id"])
+        if not event_text_channel:
+            raise Exception(f'[{event_name}] Could not find text channel, discarding event')
 
         # Voice channel
         event_voice_channel = utils.get(event_guild.voice_channels, id=data["voice_channel_id"])
