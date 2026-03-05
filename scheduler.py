@@ -19,7 +19,7 @@ from discord.ui import View, Button, Modal, TextInput, Select
 from discord.ext import tasks
 
 from libs.persistence import Persistence
-from libs.participant import Participant, TimeBlock, HOURS_PAST_MIDNIGHT_CUTOFF
+from libs.participant import Participant, TimeBlock, print_date_time, print_time_until
 from libs.help import HELP_EMBEDS
 from server import Server
 
@@ -1009,13 +1009,13 @@ class Event:
             if end_time is None and not self.started:
                 if self.mins_until_start > 0:
                     embed.add_field(name="Starting in",
-                                    value=f"{get_time_str_from_minutes(self.mins_until_start)}",
+                                    value=f"{print_time_until(self.start_times[0])}",
                                     inline=False)
                 elif self.mins_until_start == 0:
                     embed.add_field(name="Starting soon", value="", inline=False)
                 else:
                     embed.add_field(name="Overdue by",
-                                    value=f"{get_time_str_from_minutes(self.mins_until_start)}",
+                                    value=f"{print_time_until(self.start_times[0])}",
                                     inline=False)
             # Event is in progress
             elif end_time is None and self.started:
@@ -1026,13 +1026,13 @@ class Event:
             # Event has ended
             else:
                 embed.add_field(name="Ended",
-                                value=f'{end_time.strftime("%A, %m/%d at %H:%M %Z")}',
+                                value=f'{print_date_time(end_time)}',
                                 inline=False)
         if self.created:
             if len(self.start_times) > 0:
                 start_times = ""
                 for start_time in self.start_times:
-                    start_times += f"{start_time.strftime('%A, %B %d, %Y at %I:%M %p')}\n"
+                    start_times += f"{print_date_time(start_time)}\n"
                 embed.add_field(name="Occurrences",
                                 value=start_times,
                                 inline=False)
@@ -1346,7 +1346,7 @@ class Event:
             The string for the start time.
         """
         if index >= 0 and len(self.start_times) > index:
-            return f'{self.start_times[index].strftime("%A, %m/%d at %H:%M %Z")}'
+            return f'{print_date_time(self.start_times[index])}'
         return ''
 
     def get_availability_request_content(self) -> str:

@@ -8,6 +8,14 @@ from calendar import isleap
 HOURS_PAST_MIDNIGHT_CUTOFF = 2
 
 
+def print_time_until(time: datetime) -> str:
+    return f"<t:{int(time.timestamp())}:R>"
+
+
+def print_date_time(time: datetime) -> str:
+    return f"<t:{int(time.timestamp())}:F>"
+
+
 class TimeBlock():
     """
     Represents a block of time.
@@ -90,10 +98,7 @@ class TimeBlock():
         }
 
     def __repr__(self):
-        if self.start_time.year == datetime.now().astimezone().year:
-            return f'{self.start_time.strftime("%a, %m/%d %H:%M")} - {self.end_time.strftime("%H:%M")}'
-        else:
-            return f'{self.start_time.strftime("%a, %m/%d/%y %H:%M")} - {self.end_time.strftime("%H:%M")}'
+        return f'{print_date_time(self.start_time)} - {print_date_time(self.end_time)}'
 
 
 class RemovedTime:
