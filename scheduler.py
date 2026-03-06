@@ -499,15 +499,15 @@ class Event:
         self.participants = keep_participants
         if not self.created:
             # Timeout check
-            cancelled = await self.update_timeout()
-            if cancelled:
+            if await self.update_timeout():
                 return
+            # Confirm participants answered
+            for participant in self.participants:
+                participant.confirm_answered(duration=self.duration)
+            await self.create_if_possible()
             # Update availability message once per minute
             if self.timeout_minutes != self.previous_countdown:
                 self.previous_countdown = self.timeout_minutes
-                for participant in self.participants:
-                    participant.confirm_answered(duration=self.duration)
-                await self.create_if_possible()
                 if not self.created:
                     await self.update_availability_message()
         # Event has been created
