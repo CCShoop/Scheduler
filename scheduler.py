@@ -1424,28 +1424,6 @@ class Event:
             participant.restore_availability_for_event(event.name)
             participant.confirm_answered(duration=self.duration)
 
-    def update_availabilities_to(self, participant: Participant) -> None:
-        """
-        Updates end time of full flag availabilities to the latest time.
-
-        Arguments
-        ---------
-        participant: :class:`Participant`
-            The participant to update all other participants to.
-        """
-        if len(participant.availability) == 0:
-            return
-        for other_participant in self.participants:
-            # If this is a different participant and they have selected full availability
-            if other_participant != participant and other_participant.full_availability_flag and len(other_participant.availability) > 0:
-                # For every timeblock, if they start on the same day
-                # and their end time is sooner, we update their end time to this one
-                for timeblock in participant.availability:
-                    if timeblock.start_time.date() == other_participant.availability[0].start_time.date():
-                        other_participant.availability[0].end_time = max(other_participant.availability[0].end_time, timeblock.end_time)
-            elif other_participant.full_availability_flag and len(other_participant.availability) == 0:
-                other_participant.full_availability_flag = False
-
     def get_event_buttons_message_content(self, end_time: Optional[datetime] = None) -> str:
         """
         Gets the content for the event buttons message.
@@ -2391,7 +2369,6 @@ class AvailabilityButtons(View):
                 logger.info(f'[{self.event}] {participant} selected full availability')
                 self.event.start_input_timer()
                 participant.set_full_availability()
-                # self.event.update_availabilities_to(participant)
                 remove_times_from_availabilities_for_events()
                 await self.event.update_availability_message()
             # Participant no longer has full availability
