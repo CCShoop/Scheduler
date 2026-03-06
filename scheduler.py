@@ -823,7 +823,7 @@ class Event:
         for event in client.events:
             if event is not self and event.voice_channel is self.voice_channel and event.started:
                 return
-        if all(participant.member in self.voice_channel.members for participant in self.participants):
+        if all(participant.member in self.voice_channel.members for participant in self.subscribed_participants):
             await self.start(f"Event started by {client.user} because all users were in the voice channel.")
         else:
             await self.update_reminder_message()
@@ -1666,6 +1666,10 @@ class Event:
         if length < 3:
             raise Exception("Invalid name length; must be at least 3.")
         return self.name if len(self.name) <= length else f"{self.name[:length-3]}..."
+
+    @property
+    def subscribed_participants(self) -> list[Participant]:
+        return [participant for participant in self.participants if participant.subscribed]
 
     @property
     def has_any_events(self) -> bool:
