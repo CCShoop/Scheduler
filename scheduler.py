@@ -1437,13 +1437,15 @@ class Event:
             return
         for other_participant in self.participants:
             # If this is a different participant and they have selected full availability
-            if other_participant != participant and other_participant.full_availability_flag:
+            if other_participant != participant and other_participant.full_availability_flag and len(other_participant.availability) > 0:
                 # For every timeblock, if they start on the same day
                 # and their end time is sooner, we update their end time to this one
                 for timeblock in participant.availability:
                     if timeblock.start_time.date() == other_participant.availability[0].start_time.date():
                         other_participant.availability[0].end_time = max(other_participant.availability[0].end_time, timeblock.end_time)
                         logger.info(f'[{self}] Updated {other_participant}\'s first timeblock\'s end time to {other_participant.availability[0].end_time.strftime("%a, %m/%d %H:%M")}')
+            elif other_participant.full_availability_flag and len(other_participant.availability) == 0:
+                other_participant.full_availability_flag = False
 
     def get_event_buttons_message_content(self, end_time: Optional[datetime] = None) -> str:
         """
