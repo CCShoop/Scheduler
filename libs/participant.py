@@ -46,6 +46,10 @@ class TimeBlock():
     def string(self) -> str:
         return f"[Free] {self}"
 
+    @property
+    def log_string(self) -> str:
+        return f"{self.start_time.strftime('%Y-%m-%d %H:%M:%S') - self.start_time.strftime('%Y-%m-%d %H:%M:%S')}"
+
     def subtract(self, timeblock) -> list:
         """Subtracts another timeblock and returns the remaining block(s)."""
         # No overlap
