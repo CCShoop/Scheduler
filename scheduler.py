@@ -2391,7 +2391,7 @@ class AvailabilityButtons(View):
                 logger.info(f'[{self.event}] {participant} selected full availability')
                 self.event.start_input_timer()
                 participant.set_full_availability()
-                self.event.update_availabilities_to(participant)
+                # self.event.update_availabilities_to(participant)
                 remove_times_from_availabilities_for_events()
                 await self.event.update_availability_message()
             # Participant no longer has full availability
