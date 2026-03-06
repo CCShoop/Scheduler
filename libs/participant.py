@@ -544,6 +544,7 @@ class Participant:
     def get_availability_overlap(self, event_timeblock: TimeBlock) -> TimeBlock:
         """
         Gets the overlap between an event and the participant's availability.
+        Returns None if there is no overlap.
 
         Arguments
         ---------
@@ -587,7 +588,7 @@ class Participant:
 
     def remove_availability_for_event(self, event_name: str, event_timeblocks: list[TimeBlock]) -> None:
         """
-        Removes and saves availability for an event.
+        Removes overlap with event timeblocks from availability and saves them as RemovedTime objects.
 
         Arguments
         ---------
@@ -596,25 +597,15 @@ class Participant:
         event_timeblocks: :class:`list[TimeBlock]`
             The event's timeblocks.
         """
+        self.restore_availability_for_event(event_name=event_name)
         for event_timeblock in event_timeblocks:
             removed_timeblock = self.get_availability_overlap(event_timeblock)
-            existing_removed_time = next(
-                (rt for rt in self.removed_times
-                 if rt.event_name == event_name and rt.event_timeblock.start_time.date() == event_timeblock.start_time.date()),
-                None)
-            if existing_removed_time:
-                if existing_removed_time.removed_timeblock is not None:
-                    self.add_to_availability(existing_removed_time.removed_timeblock)
-                existing_removed_time.event_timeblock = event_timeblock
-                existing_removed_time.removed_timeblock = removed_timeblock
-            else:
-                # Add a new RemovedTime
+            if removed_timeblock:
+                self.remove_from_availability(removed_timeblock)
                 removed_time = RemovedTime(event_name=event_name,
                                            event_timeblock=event_timeblock,
                                            removed_timeblock=removed_timeblock)
                 self.removed_times.append(removed_time)
-            if removed_timeblock:
-                self.remove_from_availability(removed_timeblock)
 
     def restore_availability_for_event(self, event_name: str) -> None:
         """
