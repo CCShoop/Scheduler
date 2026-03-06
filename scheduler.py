@@ -4047,8 +4047,15 @@ def remove_times_from_availabilities_for_events() -> None:
             if other_event == event:
                 continue
             for shared_participant in event.other_shared_participants(other_event, True):
+                logger.debug(f"[{event}] Participant: {shared_participant}")
+                logger.debug(f"[{event}] Availability before:")
+                [logger.debug(f"[{event}] {timeblock}") for timeblock in shared_participant.availability]
+                logger.debug(f"[{event}] Removing timeblock(s) in {other_event}:")
+                [logger.debug(f"[{event}] {timeblock}") for timeblock in event.timeblocks]
                 shared_participant.remove_availability_for_event(event_name=event.name,
                                                                  event_timeblocks=event.timeblocks)
+                logger.debug(f"[{event}] Availability after:")
+                [logger.debug(f"[{event}] {timeblock}") for timeblock in shared_participant.availability]
 
 
 @tasks.loop(seconds=UPDATE_INTERVAL)
