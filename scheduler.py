@@ -1443,7 +1443,6 @@ class Event:
                 for timeblock in participant.availability:
                     if timeblock.start_time.date() == other_participant.availability[0].start_time.date():
                         other_participant.availability[0].end_time = max(other_participant.availability[0].end_time, timeblock.end_time)
-                        logger.info(f'[{self}] Updated {other_participant}\'s first timeblock\'s end time to {other_participant.availability[0].end_time.strftime("%a, %m/%d %H:%M")}')
             elif other_participant.full_availability_flag and len(other_participant.availability) == 0:
                 other_participant.full_availability_flag = False
 
@@ -4048,15 +4047,8 @@ def remove_times_from_availabilities_for_events() -> None:
                 if other_event == event:
                     continue
                 for shared_participant in event.other_shared_participants(other_event, True):
-                    logger.debug(f"[{event}] [{other_event}] Participant: {shared_participant}")
-                    logger.debug(f"[{event}] [{other_event}] Availability before:")
-                    [logger.debug(f"[{event}] [{other_event}] {timeblock.log_string}") for timeblock in shared_participant.availability]
-                    logger.debug(f"[{event}] [{other_event}] Removing timeblock(s):")
-                    [logger.debug(f"[{event}] [{other_event}] {timeblock.log_string}") for timeblock in event.timeblocks]
                     shared_participant.remove_availability_for_event(event_name=event.name,
                                                                      event_timeblocks=event.timeblocks)
-                    logger.debug(f"[{event}] [{other_event}] Availability after:")
-                    [logger.debug(f"[{event}] [{other_event}] {timeblock.log_string}") for timeblock in shared_participant.availability]
 
 
 @tasks.loop(seconds=UPDATE_INTERVAL)
