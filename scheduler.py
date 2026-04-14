@@ -744,7 +744,7 @@ class Event:
         self.reminder_flag = True
         # No need to send reminder message if all
         # participants are already in the voice channel
-        if all(participant.member in self.voice_channel.members for participant in self.participants):
+        if all(participant.member in self.voice_channel.members for participant in self.subscribed_participants):
             return
         content = self.get_reminder_message_content()
         embed = self.get_reminder_message_embed()
@@ -2568,7 +2568,9 @@ class EventButtons(View):
             self.event.add_user_as_participant(interaction.user)
             if interaction.user.id not in [member.id for member in self.event.voice_channel.members]:
                 logger.info(f"[{self.event}] {interaction.user} tried to press start button while not in the event's voice channel")
-                content = f"You must be in {self.event.voice_channel.mention} to start {self.event}!"
+                content = f"You must be in {self.event.voice_channel.mention} to start {self.event}!\nMembers:\n"
+                for member in self.event.voice_channel.members:
+                    content += f"{member}\n"
                 await interaction.followup.send(content=content, ephemeral=True)
                 return
             logger.info(f"[{self.event}] {interaction.user} started by button press")
