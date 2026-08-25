@@ -184,6 +184,31 @@ def parse_start_time(start_time: str) -> datetime:
     return start_time_obj
 
 
+# Functions to strip participants based on member status
+def get_subscribed_participants(participants: list[Participant]) -> list[Participant]:
+    return [participant for participant in participants if participant.subscribed]
+
+
+def get_unsubscribed_participants(participants: list[Participant]) -> list[Participant]:
+    return [participant for participant in participants if not participant.subscribed]
+
+
+def get_answered_participants(participants: list[Participant]) -> list[Participant]:
+    return [participant for participant in participants if participant.answered]
+
+
+def get_unanswered_participants(participants: list[Participant]) -> list[Participant]:
+    return [participant for participant in participants if not participant.answered]
+
+
+def get_available_participants(participants: list[Participant]) -> list[Participant]:
+    return [participant for participant in participants if not participant.unavailable]
+
+
+def get_unavailable_participants(participants: list[Participant]) -> list[Participant]:
+    return [participant for participant in participants if participant.unavailable]
+
+
 class SchedulerClient(Client):
     """
     Represents the Scheduler Client.
@@ -510,6 +535,7 @@ class Event:
                 self.previous_countdown = self.timeout_minutes
                 if not self.created:
                     await self.update_availability_message()
+                    await self.ping_last_participant()
         # Event has been created
         else:
             if not self.started:
@@ -751,6 +777,18 @@ class Event:
         self.reminder_message = await self.text_channel.send(content=content,
                                                              embed=embed,
                                                              reference=self.event_buttons_message)
+
+    async def ping_last_participant(self) -> None:
+        """If one subscribed and unanswered person is remaining, send them a DM."""
+        if self.created or self.started or self.ended or self.availability_message is None:
+            return
+        unanswered_participants = self.self.unanswered_participants
+        if len(unanswered_participants) == 1:
+            unanswered_participant = unanswered_participants[0]
+            if unanswered_participant.subscribed and unanswered_participant.note == "":
+                content = "Remember to respond with your availability, or at least a note... Everyone's waiting for you!\n"
+                content += f"{self.availability_message.jump_url}"
+                await unanswered_participant.member.send(content)
 
     async def update_reminder_message(self) -> None:
         if self.reminder_message is not None:
@@ -1669,7 +1707,27 @@ class Event:
 
     @property
     def subscribed_participants(self) -> list[Participant]:
-        return [participant for participant in self.participants if participant.subscribed]
+        return get_subscribed_participants(self.participants)
+
+    @property
+    def unsubscribed_participants(self) -> list[Participant]:
+        return get_unsubscribed_participants(self.participants)
+
+    @property
+    def answered_participants(self) -> list[Participant]:
+        return get_answered_participants(self.participants)
+
+    @property
+    def unanswered_participants(self) -> list[Participant]:
+        return get_unanswered_participants(self.participants)
+
+    @property
+    def available_participants(self) -> list[Participant]:
+        return get_available_participants(self.participants)
+
+    @property
+    def unavailable_participants(self) -> list[Participant]:
+        return get_unavailable_participants(self.participants)
 
     @property
     def has_any_events(self) -> bool:
@@ -2260,6 +2318,7 @@ class AvailabilityModal(Modal):
             embed = get_participants_other_unanswered_events_embed(self.event, self.participant)
             remove_times_from_availabilities_for_events()
             await self.event.update_availability_message()
+            await self.event.ping_last_participant()
         except Exception as e:
             embed = Embed(title="Error",
                           color=Color.red(),
@@ -2375,6 +2434,7 @@ class AvailabilityButtons(View):
                 participant.set_full_availability()
                 remove_times_from_availabilities_for_events()
                 await self.event.update_availability_message()
+                await self.event.ping_last_participant()
             # Participant no longer has full availability
             else:
                 logger.info(f'[{self.event}] {participant} deselected full availability')
@@ -2420,6 +2480,7 @@ class AvailabilityButtons(View):
                 participant.answered = True
                 participant.subscribed = True
                 await self.event.update_availability_message()
+                await self.event.ping_last_participant()
             else:
                 await interaction.followup.send(content="Select another event from which to grab your availability.",
                                                 view=ExistingAvailabilitiesSelectView(found_availabilities, participant),
@@ -2469,6 +2530,7 @@ class AvailabilityButtons(View):
                                                            ephemeral=True)
                 await followup.delete(delay=3)
             await self.event.update_availability_message()
+            await self.event.ping_last_participant()
         button.callback = unsub_button_callback
         self.add_item(button)
         return button
@@ -2922,6 +2984,7 @@ class ExistingAvailabilitiesSelect(Select):
                                                            ephemeral=True)
                 await followup.delete(delay=3)
                 await event_avail.event.update_availability_message()
+                await event_avail.event.ping_last_participant()
                 await event_avail.event.create_if_possible()
                 return
         await interaction.followup.send(content="**Failed to get your availability.**",
@@ -3296,6 +3359,7 @@ async def on_message(message: Message):
                             participant.subscribed = False
                             await message.channel.send(f"Unsubscribed {participant}", reference=message)
                             await event.update_availability_message()
+                            await event.ping_last_participant()
                             break
                     if not found:
                         await message.channel.send(f"[{event}] participant not found", reference=message)
