@@ -1162,7 +1162,6 @@ class Event:
             Only include users who are not in the event's voice channel.
         """
         names = []
-        mentions = ''
 
         if subscribed_only and unsubscribed_only:
             subscribed_only = False
@@ -1171,43 +1170,35 @@ class Event:
 
         for participant in self.participants:
             if mention:
-                name_string = f'{participant.member.mention} '
+                name_string = f"{participant.member.mention}"
             else:
-                name_string = f'{participant}'
+                name_string = f"{participant}"
 
             # No conditions are true
             if (not subscribed_only) and (not unsubscribed_only) and (not unanswered_only):
                 if not not_in_voice_channel_only or (not_in_voice_channel_only and participant.member not in voice_channel_members):
-                    mentions += name_string
                     names.append(name_string)
 
             # One condition is true
             if (subscribed_only and participant.subscribed) and (not unsubscribed_only) and (not unanswered_only):
                 if not not_in_voice_channel_only or (not_in_voice_channel_only and participant.member not in voice_channel_members):
-                    mentions += name_string
                     names.append(name_string)
             if (not subscribed_only) and (unsubscribed_only and not participant.subscribed) and (not unanswered_only):
                 if not not_in_voice_channel_only or (not_in_voice_channel_only and participant.member not in voice_channel_members):
-                    mentions += name_string
                     names.append(name_string)
             if (not subscribed_only) and (not unsubscribed_only) and (unanswered_only and not participant.answered):
                 if not not_in_voice_channel_only or (not_in_voice_channel_only and participant.member not in voice_channel_members):
-                    mentions += name_string
                     names.append(name_string)
 
             # Two conditions are true
             if (subscribed_only and participant.subscribed) and (unanswered_only and not participant.answered):
                 if not not_in_voice_channel_only or (not_in_voice_channel_only and participant.member not in voice_channel_members):
-                    mentions += name_string
                     names.append(name_string)
             if (unsubscribed_only and not participant.subscribed) and (unanswered_only and not participant.answered):
                 if not not_in_voice_channel_only or (not_in_voice_channel_only and participant.member not in voice_channel_members):
-                    mentions += name_string
                     names.append(name_string)
 
-        if mention:
-            return f'\n{mentions}'
-        return ", ".join(names)
+        return "\n".join(names)
 
     def add_user_as_participant(self, user: User) -> None:
         """
