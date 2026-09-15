@@ -782,7 +782,7 @@ class Event:
         """If one subscribed and unanswered person is remaining, send them a DM."""
         if self.created or self.started or self.ended or self.availability_message is None:
             return
-        unanswered_participants = self.self.unanswered_participants
+        unanswered_participants = self.unanswered_participants
         if len(unanswered_participants) == 1:
             unanswered_participant = unanswered_participants[0]
             if unanswered_participant.subscribed and unanswered_participant.note == "":
