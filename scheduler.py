@@ -535,7 +535,6 @@ class Event:
                 self.previous_countdown = self.timeout_minutes
                 if not self.created:
                     await self.update_availability_message()
-                    await self.ping_last_participant()
         # Event has been created
         else:
             if not self.started:
