@@ -1396,7 +1396,7 @@ class Event:
             if mentions.strip() == "" and self.multi_event and self.input_timer_running:
                 output += f"\n\nWaiting {AVAILABILITY_COOLDOWN_MINUTES} minute(s) for additional multi event availabilities."
             else:
-                output += f"\n\nWaiting for a response from:{mentions}"
+                output += f"\n\nWaiting for a response from:\n{mentions}"
         else:
             output += "\n\nEveryone has responded."
         return output
