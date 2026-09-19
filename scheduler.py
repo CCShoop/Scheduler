@@ -50,8 +50,8 @@ INCLUDE = 'INCLUDE'
 EXCLUDE = 'EXCLUDE'
 INCLUDE_EXCLUDE: Literal = Literal[INCLUDE, EXCLUDE]
 
-# Time in minutes to wait before making multi-event events
-AVAILABILITY_COOLDOWN_MINUTES = 1
+# Time in seconds to wait before making multi-event events
+AVAILABILITY_COOLDOWN_SECONDS = 30
 
 # Time in minutes to delay "immediate" start
 START_TIME_DELAY = 30
@@ -337,6 +337,7 @@ def handle_signal(signum, frame):
     update.stop()
     logger.info("Saving and exiting")
     save()
+    persist.pause()
     loop = asyncio.get_running_loop()
     loop.create_task(cleanup())
 
@@ -493,7 +494,6 @@ class Event:
         self.multi_event: bool = multi_event
         self.timeout_counter: int = timeout_counter
         self.availability_input_timer = None
-        self.previous_countdown: int = self.timeout_counter
         self.after_buttons: AfterButtons = None
 
     async def update(self) -> None:
@@ -525,15 +525,8 @@ class Event:
             # Timeout check
             if await self.update_timeout():
                 return
-            # Confirm participants answered
-            for participant in self.participants:
-                participant.confirm_answered(duration=self.duration)
-            await self.create_if_possible()
-            # Update availability message once per minute
-            if self.timeout_minutes != self.previous_countdown:
-                self.previous_countdown = self.timeout_minutes
-                if not self.created:
-                    await self.update_availability_message()
+            if not self.input_timer_running or self.input_timer_elapsed:
+                await self.create_if_possible()
         # Event has been created
         else:
             if not self.started:
@@ -547,10 +540,6 @@ class Event:
                 elif self.scheduled_events[0].status == EventStatus.ended:
                     await self.start()
                     await self.end()
-                # Update event buttons message once per minute
-                if self.mins_until_start != self.previous_countdown:
-                    self.previous_countdown = self.mins_until_start
-                    await self.update_event_buttons_message()
                 # If reminder message has not been sent yet
                 if not self.reminder_flag:
                     if now() + timedelta(minutes=REMINDER_TIME_MINUTES) == self.start_times[0]:
@@ -606,7 +595,6 @@ class Event:
                     # Create the event
                     await self.make_scheduled_events()
                     remove_times_from_availabilities_for_events()
-                    self.previous_countdown = self.mins_until_start
                     for event in client.events:
                         await event.update_messages()
                     return
@@ -652,13 +640,13 @@ class Event:
         # Get events in the same voice channel and then their timeblocks
         conflicting_events = [event for event in client.events if event.voice_channel == self.voice_channel and event.created]
         occupied_timeblocks = [
-            TimeBlock(start_time=event.start_times[0], end_time=event.start_times[0] + event.duration)
+            TimeBlock(start_time=event.start_times[0], end_time=event.start_times[0] + (event.duration if event.duration_minutes != 0 else timedelta(minutes=DEFAULT_EVENT_DURATION)))
             for event in conflicting_events
         ]
 
         # Check if the voice channel is available in [START_TIME_DELAY] minutes
         all_participants_and_vc_available = True
-        self_timeblock = TimeBlock(start_time=current_time, end_time=current_time + self.duration)
+        self_timeblock = TimeBlock(start_time=current_time, end_time=current_time + (self.duration if self.duration_minutes != 0 else timedelta(minutes=DEFAULT_EVENT_DURATION)))
         for occupied_timeblock in occupied_timeblocks:
             if occupied_timeblock.overlaps_with(self_timeblock):
                 all_participants_and_vc_available = False
@@ -666,7 +654,7 @@ class Event:
 
         # Check if all participants are available in [START_TIME_DELAY] minutes
         for participant in subbed_participants:
-            if not participant.is_available_at(current_time, self.duration):
+            if not participant.is_available_at(current_time, (self.duration if self.duration_minutes != 0 else timedelta(minutes=DEFAULT_EVENT_DURATION))):
                 all_participants_and_vc_available = False
                 break
 
@@ -679,6 +667,8 @@ class Event:
             self.reminder_flag = True
             self.ready_to_create = True
             if not self.multi_event:
+                if self.duration_minutes == 0:
+                    self.duration = timedelta(minutes=DEFAULT_EVENT_DURATION)
                 return
             dates_scheduled.append(cur_date)
 
@@ -780,7 +770,8 @@ class Event:
 
     async def ping_last_participant(self) -> None:
         """If one subscribed and unanswered person is remaining, send them a DM."""
-        if self.created or self.started or self.ended or self.availability_message is None:
+        if self.created or self.started or self.ended \
+                or self.availability_message is None or len(self.participants) == 1:
             return
         unanswered_participants = self.unanswered_participants
         if len(unanswered_participants) == 1:
@@ -977,7 +968,8 @@ class Event:
 
     def start_input_timer(self) -> None:
         """Starts the availability input timer."""
-        self.availability_input_timer = datetime.now().astimezone()
+        if self.multi_event:
+            self.availability_input_timer = datetime.now().astimezone()
 
     def stop_input_timer(self) -> None:
         """Stops the availability input timer."""
@@ -1006,7 +998,7 @@ class Event:
             True if the timer has elapsed, otherwise False.
         """
         if self.input_timer_running:
-            if (self.availability_input_timer + timedelta(minutes=AVAILABILITY_COOLDOWN_MINUTES)) <= datetime.now().astimezone():
+            if (self.availability_input_timer + timedelta(seconds=AVAILABILITY_COOLDOWN_SECONDS)) <= datetime.now().astimezone():
                 self.stop_input_timer()
                 return True
         return False
@@ -1394,7 +1386,7 @@ class Event:
         if not self.everyone_answered:
             mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
             if mentions.strip() == "" and self.multi_event and self.input_timer_running:
-                output += f"\n\nWaiting {AVAILABILITY_COOLDOWN_MINUTES} minute(s) for additional multi event availabilities."
+                output += f"\n\nWaiting {AVAILABILITY_COOLDOWN_SECONDS} second(s) for additional multi event availabilities."
             else:
                 output += f"\n\nWaiting for a response from:\n{mentions}"
         else:
@@ -1760,10 +1752,10 @@ class Event:
             return "Event created"
         if self.ready_to_create:
             return "Creating event"
-        if self.everyone_answered:
+        if self.everyone_answered and not self.input_timer_running:
             return "No common availability"
-        elif self.multi_event and self.input_timer_running:
-            return "Waiting for additional availabilities"
+        elif self.input_timer_running:
+            return "Waiting for final availability changes"
         return "Awaiting availability"
 
     @property
@@ -1779,9 +1771,8 @@ class Event:
             If at least one participant has not yet responded.
         """
         if self.multi_event:
-            if self.input_timer_running:
-                if not self.input_timer_elapsed:
-                    return False
+            if self.input_timer_running and not self.input_timer_elapsed:
+                return False
         for participant in self.participants:
             if participant.subscribed:
                 participant.confirm_answered(duration=self.duration)
@@ -2311,6 +2302,7 @@ class AvailabilityModal(Modal):
             self.event.start_input_timer()
             embed = get_participants_other_unanswered_events_embed(self.event, self.participant)
             remove_times_from_availabilities_for_events()
+            await self.event.create_if_possible()
             await self.event.update_availability_message()
             await self.event.ping_last_participant()
         except Exception as e:
@@ -2427,6 +2419,7 @@ class AvailabilityButtons(View):
                 self.event.start_input_timer()
                 participant.set_full_availability()
                 remove_times_from_availabilities_for_events()
+                await self.event.create_if_possible()
                 await self.event.update_availability_message()
                 await self.event.ping_last_participant()
             # Participant no longer has full availability
