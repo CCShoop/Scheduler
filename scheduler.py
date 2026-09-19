@@ -522,7 +522,7 @@ class Event:
                 keep_participants.append(participant)
         self.participants = keep_participants
         if not self.created:
-            self.reminder_flag = bool((now() + timedelta(minutes=REMINDER_TIME_MINUTES)) < self.start_times[0])
+            self.reminder_flag = False
             # Timeout check
             if await self.update_timeout():
                 return
@@ -543,7 +543,7 @@ class Event:
                     await self.end()
                 # If reminder message has not been sent yet
                 if not self.reminder_flag:
-                    if now() + timedelta(minutes=REMINDER_TIME_MINUTES) == self.start_times[0]:
+                    if (now() + timedelta(minutes=REMINDER_TIME_MINUTES)) == self.start_times[0]:
                         await self.send_reminder_message()
                 # Reminder message has been sent
                 else:
@@ -667,9 +667,16 @@ class Event:
             self.start_times.append(current_time)
             self.reminder_flag = True
             self.ready_to_create = True
+            # Make the duration as long as possible
+            if self.duration_minutes == 0:
+                shortest_availability = subbed_participants[0].availability[0].end_time - (now() + timedelta(minutes=DEFAULT_EVENT_DURATION))
+                if len(subbed_participants) > 1:
+                    for participant in subbed_participants[1:]:
+                        current_block = participant.availability[0].end_time - (now() + timedelta(minutes=DEFAULT_EVENT_DURATION))
+                        if current_block < shortest_availability:
+                            shortest_availability = current_block
+                self.duration = shortest_availability
             if not self.multi_event:
-                if self.duration_minutes == 0:
-                    self.duration = timedelta(minutes=DEFAULT_EVENT_DURATION)
                 return
             dates_scheduled.append(cur_date)
 
