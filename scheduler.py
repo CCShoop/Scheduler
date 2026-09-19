@@ -713,6 +713,8 @@ class Event:
                     date_scheduled = True
                     break
             if timeblock.duration >= self.duration and not date_scheduled:
+                if self.duration_minutes == 0:
+                    self.duration = timeblock.duration
                 self.start_times.append(timeblock.start_time)
                 self.ready_to_create = True
                 dates_scheduled.append(tb_date)
@@ -1859,7 +1861,10 @@ class Event:
 
     @property
     def duration_string(self) -> str:
-        return get_time_str_from_minutes(self.duration_minutes)
+        if self.duration_minutes == 0:
+            return "Automatic"
+        else:
+            return get_time_str_from_minutes(self.duration_minutes)
 
     @property
     def timeout_minutes(self) -> int:
@@ -3611,7 +3616,7 @@ async def create(event_name: str,
 @app_commands.describe(include_exclude='Whether to include or exclude users specified.')
 @app_commands.describe(usernames='Comma separated usernames of users to include/exclude.')
 @app_commands.describe(roles='Comma separated roles of users to include/exclude.')
-@app_commands.describe(duration=f'Event duration in minutes ({DEFAULT_EVENT_DURATION} minutes default).')
+@app_commands.describe(duration='Event duration in minutes (0 minutes default, duration calculated based on participant availability).')
 @app_commands.describe(multi_event='Create an event on each date that everyone is available.')
 @app_commands.describe(timeout=f'Number of days that the event should wait for responses ({DEFAULT_EVENT_TIMEOUT_DAYS} days default).')
 async def schedule_command(interaction: Interaction,
@@ -3621,7 +3626,7 @@ async def schedule_command(interaction: Interaction,
                            include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
                            usernames: Optional[str] = None,
                            roles: Optional[str] = None,
-                           duration: Optional[int] = DEFAULT_EVENT_DURATION,
+                           duration: Optional[int] = 0,
                            multi_event: Optional[bool] = False,
                            timeout: Optional[int] = DEFAULT_EVENT_TIMEOUT_DAYS):
     await interaction.response.defer(ephemeral=True)
@@ -3658,7 +3663,7 @@ async def schedule(event_name: str,
                    include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
                    usernames: Optional[str] = None,
                    roles: Optional[str] = None,
-                   duration: Optional[int] = DEFAULT_EVENT_DURATION,
+                   duration: Optional[int] = 0,
                    multi_event: Optional[bool] = False,
                    timeout_days: Optional[int] = DEFAULT_EVENT_TIMEOUT_DAYS):
     """
@@ -3688,7 +3693,7 @@ async def schedule(event_name: str,
         Comma separated list of roles to include/exclude.
     duration: :class:`Optional[int]`
         The duration of the event in minutes.
-        Default: DEFAULT_EVENT_DURATION
+        Default: 0
     multi_event: :class:`Optional[bool]`
         Whether or not the event is a multi event.
         Default: False
@@ -3800,7 +3805,7 @@ async def schedule(event_name: str,
 @app_commands.describe(name='Name for the event.')
 @app_commands.describe(voice_channel='Voice channel for the event.')
 @app_commands.describe(image_url='URL to an image for the event.')
-@app_commands.describe(duration=f'Event duration in minutes ({DEFAULT_EVENT_DURATION} minutes default).')
+@app_commands.describe(duration='Event duration in minutes (0 minutes default, duration calculated based on participant availability).')
 @app_commands.describe(multi_event='Create an event on each date that everyone is available.')
 @app_commands.describe(timeout=f'Number of days that the event should wait for responses ({DEFAULT_EVENT_TIMEOUT_DAYS} days default).')
 async def edit_command(interaction: Interaction,

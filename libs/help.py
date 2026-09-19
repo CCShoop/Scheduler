@@ -15,7 +15,7 @@ commands.add_field(name="schedule",
                    "\ninclude_exclude: Whether to include or exclude the provided usernames/ids/roles."
                    "\nusernames: A comma separated list of usernames/ids to include/exclude."
                    "\nroles: A comma separated list of roles to include/exclude."
-                   "\nduration: The duration of the event in minutes. Default is 30 minutes."
+                   "\nduration: The duration of the event in minutes. Default is 0, which automatically sets the duration based on availability."
                    "\nmulti_event: Whether or not to make one event per day, respecting availabilities.",
                    inline=False)
 commands.add_field(name="create",
