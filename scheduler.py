@@ -2466,6 +2466,8 @@ class AvailabilityButtons(View):
                 participant.full_availability_flag = found_availabilities[0].full_flag
                 participant.answered = True
                 participant.subscribed = True
+                await self.event.start_input_timer()
+                await self.event.create_if_possible()
                 await self.event.update_availability_message()
                 await self.event.ping_last_participant()
             else:
@@ -2970,9 +2972,10 @@ class ExistingAvailabilitiesSelect(Select):
                                                            silent=True,
                                                            ephemeral=True)
                 await followup.delete(delay=3)
+                await event_avail.event.start_input_timer()
+                await event_avail.event.create_if_possible()
                 await event_avail.event.update_availability_message()
                 await event_avail.event.ping_last_participant()
-                await event_avail.event.create_if_possible()
                 return
         await interaction.followup.send(content="**Failed to get your availability.**",
                                         ephemeral=True)
