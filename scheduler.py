@@ -361,7 +361,6 @@ async def cleanup():
         await schedule_again_event.remove()
     logger.info("Closing client")
     await client.close()
-    sys.exit(0)
 
 
 signal.signal(signal.SIGINT, handle_signal)
