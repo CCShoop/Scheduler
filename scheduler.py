@@ -927,7 +927,7 @@ class Event:
                 self.scheduled_events = self.scheduled_events[1:]
             except Exception as e:
                 logger.error(f"[{self}] Error shifting scheduled_events and start_times: {e}")
-            self.reminder_flag = bool((now() + timedelta(minutes=REMINDER_TIME_MINUTES)) < self.start_times[0])
+            self.reminder_flag = bool(self.start_times[0] < (now() + timedelta(minutes=REMINDER_TIME_MINUTES)))
             if self.event_buttons_message is not None:
                 await self.event_buttons_message.edit(view=None)
                 self.event_buttons_message = None
@@ -972,7 +972,7 @@ class Event:
                 self.created = True
             else:
                 logger.error(f"[{self}] Failed to create event!")
-        self.reminder_flag = bool((now() + timedelta(minutes=REMINDER_TIME_MINUTES)) < self.start_times[0])
+        self.reminder_flag = bool(self.start_times[0] < (now() + timedelta(minutes=REMINDER_TIME_MINUTES)))
 
     async def handle_input_received(self) -> None:
         self.start_input_timer()
