@@ -522,6 +522,7 @@ class Event:
                 keep_participants.append(participant)
         self.participants = keep_participants
         if not self.created:
+            self.reminder_flag = bool((now() + timedelta(minutes=REMINDER_TIME_MINUTES)) < self.start_times[0])
             # Timeout check
             if await self.update_timeout():
                 return
@@ -965,6 +966,12 @@ class Event:
             else:
                 logger.error(f"[{self}] Failed to create event!")
         self.reminder_flag = bool((now() + timedelta(minutes=REMINDER_TIME_MINUTES)) < self.start_times[0])
+
+    async def handle_input_received(self) -> None:
+        self.start_input_timer()
+        await self.create_if_possible()
+        await self.update_availability_message()
+        await self.ping_last_participant()
 
     def start_input_timer(self) -> None:
         """Starts the availability input timer."""
@@ -2299,12 +2306,9 @@ class AvailabilityModal(Modal):
             self.participant.note = self.note.value
             self.participant.set_specific_availability(avail_string, self.date.value)
             self.participant.confirm_answered(duration=self.event.duration)
-            self.event.start_input_timer()
             embed = get_participants_other_unanswered_events_embed(self.event, self.participant)
             remove_times_from_availabilities_for_events()
-            await self.event.create_if_possible()
-            await self.event.update_availability_message()
-            await self.event.ping_last_participant()
+            await self.event.handle_input_received()
         except Exception as e:
             embed = Embed(title="Error",
                           color=Color.red(),
@@ -2416,12 +2420,9 @@ class AvailabilityButtons(View):
             # Participant has full availability
             if not participant.full_availability_flag:
                 logger.info(f'[{self.event}] {participant} selected full availability')
-                self.event.start_input_timer()
                 participant.set_full_availability()
                 remove_times_from_availabilities_for_events()
-                await self.event.create_if_possible()
-                await self.event.update_availability_message()
-                await self.event.ping_last_participant()
+                await self.event.handle_input_received()
             # Participant no longer has full availability
             else:
                 logger.info(f'[{self.event}] {participant} deselected full availability')
@@ -2466,10 +2467,7 @@ class AvailabilityButtons(View):
                 participant.full_availability_flag = found_availabilities[0].full_flag
                 participant.answered = True
                 participant.subscribed = True
-                await self.event.start_input_timer()
-                await self.event.create_if_possible()
-                await self.event.update_availability_message()
-                await self.event.ping_last_participant()
+                await self.event.handle_input_received()
             else:
                 await interaction.followup.send(content="Select another event from which to grab your availability.",
                                                 view=ExistingAvailabilitiesSelectView(found_availabilities, participant),
@@ -2518,8 +2516,7 @@ class AvailabilityButtons(View):
                                                            silent=True,
                                                            ephemeral=True)
                 await followup.delete(delay=3)
-            await self.event.update_availability_message()
-            await self.event.ping_last_participant()
+            await self.event.handle_input_received()
         button.callback = unsub_button_callback
         self.add_item(button)
         return button
@@ -2972,10 +2969,7 @@ class ExistingAvailabilitiesSelect(Select):
                                                            silent=True,
                                                            ephemeral=True)
                 await followup.delete(delay=3)
-                await event_avail.event.start_input_timer()
-                await event_avail.event.create_if_possible()
-                await event_avail.event.update_availability_message()
-                await event_avail.event.ping_last_participant()
+                await event_avail.event.handle_input_received()
                 return
         await interaction.followup.send(content="**Failed to get your availability.**",
                                         ephemeral=True)
