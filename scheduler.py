@@ -948,6 +948,7 @@ class Event:
         """
         Creates a scheduled event for each start time and sets the guild event's image if appropriate.
         """
+        self.stop_input_timer()
         if len(self.name) > 100:
             self.name = self.name[:99]
         for i, start_time in enumerate(self.start_times):
