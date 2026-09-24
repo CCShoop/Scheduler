@@ -2163,9 +2163,10 @@ class ScheduleAgainModal(Modal):
         self.event_name = TextInput(label="Name",
                                     default=event.name,
                                     placeholder=event.get_limited_name(100))
-        self.event_duration = TextInput(label="Duration",
+        self.event_duration = TextInput(label="Duration (Minutes)",
                                         default=str(event.duration_minutes),
-                                        placeholder=str(event.duration_minutes)[:100])
+                                        placeholder="\"0\" for automatic",
+                                        required=False)
         if event.image_url:
             image_url = event.image_url
         else:
