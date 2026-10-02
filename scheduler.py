@@ -2216,6 +2216,7 @@ class ScheduleAgainModal(Modal):
                 content += "You can get the correct format from https://time.lol."
                 await interaction.followup.send(content=content, ephemeral=True)
         else:
+            [participant.confirm_answered() for participant in self.event.participants]
             await schedule(event_name=event_name,
                            guild=self.event.guild,
                            text_channel=self.event.text_channel,
@@ -3290,6 +3291,7 @@ async def on_message(message: Message):
         content = ""
         if len(client.events) > 0:
             for event in client.events:
+                [participant.confirm_answered() for participant in event.participants]
                 await event.create_if_possible()
                 content += f"Checked {event}\n"
         else:
