@@ -789,9 +789,11 @@ class Event:
                any(participant.member.id == unanswered_participant.member.id for participant in exclude):
                 return
             if unanswered_participant.subscribed and unanswered_participant.note == "":
-                content = "Remember to respond with your availability, or at least a note... Everyone's waiting for you!\n"
-                content += f"{self.availability_message.jump_url}"
-                await unanswered_participant.member.send(content)
+                desc = "Remember to respond with your availability, or at least a note...\nEveryone else is waiting for you!"
+                embed = Embed(title=self.get_limited_name(256),
+                              description=desc,
+                              url=self.availability_message.jump_url)
+                await unanswered_participant.member.send(embed=embed)
 
     async def update_reminder_message(self) -> None:
         if self.reminder_message is not None:
@@ -1034,7 +1036,7 @@ class Event:
         embed: :class:`Embed`
             The general embed for the event.
         """
-        embed = Embed(title=f"{self}",
+        embed = Embed(title=f"{self.get_limited_name(256)}",
                       description=self.scheduling_status,
                       color=Color.green())
         if self.image_url:
