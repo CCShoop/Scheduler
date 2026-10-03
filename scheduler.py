@@ -1408,6 +1408,9 @@ class Event:
                 output += f"\n\nWaiting {AVAILABILITY_COOLDOWN_SECONDS} second(s) for additional multi event availabilities."
             else:
                 output += f"\n\nWaiting for a response from:\n{mentions}"
+        elif self.scheduling_status == "No common availability":
+            mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
+            output += f"\n\nWaiting for additional availability from:\n{mentions}"
         else:
             output += "\n\nEveryone has responded."
         return output
