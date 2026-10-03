@@ -776,7 +776,7 @@ class Event:
                                                              embed=embed,
                                                              reference=self.event_buttons_message)
 
-    async def ping_last_participant(self) -> None:
+    async def ping_last_participant(self, exclude: Optional[list[Participant]] = None) -> None:
         """If one subscribed and unanswered person is remaining, send them a DM."""
         if self.created or self.started or self.ended \
                 or self.availability_message is None or len(self.participants) == 1:
@@ -784,6 +784,10 @@ class Event:
         unanswered_participants = self.unanswered_participants
         if len(unanswered_participants) == 1:
             unanswered_participant = unanswered_participants[0]
+            if exclude is not None and \
+               len(exclude) > 0 and \
+               any(participant.member.id == unanswered_participant.member.id for participant in exclude):
+                return
             if unanswered_participant.subscribed and unanswered_participant.note == "":
                 content = "Remember to respond with your availability, or at least a note... Everyone's waiting for you!\n"
                 content += f"{self.availability_message.jump_url}"
@@ -891,10 +895,8 @@ class Event:
             buttons = None if (self.has_more_events or forget) else self.get_after_buttons()
             try:
                 if buttons is not None:
-                    logger.debug(f"[{self}] Editing event buttons message with after buttons")
                     buttons.message = await self.event_buttons_message.edit(content=content, embeds=embeds, view=buttons)
                 else:
-                    logger.debug(f"[{self}] Editing event buttons message to remove view")
                     await self.event_buttons_message.edit(content=content, embeds=embeds, view=None)
             except Exception as e:
                 logger.error(f"[{self}] Error in event control end button callback while editing event buttons message: {e}")
@@ -975,11 +977,11 @@ class Event:
                 logger.error(f"[{self}] Failed to create event!")
         self.reminder_flag = bool(self.start_times[0] < (now() + timedelta(minutes=REMINDER_TIME_MINUTES)))
 
-    async def handle_input_received(self) -> None:
+    async def handle_input_received(self, exclude: Optional[list[Participant]] = None) -> None:
         self.start_input_timer()
         await self.create_if_possible()
         await self.update_availability_message()
-        await self.ping_last_participant()
+        await self.ping_last_participant(exclude=exclude)
 
     def start_input_timer(self) -> None:
         """Starts the availability input timer."""
@@ -2318,7 +2320,7 @@ class AvailabilityModal(Modal):
             self.participant.confirm_answered(duration=self.event.duration)
             embed = get_participants_other_unanswered_events_embed(self.event, self.participant)
             remove_times_from_availabilities_for_events()
-            await self.event.handle_input_received()
+            await self.event.handle_input_received(exclude=[self.participant])
         except Exception as e:
             embed = Embed(title="Error",
                           color=Color.red(),
@@ -2432,7 +2434,7 @@ class AvailabilityButtons(View):
                 logger.info(f'[{self.event}] {participant} selected full availability')
                 participant.set_full_availability()
                 remove_times_from_availabilities_for_events()
-                await self.event.handle_input_received()
+                await self.event.handle_input_received(exclude=[participant])
             # Participant no longer has full availability
             else:
                 logger.info(f'[{self.event}] {participant} deselected full availability')
@@ -2477,7 +2479,7 @@ class AvailabilityButtons(View):
                 participant.full_availability_flag = found_availabilities[0].full_flag
                 participant.answered = True
                 participant.subscribed = True
-                await self.event.handle_input_received()
+                await self.event.handle_input_received(exclude=[participant])
             else:
                 await interaction.followup.send(content="Select another event from which to grab your availability.",
                                                 view=ExistingAvailabilitiesSelectView(found_availabilities, participant),
@@ -2526,7 +2528,7 @@ class AvailabilityButtons(View):
                                                            silent=True,
                                                            ephemeral=True)
                 await followup.delete(delay=3)
-            await self.event.handle_input_received()
+            await self.event.handle_input_received(exclude=[participant])
         button.callback = unsub_button_callback
         self.add_item(button)
         return button
@@ -2979,7 +2981,7 @@ class ExistingAvailabilitiesSelect(Select):
                                                            silent=True,
                                                            ephemeral=True)
                 await followup.delete(delay=3)
-                await event_avail.event.handle_input_received()
+                await event_avail.event.handle_input_received(exclude=[self.participant])
                 return
         await interaction.followup.send(content="**Failed to get your availability.**",
                                         ephemeral=True)
@@ -3354,7 +3356,7 @@ async def on_message(message: Message):
                             participant.subscribed = False
                             await message.channel.send(f"Unsubscribed {participant}", reference=message)
                             await event.update_availability_message()
-                            await event.ping_last_participant()
+                            await event.ping_last_participant(exclude=[Participant(message.author)])
                             break
                     if not found:
                         await message.channel.send(f"[{event}] participant not found", reference=message)
@@ -3768,10 +3770,8 @@ async def schedule(event_name: str,
     scheduler = None
     for participant in participants:
         if participant.member.id == scheduler_user.id:
-            logger.debug(f"[{event_name}] Scheduler participant found: {participant}")
             scheduler = participant
     if scheduler is None:
-        logger.debug(f"[{event_name}] Scheduler participant not found, grabbing first participant: {participants[0]}")
         scheduler = participants[0]
 
     # Image URL
