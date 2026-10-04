@@ -482,6 +482,7 @@ class Event:
         self.event_buttons_message_lock: asyncio.Lock = asyncio.Lock()
         self.event_buttons_message: Message = event_buttons_message
         self.event_buttons: EventButtons = event_buttons
+        self.create_lock: asyncio.Lock = asyncio.Lock()
         self.ready_to_create: bool = ready_to_create
         self.created: bool = created
         self.started: bool = started
@@ -533,6 +534,14 @@ class Event:
             if not self.started:
                 # Recreate the event if it was manually cancelled
                 if self.scheduled_events[0].status == EventStatus.cancelled:
+                    # make_scheduled_events recreates one guild event per start time,
+                    # so drop the cancelled one and delete any later ones to avoid duplicates
+                    for scheduled_event in self.scheduled_events[1:]:
+                        try:
+                            await scheduled_event.delete(reason="Event recreated after manual cancellation.")
+                        except Exception as e:
+                            logger.error(f"[{self}] Error deleting guild event to recreate: {e}")
+                    self.scheduled_events.clear()
                     self.created = False
                     self.ready_to_create = True
                     await self.create_if_possible()
@@ -588,17 +597,20 @@ class Event:
         return cancelled
 
     async def create_if_possible(self) -> None:
-        if not self.created:
-            if self.everyone_answered:
-                self.compare_availabilities()
-                # Create the event
-                if self.ready_to_create:
+        # Serialize creation so the update loop and an input callback can't both
+        # pass the `created` check while the first create_scheduled_event is in flight
+        async with self.create_lock:
+            if not self.created:
+                if self.everyone_answered:
+                    self.compare_availabilities()
                     # Create the event
-                    await self.make_scheduled_events()
-                    remove_times_from_availabilities_for_events()
-                    for event in client.events:
-                        await event.update_messages()
-                    return
+                    if self.ready_to_create:
+                        # Create the event
+                        await self.make_scheduled_events()
+                        remove_times_from_availabilities_for_events()
+                        for event in client.events:
+                            await event.update_messages()
+                        return
 
     def intersect_time_blocks(self, timeblocks1: list, timeblocks2: list) -> list[TimeBlock]:
         """
