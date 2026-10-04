@@ -946,10 +946,13 @@ class Event:
                 event.event_buttons.start_end_button.disabled = False
             logger.info(f'[{self}] Re-enabled start button for event with same location: {event}')
         await self.prep_next_scheduled_event()
-        # Restore removed availabilities
+        # Restore availability taken by this event, then take it again for any remaining occurrences
         for event in client.events:
             if event is not self:
                 event.restore_availabilities(self)
+        remove_times_from_availabilities_for_events()
+        for event in client.events:
+            if event is not self:
                 await event.update_messages()
 
     async def end_if_participants_leave_vc(self) -> None:
@@ -1736,9 +1739,11 @@ class Event:
         except Exception as e:
             logger.error(f'[{self}] Error in cancel while deleting scheduled event: {e}')
         await self.prep_next_scheduled_event()
-        # Restore removed availabilities
+        # Restore availability taken by this event, then take it again for any remaining occurrences
         for event in client.events:
             event.restore_availabilities(self)
+        remove_times_from_availabilities_for_events()
+        for event in client.events:
             await event.update_messages()
 
     async def cancel_occurrences(self, occurrences: list[ScheduledEvent], reason: Optional[str] = "", canceller: Optional[str] = "") -> None:
