@@ -12,6 +12,31 @@ PORT = int(os.getenv("PORT"))
 HOST = os.getenv("HOST")
 
 
+def json_incomplete(buffer: str) -> bool:
+    """
+    Indicates whether the buffer ends partway through a JSON object or array,
+    meaning the rest of the message has not been received yet.
+    """
+    depth = 0
+    in_string = False
+    escaped = False
+    for char in buffer:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == '\\':
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in '{[':
+            depth += 1
+        elif char in '}]':
+            depth -= 1
+    return in_string or depth > 0
+
+
 class Server:
     def __init__(self, host=HOST, port=PORT):
         self.host = host
@@ -26,12 +51,12 @@ class Server:
                 break
             buffer += data.decode()
 
+            # A message split across reads; wait for the rest
+            if buffer.strip() == "" or json_incomplete(buffer):
+                continue
             try:
                 data_dict = json.loads(buffer)
-            except json.JSONDecodeError as e:
-                # A message split across reads fails at the end of the buffer; wait for the rest
-                if e.pos >= len(buffer.rstrip()):
-                    continue
+            except json.JSONDecodeError:
                 buffer = ""
                 response = "invalid JSON"
             else:
