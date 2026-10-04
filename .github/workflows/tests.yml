@@ -1,0 +1,60 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pytest-cov
+
+      - name: Run tests
+        run: python -m pytest -v --cov=. --cov-report=
+
+      - name: Measure coverage
+        run: |
+          coverage report --omit='tests/*'
+          coverage json --omit='tests/*' -o "$RUNNER_TEMP/head-cov.json"
+
+      # Fails if coverage is lower than on the PR's base commit (or, for a push, the previous commit)
+      - name: Compare coverage with base
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          percent() { python -c "import json,sys; print(round(json.load(open(sys.argv[1]))['totals']['percent_covered'], 2))" "$1"; }
+          head=$(percent "$RUNNER_TEMP/head-cov.json")
+
+          if [ -z "$BASE_SHA" ] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            echo "No base commit to compare against; coverage is ${head}%" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          git worktree add "$RUNNER_TEMP/base" "$BASE_SHA"
+          if [ ! -d "$RUNNER_TEMP/base/tests" ]; then
+            echo "Base commit ${BASE_SHA::7} has no tests; coverage is ${head}%" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          (cd "$RUNNER_TEMP/base" \
+            && { python -m pytest -q --cov=. --cov-report= || true; } \
+            && coverage json --omit='tests/*' -o "$RUNNER_TEMP/base-cov.json")
+          base=$(percent "$RUNNER_TEMP/base-cov.json")
+
+          echo "Coverage: ${head}% (base ${BASE_SHA::7}: ${base}%)" | tee -a "$GITHUB_STEP_SUMMARY"
+          if python -c "import sys; sys.exit(float(sys.argv[1]) < float(sys.argv[2]))" "$head" "$base"; then
+            echo "Coverage did not decrease"
+          else
+            echo "::error::Coverage decreased from ${base}% to ${head}%"
+            exit 1
+          fi

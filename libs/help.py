@@ -9,7 +9,7 @@ commands = Embed(title="Commands",
 commands.add_field(name="schedule",
                    value="Begin scheduling an event."
                    "\nevent_name: The name for the event. Only one event can have a specific name at any time."
-                   "\nvoice_channel: The voice channel where the event will take place."
+                   "\nlocation: Where the event will take place. Pick a voice channel or type a location such as an address."
                    "\nstart_time: The start time for the event. Accepts a time (e.g. 2200) or ISO format datetime."
                    "\nimage_url: A URL for an image to use for the guild event and in embed thumbnails."
                    "\ninclude_exclude: Whether to include or exclude the provided usernames/ids/roles."
@@ -21,7 +21,7 @@ commands.add_field(name="schedule",
 commands.add_field(name="create",
                    value="Create an event at a specified time."
                    "\nevent_name: The name for the event. Only one event can have a specific name at any time."
-                   "\nvoice_channel: The voice channel where the event will take place."
+                   "\nlocation: Where the event will take place. Pick a voice channel or type a location such as an address."
                    "\nstart_time: The start time for the event. Accepts a time (e.g. 2200) or ISO format datetime."
                    "\nimage_url: A URL for an image to use for the guild event and in embed thumbnails."
                    "\ninclude_exclude: Whether to include or exclude the provided usernames/ids/roles."
@@ -32,7 +32,7 @@ commands.add_field(name="create",
 commands.add_field(name="edit",
                    value="Edit an existing event using this text channel chosen from a dropdown."
                    "\nname: Change the name of the event."
-                   "\nvoice_channel: Change the location of the event."
+                   "\nlocation: Change the location of the event to a voice channel or a typed location."
                    "\nimage_url: Change the image of the event."
                    "\nduration: Change the duration of the event."
                    "\nmulti_event: Change whether or not the event is a multi-event.",

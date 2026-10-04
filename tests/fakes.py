@@ -21,17 +21,20 @@ def at(days: int, hour: int, minute: int = 0) -> datetime:
 
 
 class FakeScheduledEvent:
-    def __init__(self, start_time, status=EventStatus.scheduled):
+    def __init__(self, start_time, status=EventStatus.scheduled, **kwargs):
         self.id = next_id()
         self.start_time = start_time
         self.status = status
         self.deleted = False
+        # Arguments the guild event was created with, and each edit's arguments
+        self.kwargs = kwargs
+        self.edits = []
 
     async def delete(self, reason=None):
         self.deleted = True
 
     async def edit(self, **kwargs):
-        pass
+        self.edits.append(kwargs)
 
     async def start(self, reason=None):
         self.status = EventStatus.active
@@ -56,7 +59,7 @@ class FakeGuild:
         if self.fail_on_call is not None and len(self.created) + 1 == self.fail_on_call:
             self.fail_on_call = None
             return None
-        scheduled_event = FakeScheduledEvent(start_time)
+        scheduled_event = FakeScheduledEvent(start_time, **kwargs)
         self.created.append(scheduled_event)
         return scheduled_event
 

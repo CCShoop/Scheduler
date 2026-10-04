@@ -184,6 +184,71 @@ def parse_start_time(start_time: str) -> datetime:
     return start_time_obj
 
 
+# Discord's limit for an external guild event's location
+MAX_LOCATION_LENGTH = 100
+
+
+def resolve_location(guild: Guild, location: Optional[str]) -> tuple[Optional[VoiceChannel], Optional[str]]:
+    """
+    Resolves a location option into a voice channel or an external location.
+
+    Arguments
+    ---------
+    guild: :class:`Guild`
+        The guild to look for voice channels in.
+    location: :class:`Optional[str]`
+        A voice channel id (sent when a suggestion is picked), a voice channel name,
+        or any other text for an external location such as a physical address.
+
+    Returns
+    -------
+    location: :class:`tuple`
+        (voice_channel, None) for a voice channel, (None, location) for an external location,
+        or (None, None) if no location was provided.
+    """
+    if location is None or location.strip() == "":
+        return None, None
+    location = location.strip()
+    if location.isdigit():
+        voice_channel = utils.get(guild.voice_channels, id=int(location))
+        if voice_channel is not None:
+            return voice_channel, None
+    for voice_channel in guild.voice_channels:
+        if voice_channel.name.casefold() == location.lstrip('#').casefold():
+            return voice_channel, None
+    if len(location) > MAX_LOCATION_LENGTH:
+        raise Exception(f"Location must be {MAX_LOCATION_LENGTH} characters or fewer.")
+    return None, location
+
+
+def get_location_key(voice_channel: Optional[VoiceChannel], location: Optional[str]) -> tuple:
+    """Gets a value that is equal for events in the same voice channel or at the same external location."""
+    if location:
+        return ("external", location.strip().casefold())
+    return ("voice", voice_channel.id if voice_channel is not None else None)
+
+
+def get_guild_event_location(guild_event: ScheduledEvent) -> tuple[Optional[VoiceChannel], Optional[str]]:
+    """Gets the (voice_channel, location) of a guild event, like :func:`resolve_location`."""
+    if guild_event.entity_type == EntityType.external:
+        return None, guild_event.location
+    return guild_event.channel, None
+
+
+async def location_autocomplete(interaction: Interaction, current: str) -> list[app_commands.Choice[str]]:
+    """
+    Suggests the guild's voice channels for a location option, so pressing enter picks the first one.
+    Text that doesn't match a voice channel is offered as an external location.
+    """
+    current = current.strip()
+    choices = [app_commands.Choice(name=f"🔊 {voice_channel.name}"[:100], value=str(voice_channel.id))
+               for voice_channel in interaction.guild.voice_channels
+               if current.casefold() in voice_channel.name.casefold()]
+    if current and not any(voice_channel.name.casefold() == current.casefold() for voice_channel in interaction.guild.voice_channels):
+        choices.append(app_commands.Choice(name=f"📍 {current}"[:100], value=current[:100]))
+    return choices[:25]
+
+
 # Functions to strip participants based on member status
 def get_subscribed_participants(participants: list[Participant]) -> list[Participant]:
     return [participant for participant in participants if participant.subscribed]
@@ -262,11 +327,12 @@ class SchedulerClient(Client):
         logger.info(f"[{data['name']}] Schedule from dict triggered")
         guild = self.get_guild(data["guild_id"])
         text_channel = guild.get_channel(data["text_channel_id"])
-        voice_channel = guild.get_channel(data["voice_channel_id"])
+        voice_channel = guild.get_channel(data["voice_channel_id"]) if data.get("voice_channel_id") else None
         await schedule(event_name=data["name"],
                        guild=guild,
                        text_channel=text_channel,
                        voice_channel=voice_channel,
+                       location=data.get("location"),
                        scheduler_id=data["scheduler_id"],
                        image_url=data["image_url"],
                        include_exclude=data["include_exclude"],
@@ -380,8 +446,10 @@ class Event:
     -----------
     name: :class:`str`
         The name for the event. Two events cannot share the same name.
-    voice_channel: :class:`VoiceChannel`
-        The voice channel that the event will occur in.
+    voice_channel: :class:`Optional[VoiceChannel]`
+        The voice channel that the event will occur in. None if the event has an external location.
+    location: :class:`Optional[str]`
+        The external location (e.g. a physical address) that the event will occur at instead of a voice channel.
     guild: :class:`Guild`
         The guild that the event will occur in.
     text_channel: :class:`TextChannel`
@@ -456,14 +524,17 @@ class Event:
                  scheduled_events: Optional[list] = None,
                  reminder_flag: Optional[bool] = False,
                  reminder_message: Optional[Message] = None,
-                 timeout_counter: Optional[int] = DEFAULT_EVENT_TIMEOUT) -> None:
+                 timeout_counter: Optional[int] = DEFAULT_EVENT_TIMEOUT,
+                 location: Optional[str] = None) -> None:
         self.name: str = name
         self.guild: Guild = guild
-        self.entity_type: EntityType = EntityType.voice
         self.text_channel: TextChannel = text_channel
         self.availability_message_lock: asyncio.Lock = asyncio.Lock()
         self.availability_message: Message = availability_message
-        if voice_channel:
+        self.location: Optional[str] = location or None
+        if self.location:
+            self.voice_channel: Optional[VoiceChannel] = None
+        elif voice_channel:
             self.voice_channel: VoiceChannel = voice_channel
         else:
             try:
@@ -508,8 +579,8 @@ class Event:
             Ensure start time is in the future and create the event.
         Event Created:
             Send reminder message when appropriate.
-            Start the event if all participants are in the voice channel.
-            End the event if nobody is in the voice channel.
+            Start the event if all participants are in the voice channel, or at the start time for an external location.
+            End the event if nobody is in the voice channel, or when its duration passes for an external location.
         """
         # Cancel the event if the text channel has vaporized
         text_channel = self.guild.get_channel(self.text_channel.id)
@@ -668,8 +739,8 @@ class Event:
 
         current_time = now() + timedelta(minutes=START_TIME_DELAY)
 
-        # Get events in the same voice channel and then their timeblocks
-        conflicting_events = [event for event in client.events if event.voice_channel == self.voice_channel and event.created]
+        # Get events in the same location and then their timeblocks
+        conflicting_events = [event for event in client.events if event.same_location(self) and event.created]
         occupied_timeblocks = [
             TimeBlock(start_time=event.start_times[0], end_time=event.start_times[0] + (event.duration if event.duration_minutes != 0 else timedelta(minutes=DEFAULT_EVENT_DURATION)))
             for event in conflicting_events
@@ -798,7 +869,7 @@ class Event:
         self.reminder_flag = True
         # No need to send reminder message if all
         # participants are already in the voice channel
-        if all(participant.member in self.voice_channel.members for participant in self.subscribed_participants):
+        if not self.is_external and all(participant.member in self.voice_channel.members for participant in self.subscribed_participants):
             return
         content = self.get_reminder_message_content()
         embed = self.get_reminder_message_embed()
@@ -875,15 +946,15 @@ class Event:
         for event in client.events:
             if event == self or not event.created:
                 continue
-            if event.voice_channel == self.voice_channel or event.shares_participants(self):
+            if event.same_location(self) or event.shares_participants(self):
                 affected_events.append(event)
         for event in sorted(affected_events, key=lambda e: min(e.start_times)):
             event.start_times[0] = max(event.start_times[0], buffered_end)
             buffered_end = event.start_times[0] + event.duration + buffer_time
             await event.update_event_buttons_message()
-        # Disable start buttons of events scheduled for the same channel
+        # Disable start buttons of events scheduled for the same location
         for event in client.events:
-            if event == self or not event.created or event.voice_channel != self.voice_channel:
+            if event == self or not event.created or not event.same_location(self):
                 continue
             if event.event_buttons is not None:
                 event.event_buttons.start_end_button.disabled = True
@@ -893,13 +964,18 @@ class Event:
         """
         Starts the event if all of the participants are in the voice channel
         and there are no active events in that voice channel.
+        Events at an external location start at their start time instead.
         """
         if now() < self.start_times[0] - timedelta(minutes=REMINDER_TIME_MINUTES):
             return
-        for event in client.events:
-            if event is not self and event.voice_channel is self.voice_channel and event.started:
-                return
-        if all(participant.member in self.voice_channel.members for participant in self.subscribed_participants):
+        if self.location_has_active_event:
+            return
+        if self.is_external:
+            if now() >= self.start_times[0]:
+                await self.start(f"Event started by {client.user} at its start time.")
+            else:
+                await self.update_reminder_message()
+        elif all(participant.member in self.voice_channel.members for participant in self.subscribed_participants):
             await self.start(f"Event started by {client.user} because all users were in the voice channel.")
         else:
             await self.update_reminder_message()
@@ -940,7 +1016,7 @@ class Event:
             self.event_buttons_message = None
         # Re-enable start buttons of appropriate events
         for event in client.events:
-            if event == self or not event.created or event.voice_channel != self.voice_channel:
+            if event == self or not event.created or not event.same_location(self):
                 continue
             if event.event_buttons is not None:
                 event.event_buttons.start_end_button.disabled = False
@@ -958,8 +1034,12 @@ class Event:
     async def end_if_participants_leave_vc(self) -> None:
         """
         Ends the event if all of the participants have left the voice channel.
+        Events at an external location end once their duration has passed instead.
         """
-        if not any(participant.member in self.voice_channel.members for participant in self.participants):
+        if self.is_external:
+            if now() >= self.start_times[0] + self.scheduled_duration:
+                await self.end(f'Event ended by {client.user} because its duration passed.')
+        elif not any(participant.member in self.voice_channel.members for participant in self.participants):
             await self.end(f'Event ended by {client.user} because no users were in the voice channel.')
 
     async def prep_next_scheduled_event(self) -> None:
@@ -1007,8 +1087,8 @@ class Event:
                                                                       description='Bot-generated event',
                                                                       start_time=start_time,
                                                                       entity_type=self.entity_type,
-                                                                      channel=self.voice_channel,
-                                                                      privacy_level=self.privacy_level)
+                                                                      privacy_level=self.privacy_level,
+                                                                      **self.get_location_kwargs(start_time))
             if scheduled_event is not None:
                 await self.save_image_to_file()
                 if self.has_image_saved:
@@ -1086,7 +1166,7 @@ class Event:
                         value=self.duration_string,
                         inline=False)
         embed.add_field(name="Location",
-                        value=f"{self.text_channel.mention}\n{self.voice_channel.mention}",
+                        value=f"{self.text_channel.mention}\n{self.location_string}",
                         inline=False)
         if self.multi_event:
             embed.add_field(name="Multi Event",
@@ -1218,7 +1298,7 @@ class Event:
         if subscribed_only and unsubscribed_only:
             subscribed_only = False
             unsubscribed_only = False
-        voice_channel_members = self.voice_channel.members
+        voice_channel_members = self.voice_channel.members if not self.is_external else []
 
         for participant in self.participants:
             if mention:
@@ -1946,21 +2026,57 @@ class Event:
     @property
     def location_has_active_event(self) -> bool:
         """
-        Indicates if the event's :class:`VoiceChannel` has a different active event in it.
+        Indicates if the event's location has a different active event in it.
 
         Returns
         -------
         True
-            If the voice channel has an active event.
+            If the location has an active event.
         False
-            If the voice channel does not have an active event.
+            If the location does not have an active event.
         """
         for event in client.events:
             if event is self or not event.started:
                 continue
-            if event.voice_channel == self.voice_channel:
+            if event.same_location(self):
                 return True
         return False
+
+    @property
+    def is_external(self) -> bool:
+        """Indicates whether the event is at an external location instead of a voice channel."""
+        return self.location is not None
+
+    @property
+    def entity_type(self) -> EntityType:
+        return EntityType.external if self.is_external else EntityType.voice
+
+    @property
+    def location_key(self) -> tuple:
+        return get_location_key(self.voice_channel, self.location)
+
+    @property
+    def location_string(self) -> str:
+        """The voice channel mention, or the external location."""
+        return self.location if self.is_external else self.voice_channel.mention
+
+    def same_location(self, event) -> bool:
+        """Indicates whether this event takes place in the same voice channel or external location as the provided event."""
+        return self.location_key == event.location_key
+
+    def get_location_kwargs(self, start_time: datetime) -> dict:
+        """
+        Gets the location arguments for creating or editing a guild event that starts at the provided time.
+        External guild events require an end time.
+        """
+        if self.is_external:
+            return {"location": self.location, "end_time": start_time + self.scheduled_duration}
+        return {"channel": self.voice_channel}
+
+    @property
+    def scheduled_duration(self) -> timedelta:
+        """The duration, or the default duration if it is still automatic."""
+        return self.duration if self.duration_minutes != 0 else timedelta(minutes=DEFAULT_EVENT_DURATION)
 
     @property
     def timeblock(self) -> TimeBlock:
@@ -2025,10 +2141,13 @@ class Event:
         if not event_text_channel:
             raise Exception(f'[{event_name}] Could not find text channel, discarding event')
 
-        # Voice channel
-        event_voice_channel = utils.get(event_guild.voice_channels, id=data["voice_channel_id"])
-        if not event_voice_channel:
-            raise Exception(f'[{event_name}] Could not find voice channel, discarding event')
+        # Location: an external location, otherwise a voice channel
+        event_location = data.get("location") or None
+        event_voice_channel = None
+        if event_location is None:
+            event_voice_channel = utils.get(event_guild.voice_channels, id=data["voice_channel_id"])
+            if not event_voice_channel:
+                raise Exception(f'[{event_name}] Could not find voice channel, discarding event')
 
         # Participants
         event_participants = [Participant.from_dict(event_guild, participant) for participant in data["participants"]]
@@ -2168,6 +2287,7 @@ class Event:
             availability_message=event_availability_message,
             availability_buttons=None,
             voice_channel=event_voice_channel,
+            location=event_location,
             scheduler=event_scheduler,
             rescheduler=event_rescheduler,
             participants=event_participants,
@@ -2239,7 +2359,8 @@ class Event:
             'guild_id': self.guild.id,
             'text_channel_id': self.text_channel.id,
             'availability_message_id': availability_message_id,
-            'voice_channel_id': self.voice_channel.id,
+            'voice_channel_id': self.voice_channel.id if self.voice_channel is not None else 0,
+            'location': self.location or '',
             'scheduler_id': scheduler_id,
             'rescheduler_id': rescheduler_id,
             'participants': participants,
@@ -2329,6 +2450,7 @@ class ScheduleAgainModal(Modal):
                              guild=self.event.guild,
                              text_channel=self.event.text_channel,
                              voice_channel=self.event.voice_channel,
+                             location=self.event.location,
                              start_time=event_start_time,
                              scheduler_id=interaction.user.id,
                              image_url=event_image_url,
@@ -2348,6 +2470,7 @@ class ScheduleAgainModal(Modal):
                            guild=self.event.guild,
                            text_channel=self.event.text_channel,
                            voice_channel=self.event.voice_channel,
+                           location=self.event.location,
                            scheduler_id=interaction.user.id,
                            image_url=event_image_url,
                            usernames=", ".join([str(p.member.id) for p in self.event.participants]),
@@ -2770,7 +2893,7 @@ class EventButtons(View):
                 client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
             self.event.add_user_as_participant(interaction.user)
-            if interaction.user.id not in [member.id for member in self.event.voice_channel.members]:
+            if not self.event.is_external and interaction.user.id not in [member.id for member in self.event.voice_channel.members]:
                 logger.info(f"[{self.event}] {interaction.user} tried to press start button while not in the event's voice channel")
                 content = f"You must be in {self.event.voice_channel.mention} to start {self.event}!\nMembers:\n"
                 for member in self.event.voice_channel.members:
@@ -3032,7 +3155,8 @@ class ExistingGuildEventsSelect(Select):
             existingEvent = False
             # Event exists, adding guild event to that event
             for it_event in client.events:
-                if selected_guild_event.name == it_event.name and selected_guild_event.channel == it_event.voice_channel:
+                if selected_guild_event.name == it_event.name and \
+                        get_location_key(*get_guild_event_location(selected_guild_event)) == it_event.location_key:
                     existingEvent = True
                     it_event.created = True
                     it_event.text_channel = interaction.channel
@@ -3050,8 +3174,10 @@ class ExistingGuildEventsSelect(Select):
                 if selected_guild_event.cover_image is not None:
                     image_url = selected_guild_event.cover_image.url
                 # Start times are filled in from the matching guild events below
+                voice_channel, location = get_guild_event_location(selected_guild_event)
                 event = Event(name=selected_guild_event.name,
-                              voice_channel=selected_guild_event.channel,
+                              voice_channel=voice_channel,
+                              location=location,
                               guild=self.guild,
                               text_channel=interaction.channel,
                               image_url=image_url,
@@ -3063,7 +3189,8 @@ class ExistingGuildEventsSelect(Select):
             for guild_event in self.guild.scheduled_events:
                 if guild_event.id in known_ids:
                     continue
-                if guild_event.name == selected_guild_event.name and guild_event.channel == selected_guild_event.channel:
+                if guild_event.name == selected_guild_event.name and \
+                        get_location_key(*get_guild_event_location(guild_event)) == event.location_key:
                     event.start_times.append(guild_event.start_time.astimezone())
                     if event.has_image_saved:
                         await guild_event.edit(image=event.get_image())
@@ -3267,7 +3394,8 @@ async def edit_event(event: Event,
                      image_url: Optional[str] = None,
                      duration: Optional[int] = None,
                      multi_event: Optional[bool] = None,
-                     timeout_days: Optional[int] = None) -> None:
+                     timeout_days: Optional[int] = None,
+                     location: Optional[str] = None) -> None:
     embed = Embed(title=f"{event} Edited",
                   description=f"{event} has been edited.",
                   color=Color.orange())
@@ -3291,20 +3419,21 @@ async def edit_event(event: Event,
             embed.add_field(name="Name",
                             value=f"{old_name[:20]} -> {event.get_limited_name(20)}",
                             inline=False)
-    # Voice Channel
-    if voice_channel is not None:
-        old_vc = event.voice_channel
-        event.voice_channel = voice_channel
-        if old_vc == event.voice_channel:
-            embed.add_field(name="Voice Channel (Unchanged)",
-                            value=f"Voice channel is already {event.voice_channel.mention}",
+    # Location: an external location takes priority over a voice channel
+    if location is not None or voice_channel is not None:
+        old_location = event.location_string
+        if get_location_key(voice_channel, location) == event.location_key:
+            embed.add_field(name="Location (Unchanged)",
+                            value=f"Location is already {old_location}",
                             inline=False)
         else:
+            event.location = location or None
+            event.voice_channel = voice_channel if event.location is None else None
             if event.created:
-                for scheduled_event in event.scheduled_events:
-                    await scheduled_event.edit(channel=event.voice_channel)
-            embed.add_field(name="Voice Channel",
-                            value=f"{old_vc.mention} -> {event.voice_channel.mention}",
+                for scheduled_event, start_time in zip(event.scheduled_events, event.start_times):
+                    await scheduled_event.edit(entity_type=event.entity_type, **event.get_location_kwargs(start_time))
+            embed.add_field(name="Location",
+                            value=f"{old_location} -> {event.location_string}",
                             inline=False)
     # Image URL
     if image_url is not None:
@@ -3519,7 +3648,7 @@ async def on_message(message: Message):
 
 @client.tree.command(name='create', description='Create an event.')
 @app_commands.describe(event_name='Name for the event.')
-@app_commands.describe(voice_channel='Voice channel for the event.')
+@app_commands.describe(location='Voice channel for the event, or type a location such as an address.')
 @app_commands.describe(start_time='Start time (in Eastern Time or ISO format) for the event.')
 @app_commands.describe(image_url='URL to an image for the event.')
 @app_commands.describe(include_exclude='Whether to include or exclude users with the designated role.')
@@ -3528,7 +3657,7 @@ async def on_message(message: Message):
 @app_commands.describe(duration=f'Event duration in minutes ({DEFAULT_EVENT_DURATION} minutes default).')
 async def create_command(interaction: Interaction,
                          event_name: str,
-                         voice_channel: VoiceChannel,
+                         location: str,
                          start_time: str,
                          image_url: Optional[str] = None,
                          include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
@@ -3537,19 +3666,18 @@ async def create_command(interaction: Interaction,
                          duration: Optional[int] = DEFAULT_EVENT_DURATION):
     await interaction.response.defer(ephemeral=True)
     logger.info(f"[{event_name}] Received event creation request from {interaction.user.name}")
-    if not interaction.guild.voice_channels:
-        raise Exception("The server must have at least one voice channel to schedule an event.")
-
     participants = get_participants_from_interaction(event_name=event_name,
                                                      interaction=interaction,
                                                      include_exclude=include_exclude,
                                                      usernames=usernames,
                                                      roles=roles)
     try:
+        voice_channel, location = resolve_location(interaction.guild, location)
         await create(event_name=event_name,
                      guild=interaction.guild,
                      text_channel=interaction.channel,
                      voice_channel=voice_channel,
+                     location=location,
                      start_time=start_time,
                      scheduler_id=interaction.user.id,
                      image_url=image_url,
@@ -3567,10 +3695,13 @@ async def create_command(interaction: Interaction,
     await followup.delete(delay=3)
 
 
+create_command.autocomplete('location')(location_autocomplete)
+
+
 async def create(event_name: str,
                  guild: Guild,
                  text_channel: TextChannel,
-                 voice_channel: VoiceChannel,
+                 voice_channel: Optional[VoiceChannel],
                  start_time: datetime or str,
                  scheduler_id: Optional[int] = 0,
                  image_url: Optional[str] = None,
@@ -3578,7 +3709,8 @@ async def create(event_name: str,
                  usernames: Optional[str] or Optional[list[str]] or Optional[list[int]] or Optional[list[Participant]] = None,
                  roles: Optional[str] = None,
                  duration: Optional[int] = DEFAULT_EVENT_DURATION,
-                 multi_event: Optional[bool] = False):
+                 multi_event: Optional[bool] = False,
+                 location: Optional[str] = None):
     """
     Creates an event with a specified start time.
 
@@ -3590,8 +3722,9 @@ async def create(event_name: str,
         The guild that the event is occurring in.
     text_channel: :class:`TextChannel`
         The text channel that the event sends messages in.
-    voice_channel: :class:`VoiceChannel`
+    voice_channel: :class:`Optional[VoiceChannel]`
         The voice channel that the event occurs in.
+        Default: the guild's first voice channel, unless a location is provided.
     start_time: :class:`datetime` or :class:`str`
         The start time for the event.
     scheduler_id: :class:`Optional[int]`
@@ -3612,6 +3745,8 @@ async def create(event_name: str,
     multi_event: :class:`Optional[bool]`
         Whether or not the event is a multi event.
         Default: False
+    location: :class:`Optional[str]`
+        An external location (e.g. a physical address) to use instead of a voice channel.
 
     Returns
     -------
@@ -3623,10 +3758,10 @@ async def create(event_name: str,
     Exception: :class:`Exception`
         A string message describing the error.
      """
-    # Voice channel
-    if not guild.voice_channels:
-        logger.info(f"[{event_name}] Scheduling cancelled due to no voice channel in guild")
-        raise Exception("The server must have at least one voice channel to schedule an event.")
+    # Location
+    if location is None and voice_channel is None and not guild.voice_channels:
+        logger.info(f"[{event_name}] Scheduling cancelled due to no location and no voice channel in guild")
+        raise Exception("The server must have at least one voice channel to schedule an event without a location.")
 
     # Event name
     if event_name in [event.name for event in client.events]:
@@ -3719,6 +3854,10 @@ async def create(event_name: str,
             break
     duration = timedelta(minutes=duration)
     start_times = [start_time_obj]
+    # Without a location or voice channel, the event falls back to the first voice channel
+    if location is None and voice_channel is None:
+        voice_channel = guild.voice_channels[0]
+    location_key = get_location_key(voice_channel, location)
     for start_time in start_times:
         timeblock = TimeBlock(start_time=start_time, end_time=start_time + duration)
         for other_event in client.events:
@@ -3727,7 +3866,7 @@ async def create(event_name: str,
             for other_start_time in other_event.start_times:
                 other_timeblock = TimeBlock(start_time=other_start_time,
                                             end_time=other_start_time + other_event.duration)
-                if other_event.voice_channel == voice_channel:
+                if other_event.location_key == location_key:
                     if timeblock.overlaps_with(other_timeblock):
                         content = f"**Specified time overlaps with** ***{other_event}*** **in the same location!**"
                         raise Exception(content)
@@ -3741,6 +3880,7 @@ async def create(event_name: str,
     # Make event
     event = Event(name=event_name,
                   voice_channel=voice_channel,
+                  location=location,
                   scheduler=scheduler,
                   participants=participants,
                   guild=guild,
@@ -3762,7 +3902,7 @@ async def create(event_name: str,
 
 @client.tree.command(name='schedule', description='Schedule an event.')
 @app_commands.describe(event_name='Name for the event.')
-@app_commands.describe(voice_channel='Voice channel for the event.')
+@app_commands.describe(location='Voice channel for the event, or type a location such as an address.')
 @app_commands.describe(image_url="URL to an image for the event.")
 @app_commands.describe(include_exclude='Whether to include or exclude users specified.')
 @app_commands.describe(usernames='Comma separated usernames of users to include/exclude.')
@@ -3772,7 +3912,7 @@ async def create(event_name: str,
 @app_commands.describe(timeout=f'Number of days that the event should wait for responses ({DEFAULT_EVENT_TIMEOUT_DAYS} days default).')
 async def schedule_command(interaction: Interaction,
                            event_name: str,
-                           voice_channel: VoiceChannel,
+                           location: str,
                            image_url: Optional[str] = None,
                            include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
                            usernames: Optional[str] = None,
@@ -3783,10 +3923,12 @@ async def schedule_command(interaction: Interaction,
     await interaction.response.defer(ephemeral=True)
     logger.info(f'[{event_name}] Received event schedule request from {interaction.user.name}')
     try:
+        voice_channel, location = resolve_location(interaction.guild, location)
         await schedule(event_name=event_name,
                        guild=interaction.guild,
                        text_channel=interaction.channel,
                        voice_channel=voice_channel,
+                       location=location,
                        scheduler_id=interaction.user.id,
                        image_url=image_url,
                        include_exclude=include_exclude,
@@ -3805,10 +3947,13 @@ async def schedule_command(interaction: Interaction,
         await interaction.followup.send(content=content, ephemeral=True)
 
 
+schedule_command.autocomplete('location')(location_autocomplete)
+
+
 async def schedule(event_name: str,
                    guild: Guild,
                    text_channel: TextChannel,
-                   voice_channel: VoiceChannel,
+                   voice_channel: Optional[VoiceChannel],
                    scheduler_id: Optional[int] = 0,
                    image_url: Optional[str] = None,
                    include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
@@ -3816,7 +3961,8 @@ async def schedule(event_name: str,
                    roles: Optional[str] = None,
                    duration: Optional[int] = 0,
                    multi_event: Optional[bool] = False,
-                   timeout_days: Optional[int] = DEFAULT_EVENT_TIMEOUT_DAYS):
+                   timeout_days: Optional[int] = DEFAULT_EVENT_TIMEOUT_DAYS,
+                   location: Optional[str] = None):
     """
     Starts the scheduling of an event.
 
@@ -3828,8 +3974,9 @@ async def schedule(event_name: str,
         The guild that the event is occurring in.
     text_channel: :class:`TextChannel`
         The text channel that the event sends messages in.
-    voice_channel: :class:`VoiceChannel`
+    voice_channel: :class:`Optional[VoiceChannel]`
         The voice channel that the event occurs in.
+        Default: the guild's first voice channel, unless a location is provided.
     scheduler_id: :class:`Optional[int]`
         The ID of the member who scheduled the event.
     image_url: :class:`Optional[str]`
@@ -3851,6 +3998,8 @@ async def schedule(event_name: str,
     timeout_days: :class:'Optional[int]'
         The number of days to make the event's timeout.
         Default: DEFAULT_EVENT_TIMEOUT_DAYS
+    location: :class:`Optional[str]`
+        An external location (e.g. a physical address) to use instead of a voice channel.
 
     Returns
     -------
@@ -3862,10 +4011,10 @@ async def schedule(event_name: str,
     Exception: :class:`Exception`
         A string message describing the error.
     """
-    # Voice channel
-    if not guild.voice_channels:
-        logger.info(f"[{event_name}] Scheduling cancelled due to no voice channel in guild")
-        raise Exception("The server must have at least one voice channel to schedule an event.")
+    # Location
+    if location is None and voice_channel is None and not guild.voice_channels:
+        logger.info(f"[{event_name}] Scheduling cancelled due to no location and no voice channel in guild")
+        raise Exception("The server must have at least one voice channel to schedule an event without a location.")
 
     # Event name
     if event_name in [event.name for event in client.events]:
@@ -3934,6 +4083,7 @@ async def schedule(event_name: str,
     duration = timedelta(minutes=duration)
     event = Event(name=event_name,
                   voice_channel=voice_channel,
+                  location=location,
                   scheduler=scheduler,
                   participants=participants,
                   guild=guild,
@@ -3952,19 +4102,24 @@ async def schedule(event_name: str,
 
 @client.tree.command(name='edit', description='Edit an existing event.')
 @app_commands.describe(name='Name for the event.')
-@app_commands.describe(voice_channel='Voice channel for the event.')
+@app_commands.describe(location='Voice channel for the event, or type a location such as an address.')
 @app_commands.describe(image_url='URL to an image for the event.')
 @app_commands.describe(duration='Event duration in minutes (0 minutes default, duration calculated based on participant availability).')
 @app_commands.describe(multi_event='Create an event on each date that everyone is available.')
 @app_commands.describe(timeout=f'Number of days that the event should wait for responses ({DEFAULT_EVENT_TIMEOUT_DAYS} days default).')
 async def edit_command(interaction: Interaction,
                        name: Optional[str] = None,
-                       voice_channel: Optional[VoiceChannel] = None,
+                       location: Optional[str] = None,
                        image_url: Optional[str] = None,
                        duration: Optional[int] = None,
                        multi_event: Optional[bool] = None,
                        timeout: Optional[int] = None):
     await interaction.response.defer(ephemeral=True, thinking=True)
+    try:
+        voice_channel, location = resolve_location(interaction.guild, location)
+    except Exception as e:
+        await interaction.followup.send(content=f"Error editing event: {e}", ephemeral=True)
+        return
     same_text_channel_events = []
     same_guild_events = []
     events = []
@@ -3988,6 +4143,7 @@ async def edit_command(interaction: Interaction,
         embed = await edit_event(event=event,
                                  name=name,
                                  voice_channel=voice_channel,
+                                 location=location,
                                  image_url=image_url,
                                  duration=duration,
                                  multi_event=multi_event,
@@ -4012,6 +4168,7 @@ async def edit_command(interaction: Interaction,
                     embed = await edit_event(event=event,
                                              name=name,
                                              voice_channel=voice_channel,
+                                             location=location,
                                              image_url=image_url,
                                              duration=duration,
                                              multi_event=multi_event,
@@ -4030,6 +4187,9 @@ async def edit_command(interaction: Interaction,
         view = View()
         view.add_item(select)
         await interaction.followup.send(view=view, ephemeral=True)
+
+
+edit_command.autocomplete('location')(location_autocomplete)
 
 
 @client.tree.command(name='attach', description='Create an event message for an existing guild event.')
@@ -4068,8 +4228,10 @@ async def attach_command(interaction: Interaction):
             image_url = None
             if guild_event.cover_image is not None:
                 image_url = guild_event.cover_image.url
+            voice_channel, location = get_guild_event_location(guild_event)
             event = Event(name=guild_event.name,
-                          voice_channel=guild_event.channel,
+                          voice_channel=voice_channel,
+                          location=location,
                           guild=interaction.guild,
                           text_channel=interaction.channel,
                           image_url=image_url,

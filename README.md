@@ -1,6 +1,6 @@
 # Event Scheduler
 
-A Discord bot that finds a time that works for everyone and turns it into a Discord server event. Start scheduling in a text channel, and the bot asks everyone involved for their availability. Once everyone has answered, it picks the earliest time when every participant is free, creates the event, reminds people before it starts, and starts and ends the event as people join and leave the voice channel.
+A Discord bot that finds a time that works for everyone and turns it into a Discord server event. Start scheduling in a text channel, and the bot asks everyone involved for their availability. Once everyone has answered, it picks the earliest time when every participant is free, creates the event, reminds people before it starts, and starts and ends the event as people join and leave the voice channel. Events can also take place somewhere other than a voice channel, such as a physical address.
 
 ## Contents
 
@@ -89,7 +89,7 @@ This is the main command. The bot posts an availability message in the channel a
 | Option            | Required | Description |
 |-------------------|----------|-------------|
 | `event_name`      | Yes | The event's name. Two events can't have the same name at the same time. |
-| `voice_channel`   | Yes | The voice channel where the event takes place. |
+| `location`        | Yes | Where the event takes place. The voice channels appear as suggestions, so press Enter to pick the first one. Or type any other location, such as an address, up to 100 characters. See [Locations](#locations). |
 | `image_url`       | No  | An image for the Discord event and the bot's messages. |
 | `include_exclude` | No  | Whether `usernames` and `roles` add people (`INCLUDE`, the default) or leave people out (`EXCLUDE`). |
 | `usernames`       | No  | Comma-separated usernames or user IDs to include or exclude. |
@@ -103,10 +103,25 @@ This is the main command. The bot posts an availability message in the channel a
 **Examples:**
 
 ```
-/schedule event_name:Game Night voice_channel:#General
-/schedule event_name:Raid voice_channel:#Raids roles:Raiders
-/schedule event_name:Movie voice_channel:#Theater include_exclude:EXCLUDE usernames:alice, bob
+/schedule event_name:Game Night location:General
+/schedule event_name:Raid location:Raids roles:Raiders
+/schedule event_name:Movie location:Theater include_exclude:EXCLUDE usernames:alice, bob
+/schedule event_name:Board Games location:123 Main St
 ```
+
+### Locations
+
+The `location` option suggests the server's voice channels as you type. Picking one, or typing a voice channel's exact name, puts the event in that voice channel. Anything else becomes an external location, and the Discord event is created as a "somewhere else" event.
+
+The location changes how the event starts and ends:
+
+| | Voice channel | Other location |
+|---|---|---|
+| **Starts** | When every participant is in the voice channel, from 15 minutes before the start time | At the start time |
+| **Ends** | When everyone has left the voice channel | When its duration has passed |
+| **Start Event button** | You must be in the voice channel | Any participant can press it |
+
+Either way, events at the same location can't overlap. For typed locations, "the same location" means the same text, ignoring capitalization.
 
 ### `/create`: create an event at a time you choose
 
@@ -121,7 +136,7 @@ Use this command when you already know the time. It takes the same options as `/
 
 | Command         | What it does |
 |-----------------|--------------|
-| `/edit`         | Change an event in the current channel. You can change its name, voice channel, image, duration, multi-event setting, or timeout. If the channel has more than one event, pick one from a dropdown. |
+| `/edit`         | Change an event in the current channel. You can change its name, location, image, duration, multi-event setting, or timeout. If the channel has more than one event, pick one from a dropdown. |
 | `/attach`       | Have the bot manage a Discord event that was created outside the bot. Pick the event from a dropdown. |
 | `/availability` | Show everyone's availability for an event in the current channel. |
 | `/listevents`   | List every event the bot is managing in this server. |
@@ -176,7 +191,7 @@ After the event is created, the bot posts a message with these buttons:
 
 | Button | What it does |
 |--------|--------------|
-| **Start Event / End Event** | Starts the event manually, then changes to an End button. Events also start automatically when every participant joins the voice channel, and end when everyone leaves. |
+| **Start Event / End Event** | Starts the event manually, then changes to an End button. Events also start automatically when every participant joins the voice channel, and end when everyone leaves. Events at a [typed location](#locations) start at their start time and end when their duration has passed. |
 | **End and Forget** | Ends the event, and the bot stops tracking it. |
 | **Unsubscribe** | Stops the bot from mentioning you about this event. |
 | **Reschedule Event** | Restarts availability collection with the same participants. |
@@ -186,7 +201,7 @@ The bot mentions participants 15 minutes before the event starts.
 
 ### Schedule Again
 
-When an event ends or is cancelled, the bot shows a **Schedule Again** button for about a week. It reuses the voice channel and participants, and lets you change the name, duration, image URL, and start time:
+When an event ends or is cancelled, the bot shows a **Schedule Again** button for about a week. It reuses the location and participants, and lets you change the name, duration, image URL, and start time:
 
 - Leave **Start Time** blank to start collecting availability again, as with `/schedule`.
 - Enter a **Start Time** to create the event at that time, as with `/create`.
@@ -222,6 +237,7 @@ The bot listens for TCP connections on `HOST:PORT` from `.env`. Send a JSON obje
   "guild_id": 123456789012345678,
   "text_channel_id": 123456789012345678,
   "voice_channel_id": 123456789012345678,
+  "location": null,
   "scheduler_id": 123456789012345678,
   "image_url": null,
   "include_exclude": "INCLUDE",
@@ -232,7 +248,7 @@ The bot listens for TCP connections on `HOST:PORT` from `.env`. Send a JSON obje
 }
 ```
 
-Every field is required. The bot replies `valid` if the request was accepted, `invalid JSON` if the message couldn't be parsed, or `error: <message>` if scheduling failed.
+Every field is required except `location` and `voice_channel_id`. Set `location` to a string, such as an address, to hold the event there instead of in a voice channel. Without either one, the event uses the server's first voice channel. The bot replies `valid` if the request was accepted, `invalid JSON` if the message couldn't be parsed, or `error: <message>` if scheduling failed.
 
 Example in Python:
 

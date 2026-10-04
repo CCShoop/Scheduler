@@ -74,7 +74,7 @@ def env(sched, monkeypatch):
 
     guild = FakeGuild()
     text_channel = FakeTextChannel()
-    voice_channel = SimpleNamespace(id=2, members=[], mention="<#2>")
+    voice_channel = SimpleNamespace(id=2, name="General", members=[], mention="<#2>")
     guild.channels = {text_channel.id: text_channel, voice_channel.id: voice_channel}
     guild.voice_channels = [voice_channel]
 
