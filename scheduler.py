@@ -14,7 +14,7 @@ from discord import (app_commands, Interaction, Intents, Client, Embed, Color, A
                      ButtonStyle, EntityType, TextChannel, ActivityType, Status, EventStatus,
                      VoiceChannel, Message, SelectOption, ScheduledEvent, Member,
                      Guild, PrivacyLevel, User, utils, NotFound, DiscordServerError)
-from discord.ui import View, Button, Modal, TextInput, Select
+from discord.ui import View, Button, Modal, TextInput, Select, Label
 from discord.ext import tasks
 
 from libs.persistence import Persistence
@@ -527,15 +527,33 @@ class Event:
             # Timeout check
             if await self.update_timeout():
                 return
-            if not self.input_timer_running or self.input_timer_elapsed:
+            if self.input_timer_elapsed:
+                # Multi event availability cooldown finished
+                self.stop_input_timer()
+                await self.create_if_possible()
+                # Creation updates messages itself, otherwise clear the "waiting" status
+                if not self.created:
+                    await self.update_messages()
+            elif not self.input_timer_running:
                 await self.create_if_possible()
         # Event has been created
         else:
+            # Create guild events for start times that are missing one,
+            # e.g. the bot shut down partway through creating a multi event
+            if len(self.scheduled_events) < len(self.start_times):
+                logger.warning(f"[{self}] {len(self.start_times) - len(self.scheduled_events)} start time(s) missing a guild event, creating")
+                async with self.create_lock:
+                    await self.make_scheduled_events()
+            # Every guild event was deleted while the bot was offline
+            if not self.scheduled_events and not self.start_times:
+                logger.warning(f"[{self}] No guild events or start times remain, removing")
+                self.remove()
+                return
             if not self.started:
                 # Recreate the event if it was manually cancelled
                 if self.scheduled_events[0].status == EventStatus.cancelled:
-                    # make_scheduled_events recreates one guild event per start time,
-                    # so drop the cancelled one and delete any later ones to avoid duplicates
+                    # make_scheduled_events only creates trailing missing guild events,
+                    # so drop the cancelled one and delete any later ones to recreate them all
                     for scheduled_event in self.scheduled_events[1:]:
                         try:
                             await scheduled_event.delete(reason="Event recreated after manual cancellation.")
@@ -967,12 +985,16 @@ class Event:
 
     async def make_scheduled_events(self) -> None:
         """
-        Creates a scheduled event for each start time and sets the guild event's image if appropriate.
+        Creates a scheduled event for each start time that doesn't have one yet
+        and sets the guild event's image if appropriate.
+        scheduled_events and start_times are index-aligned, so creation stops at the first failure
+        and the remaining start times are retried by update().
         """
         self.stop_input_timer()
         if len(self.name) > 100:
             self.name = self.name[:99]
-        for i, start_time in enumerate(self.start_times):
+        for i in range(len(self.scheduled_events), len(self.start_times)):
+            start_time = self.start_times[i]
             # Ensure start time is in the future
             if start_time <= now() + timedelta(seconds=5):
                 logger.warning(f"[{self}] Tried to create event in the past, moving to {START_TIME_DELAY} minutes from now")
@@ -994,6 +1016,7 @@ class Event:
                 self.created = True
             else:
                 logger.error(f"[{self}] Failed to create event!")
+                break
         self.reminder_flag = bool(self.start_times[0] < (now() + timedelta(minutes=REMINDER_TIME_MINUTES)))
 
     async def handle_input_received(self, exclude: Optional[list[Participant]] = None) -> None:
@@ -1034,9 +1057,7 @@ class Event:
             True if the timer has elapsed, otherwise False.
         """
         if self.input_timer_running:
-            if (self.availability_input_timer + timedelta(seconds=AVAILABILITY_COOLDOWN_SECONDS)) <= datetime.now().astimezone():
-                self.stop_input_timer()
-                return True
+            return (self.availability_input_timer + timedelta(seconds=AVAILABILITY_COOLDOWN_SECONDS)) <= datetime.now().astimezone()
         return False
 
     def get_general_embed(self, end_time: Optional[datetime] = None) -> Embed:
@@ -1695,6 +1716,8 @@ class Event:
         canceller: :class:`str`
             The name of the canceller of the event.
         """
+        if reason == "":
+            reason = "(No reason provided)"
         content = self.get_names_string(subscribed_only=True, mention=True)
         embed = self.get_cancel_embed(reason, canceller)
         buttons = self.get_after_buttons()
@@ -1716,6 +1739,67 @@ class Event:
         # Restore removed availabilities
         for event in client.events:
             event.restore_availabilities(self)
+            await event.update_messages()
+
+    async def cancel_occurrences(self, occurrences: list[ScheduledEvent], reason: Optional[str] = "", canceller: Optional[str] = "") -> None:
+        """
+        Cancels specific occurrences of a multi event.
+        Cancels the whole event if every remaining occurrence is selected.
+
+        Arguments
+        ---------
+        occurrences: :class:`list[ScheduledEvent]`
+            The guild scheduled events to cancel.
+        reason: :class:`str`
+            The reason for the cancellation.
+        canceller: :class:`str`
+            The name of the canceller.
+        """
+        if reason == "":
+            reason = "(No reason provided)"
+        # The modal may have been open while the event started or occurrences changed
+        indices = [i for i, scheduled_event in enumerate(self.scheduled_events) if scheduled_event in occurrences]
+        if self.started and 0 in indices:
+            indices.remove(0)
+        if not indices:
+            return
+        cancel_all = len(indices) == len(self.scheduled_events)
+        cancelled_times = []
+        # Pop from the end so the remaining indices stay aligned between scheduled_events and start_times
+        for i in sorted(indices, reverse=True):
+            scheduled_event = self.scheduled_events[i]
+            cancelled_times.insert(0, scheduled_event.start_time)
+            # Leave the first occurrence for cancel() to delete when cancelling everything
+            if i == 0 and cancel_all:
+                continue
+            try:
+                await scheduled_event.delete(reason=f'Cancel button pressed by {canceller}: {reason}')
+            except Exception as e:
+                logger.error(f'[{self}] Error in cancel_occurrences while deleting scheduled event: {e}')
+            self.scheduled_events.pop(i)
+            if i < len(self.start_times):
+                self.start_times.pop(i)
+        if cancel_all:
+            await self.cancel(reason=reason, canceller=canceller)
+            return
+        if 0 in indices:
+            await self.delete_reminder_message()
+            self.reminder_flag = bool(self.start_times[0] < (now() + timedelta(minutes=REMINDER_TIME_MINUTES)))
+        content = self.get_names_string(subscribed_only=True, mention=True)
+        embed = self.get_cancel_embed(reason, canceller)
+        if len(cancelled_times) == 1:
+            embed.title = "Occurrence Cancelled"
+        else:
+            embed.title = "Occurrences Cancelled"
+        embed.description = f"The following occurrences of {self} have been cancelled:\n"
+        embed.description += "\n".join(print_date_time(cancelled_time) for cancelled_time in cancelled_times)
+        await self.text_channel.send(content=content, embed=embed)
+        logger.info(f"[{self}] Cancelled {len(cancelled_times)} occurrence(s), next starts at {self.start_times[0]}")
+        # Restore availability taken by the cancelled occurrences, then take it again for the remaining ones
+        for event in client.events:
+            event.restore_availabilities(self)
+        remove_times_from_availabilities_for_events()
+        for event in client.events:
             await event.update_messages()
 
     def remove(self) -> None:
@@ -2014,13 +2098,16 @@ class Event:
 
         # Scheduled event
         event_scheduled_events = []
+        # Indices of saved guild events that were deleted while the bot was offline
+        missing_scheduled_event_indices = []
         try:
             scheduled_event_ids = data["scheduled_event_ids"]
-            for scheduled_event_id in scheduled_event_ids:
-                for guild_scheduled_event in event_guild.scheduled_events:
-                    if guild_scheduled_event.id == scheduled_event_id:
-                        event_scheduled_events.append(guild_scheduled_event)
-                        break
+            for i, scheduled_event_id in enumerate(scheduled_event_ids):
+                guild_scheduled_event = event_guild.get_scheduled_event(scheduled_event_id)
+                if guild_scheduled_event is not None:
+                    event_scheduled_events.append(guild_scheduled_event)
+                else:
+                    missing_scheduled_event_indices.append(i)
         except Exception as e:
             logger.warning(f'[{event_name}] error getting guild scheduled events: {e}')
 
@@ -2045,6 +2132,12 @@ class Event:
             event_start_times = [datetime.fromisoformat(start_time) for start_time in data["start_times"]]
         except Exception:
             event_start_times = []
+        # Keep start_times index-aligned with scheduled_events.
+        # Start times past the saved guild events were never created and are created by update().
+        if missing_scheduled_event_indices:
+            logger.warning(f'[{event_name}] {len(missing_scheduled_event_indices)} guild event(s) no longer exist, dropping their start time(s)')
+            event_start_times = [start_time for i, start_time in enumerate(event_start_times)
+                                 if i not in missing_scheduled_event_indices]
 
         # Duration
         event_duration = timedelta(minutes=data["duration"])
@@ -2282,16 +2375,35 @@ class CancelModal(Modal):
     def __init__(self, event: Event, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.event = event
-        self.reason = TextInput(label='Reason', placeholder="don't wanna")
+        self.reason = TextInput(label='Reason', placeholder="Why are you cancelling?", required=False)
         self.add_item(self.reason)
+        self.occurrences = None
+        if self.event.multi_event and len(self.event.scheduled_events) > 1:
+            # Every occurrence shares the event's name, so label by start time.
+            # Select labels can't render Discord timestamps, so use the bot's local timezone.
+            # Discord allows at most 25 options per select.
+            options = [SelectOption(label=occurrence.start_time.astimezone().strftime("%a %m/%d/%Y %I:%M %p %Z"),
+                                    value=str(occurrence.id),
+                                    default=True)
+                       for occurrence in self.event.scheduled_events[:25]]
+            self.occurrences = Select(options=options,
+                                      min_values=1,
+                                      max_values=len(options))
+            self.add_item(Label(text="Occurrences to Cancel", component=self.occurrences))
 
     async def on_submit(self, interaction: Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
-        logger.info(f"[{self.event}] {interaction.user} cancelled event with reason: {self.reason.value}")
         canceller = interaction.user.name
         if interaction.user.nick:
             canceller = interaction.user.nick
-        await self.event.cancel(reason=self.reason.value, canceller=canceller)
+        if self.occurrences is None:
+            logger.info(f"[{self.event}] {interaction.user} cancelled event with reason: {self.reason.value}")
+            await self.event.cancel(reason=self.reason.value, canceller=canceller)
+            return
+        selected_ids = [int(value) for value in self.occurrences.values]
+        selected = [occurrence for occurrence in self.event.scheduled_events if occurrence.id in selected_ids]
+        logger.info(f"[{self.event}] {interaction.user} cancelled {len(selected)} occurrence(s) with reason: {self.reason.value}")
+        await self.event.cancel_occurrences(occurrences=selected, reason=self.reason.value, canceller=canceller)
 
     async def on_error(self, interaction: Interaction, error: Exception) -> None:
         await interaction.response.send_message(content=f"Error cancelling event: {error}",
