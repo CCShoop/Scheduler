@@ -2113,6 +2113,7 @@ class Event:
     async def from_dict(cls, data):
         """
         Constructs an :class:`Event` from a data dict.
+        If the event is discarded, a message is sent to its text channel when possible.
 
         Arguments
         ---------
@@ -2124,22 +2125,31 @@ class Event:
         class: :class:`Event`
             The :class:`Event` object.
         """
+        # Guild and text channel are read first so a discarded event can be reported in its text channel
+        event_guild = client.get_guild(data["guild_id"])
+        if not event_guild:
+            raise Exception(f'[{data.get("name")}] Could not find guild, discarding event')
+        event_text_channel = event_guild.get_channel(data["text_channel_id"])
+        if not event_text_channel:
+            raise Exception(f'[{data.get("name")}] Could not find text channel, discarding event')
+        try:
+            return await cls._from_dict(data, event_guild, event_text_channel)
+        except Exception:
+            try:
+                await event_text_channel.send(content=f'Event Scheduler has restarted and an error occurred, so the event **{data.get("name")}** was dropped.')
+            except Exception as e:
+                logger.error(f'[{data.get("name")}] Error sending dropped event message: {e}')
+            raise
+
+    @classmethod
+    async def _from_dict(cls, data, event_guild: Guild, event_text_channel: TextChannel):
+        """Constructs an :class:`Event` from a data dict, given its already resolved guild and text channel."""
         # Name
         event_name = data["name"]
         if event_name == '':
             raise Exception('Event has no name, discarding event')
         elif event_name in [event.name for event in client.events]:
             raise Exception(f'[{event_name}] Event name already in use, discarding repeat event')
-
-        # Guild
-        event_guild = client.get_guild(data["guild_id"])
-        if not event_guild:
-            raise Exception(f'[{event_name}] Could not find guild, discarding event')
-
-        # Text channel
-        event_text_channel = event_guild.get_channel(data["text_channel_id"])
-        if not event_text_channel:
-            raise Exception(f'[{event_name}] Could not find text channel, discarding event')
 
         # Location: an external location, otherwise a voice channel
         event_location = data.get("location") or None
@@ -2262,6 +2272,18 @@ class Event:
             logger.warning(f'[{event_name}] {len(missing_scheduled_event_indices)} guild event(s) no longer exist, dropping their start time(s)')
             event_start_times = [start_time for i, start_time in enumerate(event_start_times)
                                  if i not in missing_scheduled_event_indices]
+        # A created event needs a start time, otherwise its messages can't be rendered.
+        # Before discarding it, attach to any guild events that match its name and location.
+        if event_created and not event_start_times:
+            location_key = get_location_key(event_voice_channel, event_location)
+            event_scheduled_events = sorted((guild_event for guild_event in event_guild.scheduled_events
+                                             if guild_event.name == event_name and
+                                             get_location_key(*get_guild_event_location(guild_event)) == location_key),
+                                            key=lambda guild_event: guild_event.start_time)
+            if not event_scheduled_events:
+                raise Exception(f'[{event_name}] No guild events or start times remain, discarding event')
+            event_start_times = [guild_event.start_time.astimezone() for guild_event in event_scheduled_events]
+            logger.info(f'[{event_name}] attached to {len(event_scheduled_events)} matching guild event(s)')
 
         # Duration
         event_duration = timedelta(minutes=data["duration"])
@@ -4210,10 +4232,16 @@ async def attach_command(interaction: Interaction):
                 existingEvent = True
                 it_event.text_channel = interaction.channel
                 it_event.created = True
+                # Keep start_times index-aligned with scheduled_events
                 if len(it_event.scheduled_events) == 0:
                     it_event.scheduled_events.append(guild_event)
+                    it_event.start_times = [guild_event.start_time.astimezone()]
                 else:
                     it_event.scheduled_events[0] = guild_event
+                    if it_event.start_times:
+                        it_event.start_times[0] = guild_event.start_time.astimezone()
+                    else:
+                        it_event.start_times.append(guild_event.start_time.astimezone())
                 event = it_event
                 break
         # Event does not exist

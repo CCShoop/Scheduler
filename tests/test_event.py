@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-from discord import EventStatus
+from discord import EntityType, EventStatus
 
 from libs.participant import TimeBlock
 from fakes import FakeScheduledEvent, at, noop, run
@@ -369,6 +369,32 @@ class TestPersistence:
         loaded = self.load(env, monkeypatch, self.save_data(env, event))
         assert loaded.scheduled_events == env.guild.created
         assert loaded.start_times == [at(1, 20), at(2, 20)]
+
+    def test_discards_created_event_when_every_guild_event_was_deleted(self, env, monkeypatch):
+        """Regression: loading left a created event with no start times, so rendering its messages raised IndexError."""
+        a = env.make_participant("a")
+        scheduled_event = FakeScheduledEvent(at(1, 20))
+        env.guild.created = [scheduled_event]
+        event = env.make_event([a], created=True, start_times=[at(1, 20)], scheduled_events=[scheduled_event])
+        data = self.save_data(env, event)
+        scheduled_event.deleted = True
+        with pytest.raises(Exception, match="discarding event"):
+            self.load(env, monkeypatch, data)
+        assert "was dropped" in env.text_channel.sent[-1]["content"]
+        assert event.name in env.text_channel.sent[-1]["content"]
+
+    def test_attaches_to_matching_guild_events_when_saved_ones_are_gone(self, env, monkeypatch):
+        a = env.make_participant("a")
+        event = env.make_event([a], created=True, start_times=[at(1, 20)],
+                               scheduled_events=[FakeScheduledEvent(at(1, 20))])
+        data = self.save_data(env, event)
+        replacement = FakeScheduledEvent(at(2, 20), name=event.name, channel=env.voice_channel)
+        other_location = FakeScheduledEvent(at(3, 20), name=event.name, entity_type=EntityType.external, location="Park")
+        env.guild.created = [other_location, replacement]
+        loaded = self.load(env, monkeypatch, data)
+        assert loaded.scheduled_events == [replacement]
+        assert loaded.start_times == [at(2, 20)]
+        assert env.text_channel.sent == []
 
     def test_duplicate_name_is_rejected(self, env, monkeypatch):
         event = env.make_event([env.make_participant("a")])

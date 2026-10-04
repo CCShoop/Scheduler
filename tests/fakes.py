@@ -5,7 +5,7 @@ import itertools
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
-from discord import EventStatus
+from discord import EntityType, EventStatus
 
 _ids = itertools.count(1000)
 
@@ -29,6 +29,22 @@ class FakeScheduledEvent:
         # Arguments the guild event was created with, and each edit's arguments
         self.kwargs = kwargs
         self.edits = []
+
+    @property
+    def name(self):
+        return self.kwargs.get("name")
+
+    @property
+    def entity_type(self):
+        return self.kwargs.get("entity_type", EntityType.voice)
+
+    @property
+    def channel(self):
+        return self.kwargs.get("channel")
+
+    @property
+    def location(self):
+        return self.kwargs.get("location")
 
     async def delete(self, reason=None):
         self.deleted = True
@@ -62,6 +78,10 @@ class FakeGuild:
         scheduled_event = FakeScheduledEvent(start_time, **kwargs)
         self.created.append(scheduled_event)
         return scheduled_event
+
+    @property
+    def scheduled_events(self):
+        return [se for se in self.created if not se.deleted]
 
     def get_scheduled_event(self, scheduled_event_id):
         return next((se for se in self.created if se.id == scheduled_event_id and not se.deleted), None)
