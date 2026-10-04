@@ -2,6 +2,8 @@ name: Tests
 
 on:
   push:
+    tags:
+      - "**"
   pull_request:
 
 jobs:
@@ -28,11 +30,15 @@ jobs:
           coverage report --omit='tests/*'
           coverage json --omit='tests/*' -o "$RUNNER_TEMP/head-cov.json"
 
-      # Fails if coverage is lower than on the PR's base commit (or, for a push, the previous commit)
+      # Fails if coverage is lower than on the PR's base commit (or, for a tag push, the previous tag)
       - name: Compare coverage with base
         env:
-          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
         run: |
+          if [ -z "$BASE_SHA" ]; then
+            prev_tag=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+            if [ -n "$prev_tag" ]; then BASE_SHA=$(git rev-parse "$prev_tag^{commit}"); fi
+          fi
           percent() { python -c "import json,sys; print(round(json.load(open(sys.argv[1]))['totals']['percent_covered'], 2))" "$1"; }
           head=$(percent "$RUNNER_TEMP/head-cov.json")
 
