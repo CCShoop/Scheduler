@@ -2,7 +2,6 @@
 
 import os
 import sys
-import time
 import signal
 import logging
 import asyncio
@@ -19,6 +18,7 @@ from discord.ui import View, Button, Modal, TextInput, Select
 from discord.ext import tasks
 
 from libs.persistence import Persistence
+import libs.participant as participant_lib
 from libs.participant import Participant, TimeBlock, print_date_time, print_time_until
 from libs.help import HELP_EMBEDS
 from server import Server
@@ -289,7 +289,7 @@ class SchedulerClient(Client):
                 for idx, event_data in enumerate(events_data['events']):
                     if idx != 0:
                         # Prevent rate limiting when loading data
-                        time.sleep(3)
+                        await asyncio.sleep(3)
                     try:
                         event = await Event.from_dict(event_data)
                         if not event:
@@ -297,7 +297,8 @@ class SchedulerClient(Client):
                         client.events.append(event)
                         logger.info(f'[{event}] event loaded and added to client event list')
                     except Exception as e:
-                        logger.error(f"[{event}] Could not add event to client event list: {e}")
+                        logger.error(f"[{event_data.get('name')}] Could not add event to client event list: {e}")
+                        continue
                     try:
                         await event.update_messages()
                     except Exception as e:
@@ -470,8 +471,7 @@ class Event:
             except Exception as e:
                 message = f"Failed to get voice channel: {e}"
                 logger.exception(message)
-                self.cancel(reason=message)
-                return
+                raise Exception(message)
         self.privacy_level = PrivacyLevel.guild_only
         self.scheduler: Participant = scheduler
         self.rescheduler: Participant = rescheduler
@@ -513,7 +513,7 @@ class Event:
         # Cancel the event if the text channel has vaporized
         text_channel = self.guild.get_channel(self.text_channel.id)
         if not text_channel:
-            await self.remove()
+            self.remove()
             return
         # Remove participants who are not longer in the text channel
         keep_participants = []
@@ -543,7 +543,7 @@ class Event:
                     await self.end()
                 # If reminder message has not been sent yet
                 if not self.reminder_flag:
-                    if (now() + timedelta(minutes=REMINDER_TIME_MINUTES)) == self.start_times[0]:
+                    if (now() + timedelta(minutes=REMINDER_TIME_MINUTES)) >= self.start_times[0]:
                         await self.send_reminder_message()
                 # Reminder message has been sent
                 else:
@@ -811,7 +811,7 @@ class Event:
             await self.reminder_message.delete()
             self.reminder_message = None
 
-    async def start(self, reason: Optional[str] = f"Event started by {client.user}.") -> None:
+    async def start(self, reason: Optional[str] = None) -> None:
         """
         Starts the event.
 
@@ -820,6 +820,8 @@ class Event:
         reason: :class:`Optional[str]`
             Reason to provide for guild event start in audit log.
         """
+        if reason is None:
+            reason = f"Event started by {client.user}."
         logger.info(f"[{self}] Starting, reason: {reason}")
         await self.delete_reminder_message()
         try:
@@ -853,7 +855,8 @@ class Event:
         for event in client.events:
             if event == self or not event.created or event.voice_channel != self.voice_channel:
                 continue
-            event.event_buttons.start_end_button.disabled = True
+            if event.event_buttons is not None:
+                event.event_buttons.start_end_button.disabled = True
             await event.update_event_buttons_message()
 
     async def start_if_participants_in_vc(self) -> None:
@@ -861,7 +864,7 @@ class Event:
         Starts the event if all of the participants are in the voice channel
         and there are no active events in that voice channel.
         """
-        if now() < self.start_times[0] - timedelta(REMINDER_TIME_MINUTES):
+        if now() < self.start_times[0] - timedelta(minutes=REMINDER_TIME_MINUTES):
             return
         for event in client.events:
             if event is not self and event.voice_channel is self.voice_channel and event.started:
@@ -871,7 +874,7 @@ class Event:
         else:
             await self.update_reminder_message()
 
-    async def end(self, reason: Optional[str] = f"Event ended by {client.user}.", forget: Optional[bool] = False) -> None:
+    async def end(self, reason: Optional[str] = None, forget: Optional[bool] = False) -> None:
         """
         Ends the event. If there are more scheduled events in this event, shift them forward and prep them.
 
@@ -880,6 +883,8 @@ class Event:
         reason: :class:`Optional[str]`
             The reason to provide to the audit log for ending the guild event.
         """
+        if reason is None:
+            reason = f"Event ended by {client.user}."
         logger.info(f"[{self}] Ending, reason: {reason}")
         self.ended = True
         # Delete scheduled event
@@ -907,7 +912,8 @@ class Event:
         for event in client.events:
             if event == self or not event.created or event.voice_channel != self.voice_channel:
                 continue
-            event.event_buttons.start_end_button.disabled = False
+            if event.event_buttons is not None:
+                event.event_buttons.start_end_button.disabled = False
             logger.info(f'[{self}] Re-enabled start button for event with same location: {event}')
         await self.prep_next_scheduled_event()
         # Restore removed availabilities
@@ -938,7 +944,6 @@ class Event:
             if self.reminder_message is not None:
                 await self.reminder_message.delete()
                 self.reminder_message = None
-            self.reminder_message = False
             self.event_buttons = None
             self.started = False
             self.ended = False
@@ -1409,7 +1414,7 @@ class Event:
             else:
                 output += f"\n\nWaiting for a response from:\n{mentions}"
         elif self.scheduling_status == "No common availability":
-            mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
+            mentions = self.get_names_string(subscribed_only=True, mention=True)
             output += f"\n\nWaiting for additional availability from:\n{mentions}"
         else:
             output += "\n\nEveryone has responded."
@@ -1498,10 +1503,14 @@ class Event:
         embed: :class:`list[Embed]`
             The embeds for the event buttons message.
         """
+        planned_duration = self.duration
         if end_time is not None:
-            # Replace duration with actual duration
-            self.duration: timedelta = end_time - self.start_times[0]
-        embeds = [self.get_general_embed(end_time=end_time)]
+            # Show the actual duration without overwriting the planned duration used by later occurrences
+            self.duration = end_time - self.start_times[0]
+        try:
+            embeds = [self.get_general_embed(end_time=end_time)]
+        finally:
+            self.duration = planned_duration
         return embeds
 
     async def update_messages(self) -> None:
@@ -1540,7 +1549,7 @@ class Event:
                                                                          view=self.availability_buttons)
                 try:
                     await self.availability_message.pin()
-                except DiscordServerError.HTTPException:
+                except DiscordServerError:
                     pass
                 except Exception as e:
                     logger.error(f'[{self}] Failed to pin availability message: {e}')
@@ -1557,7 +1566,7 @@ class Event:
                                                                              view=self.availability_buttons)
                     try:
                         await self.availability_message.pin()
-                    except DiscordServerError.HTTPException:
+                    except DiscordServerError:
                         pass
                     except Exception as e:
                         logger.error(f'[{self}] Failed to pin availability message: {e}')
@@ -1588,7 +1597,7 @@ class Event:
                                                                           view=self.event_buttons)
                 try:
                     await self.event_buttons_message.pin()
-                except DiscordServerError.HTTPException:
+                except DiscordServerError:
                     pass
                 except Exception as e:
                     logger.error(f'[{self}] Failed to pin event buttons message: {e}')
@@ -1605,7 +1614,7 @@ class Event:
                                                                               view=self.event_buttons)
                     try:
                         await self.event_buttons_message.pin()
-                    except DiscordServerError.HTTPException:
+                    except DiscordServerError:
                         pass
                     except Exception as e:
                         logger.error(f'[{self}] Failed to pin availability message: {e}')
@@ -1702,7 +1711,8 @@ class Event:
         Deletes the event's image file and removes the event from the client's event list.
         """
         self.delete_image_file()
-        client.events.remove(self)
+        if self in client.events:
+            client.events.remove(self)
         logger.info(f'[{self}] Removed from client events list')
 
     def get_limited_name(self, length: int) -> str:
@@ -1923,7 +1933,7 @@ class Event:
         event_participants = [Participant.from_dict(event_guild, participant) for participant in data["participants"]]
         for participant in event_participants.copy():
             try:
-                if participant is None:
+                if participant is None or participant.member is None:
                     event_participants.remove(participant)
             except Exception as e:
                 logger.warning(f"[{event_name}] Exception while adding participant: {e}")
@@ -1931,7 +1941,7 @@ class Event:
         if not event_participants:
             event_participants = get_participants_from_channel(event_name=event_name,
                                                                guild=event_guild,
-                                                               channel=event_guild.get_channel(event_text_channel))
+                                                               channel=event_text_channel)
             logger.warning(f'[{event_name}] no participant(s) found, added everyone in the text channel')
 
         # Scheduler
@@ -2480,7 +2490,7 @@ class AvailabilityButtons(View):
                 return
             if len(found_availabilities) == 1:
                 participant.set_no_availability()
-                participant.availability = found_availabilities[0].avail.copy()
+                participant.availability = [TimeBlock(tb.start_time, tb.end_time) for tb in found_availabilities[0].avail]
                 participant.full_availability_flag = found_availabilities[0].full_flag
                 participant.answered = True
                 participant.subscribed = True
@@ -2876,8 +2886,10 @@ class ExistingGuildEventsSelect(Select):
     def __init__(self, guild: Guild):
         self.guild = guild
         options = [
-            SelectOption(label=guild_event.get_limited_name(25), description=guild_event.description[:50], value=str(guild_event.id))
-            for guild_event in self.guild.scheduled_events
+            SelectOption(label=guild_event.name if len(guild_event.name) <= 25 else f"{guild_event.name[:22]}...",
+                         description=guild_event.description[:50] if guild_event.description else None,
+                         value=str(guild_event.id))
+            for guild_event in self.guild.scheduled_events[:25]
         ]
         super().__init__(placeholder='Guild Event', options=options)
 
@@ -2891,7 +2903,7 @@ class ExistingGuildEventsSelect(Select):
             existingEvent = False
             # Event exists, adding guild event to that event
             for it_event in client.events:
-                if selected_guild_event.name == it_event.name and selected_guild_event.location == it_event.voice_channel:
+                if selected_guild_event.name == it_event.name and selected_guild_event.channel == it_event.voice_channel:
                     existingEvent = True
                     it_event.created = True
                     it_event.text_channel = interaction.channel
@@ -2905,10 +2917,10 @@ class ExistingGuildEventsSelect(Select):
                     participant.answered = True
                     if participant.member.id == interaction.user.id:
                         scheduler = participant
-                start_times = [selected_guild_event.start_time.astimezone()]
                 image_url = None
                 if selected_guild_event.cover_image is not None:
                     image_url = selected_guild_event.cover_image.url
+                # Start times are filled in from the matching guild events below
                 event = Event(name=selected_guild_event.name,
                               voice_channel=selected_guild_event.channel,
                               guild=self.guild,
@@ -2916,16 +2928,18 @@ class ExistingGuildEventsSelect(Select):
                               image_url=image_url,
                               scheduler=scheduler,
                               participants=participants,
-                              start_times=start_times,
                               created=True)
                 client.events.append(event)
-            remove_times_from_availabilities_for_events()
+            known_ids = [scheduled_event.id for scheduled_event in event.scheduled_events]
             for guild_event in self.guild.scheduled_events:
-                if guild_event.name == selected_guild_event.name and guild_event.location == selected_guild_event.location:
+                if guild_event.id in known_ids:
+                    continue
+                if guild_event.name == selected_guild_event.name and guild_event.channel == selected_guild_event.channel:
                     event.start_times.append(guild_event.start_time.astimezone())
                     if event.has_image_saved:
                         await guild_event.edit(image=event.get_image())
                     event.scheduled_events.append(guild_event)
+            remove_times_from_availabilities_for_events()
             await event.update_event_buttons_message()
             followup = await interaction.followup.send(content="Success!",
                                                        silent=True,
@@ -2978,7 +2992,7 @@ class ExistingAvailabilitiesSelect(Select):
             name = event_avail.event.get_limited_name(99)
             if name == self.values[0]:
                 logger.info(f'{interaction.user.name} reused availability from {self.values[0]}')
-                self.participant.availability = event_avail.avail.copy()
+                self.participant.availability = [TimeBlock(tb.start_time, tb.end_time) for tb in event_avail.avail]
                 self.participant.full_availability_flag = event_avail.full_flag
                 self.participant.answered = True
                 self.participant.subscribed = True
@@ -3131,15 +3145,16 @@ async def edit_event(event: Event,
     # Name
     if name is not None:
         old_name = event.name
-        event.name = name
-        if old_name == event.name:
+        if old_name == name:
             embed.add_field(name="Name (Unchanged)",
                             value="The new name is the same as the old name",
                             inline=False)
         else:
+            # Restore under the old name before renaming, then re-remove under the new name
             for other_event in client.events:
                 if other_event is not event:
                     other_event.restore_availabilities(event)
+            event.name = name
             remove_times_from_availabilities_for_events()
             if event.created:
                 for scheduled_event in event.scheduled_events:
@@ -3774,9 +3789,9 @@ async def schedule(event_name: str,
     # Scheduler participant
     scheduler = None
     for participant in participants:
-        if participant.member.id == scheduler_user.id:
+        if scheduler_user is not None and participant.member.id == scheduler_user.id:
             scheduler = participant
-    if scheduler is None:
+    if scheduler is None and participants:
         scheduler = participants[0]
 
     # Image URL
@@ -3893,6 +3908,9 @@ async def attach_command(interaction: Interaction):
     await interaction.response.defer(ephemeral=True, thinking=True)
     logger.info(f'Received attach command request from {interaction.user.name}')
     guild_events = interaction.guild.scheduled_events
+    if len(guild_events) == 0:
+        await interaction.followup.send(content="**There are no guild events to attach to.**", ephemeral=True)
+        return
     if len(guild_events) == 1:
         guild_event = guild_events[0]
         logger.info(f'[{guild_event.name}] {interaction.user.name} attached to guild scheduled event')
@@ -3933,7 +3951,6 @@ async def attach_command(interaction: Interaction):
             client.events.append(event)
             await event.save_image_to_file()
             event.scheduled_events.append(guild_event)
-            event.start_times.append(guild_event.start_time)
             logger.info(f'[{event.name}] attached to event')
         remove_times_from_availabilities_for_events()
         for event in client.events:
@@ -3999,7 +4016,7 @@ async def availability_command(interaction: Interaction):
         embed = events[0].get_availability_embed()
         await interaction.followup.send(embed=embed, ephemeral=True)
     else:
-        options = [SelectOption(label=event.get_limited_name(25), value=event.get_limited_name(25)) for event in client.events]
+        options = [SelectOption(label=event.get_limited_name(25), value=event.get_limited_name(25)) for event in events]
         select = Select(placeholder="Select an event", options=options)
 
         async def select_callback(interaction: Interaction):
@@ -4019,8 +4036,14 @@ async def availability_command(interaction: Interaction):
 @client.tree.command(name='offset', description='Set the midnight offset value.')
 @app_commands.describe(offset='The offset in hours after midnight to automatically extend Full Availability to.')
 async def offset_command(interaction: Interaction, offset: int = 2):
-    global HOURS_PAST_MIDNIGHT_CUTOFF
-    HOURS_PAST_MIDNIGHT_CUTOFF = offset
+    # The offset is shared by every guild, so only the owner can change it
+    if interaction.user.id != OWNER_ID:
+        await interaction.response.send_message(content="Only the bot owner can change the midnight offset.", ephemeral=True)
+        return
+    if offset < 0 or offset > 23:
+        await interaction.response.send_message(content="The offset must be between 0 and 23 hours.", ephemeral=True)
+        return
+    participant_lib.HOURS_PAST_MIDNIGHT_CUTOFF = offset
     await interaction.response.send_message(content=f"Midnight offset has been set to {offset}.")
 
 
@@ -4105,18 +4128,27 @@ async def update():
         # such as the Forget button being pressed
         # while it is looping through the events.
         if event in client.events:
-            await event.update()
-            for participant in event.participants:
-                for removed_time in participant.removed_times.copy():
-                    if removed_time.event_name not in [event.name for event in client.events]:
-                        participant.restore_availability_for_event(removed_time.event_name)
+            try:
+                await event.update()
+                for participant in event.participants:
+                    for removed_time in participant.removed_times.copy():
+                        if removed_time.event_name not in [event.name for event in client.events]:
+                            participant.restore_availability_for_event(removed_time.event_name)
+            except Exception as e:
+                logger.exception(f"[{event}] Error during update: {e}")
     for schedule_again_event in client.schedule_again_events.copy():
         # This looks silly, but it may prevent bugs
         # such as the Forget button being pressed
         # while it is looping through the events.
         if schedule_again_event in client.schedule_again_events:
-            await schedule_again_event.update()
-    save()
+            try:
+                await schedule_again_event.update()
+            except Exception as e:
+                logger.exception(f"[{schedule_again_event.event}] Error during schedule again update: {e}")
+    try:
+        save()
+    except Exception as e:
+        logger.exception(f"Error saving: {e}")
 
 
 client.run(DISCORD_TOKEN)

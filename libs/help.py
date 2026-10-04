@@ -60,10 +60,10 @@ instructions.add_field(name="Respond Button",
                        "\n\tfull: full availability"
                        "\n\tclear: removes availability for selected day"
                        "\n\tnone: removes all availability"
-                       "\nRequires 24 hour time (e.g. \"21-2\" is 9pm - 2am)."
+                       "\nAdding \"x\" and a number of days to the end of a time block will copy that timeblock over that many days, including the specified day."
                        "\nSeparate multiple periods of time with commas (e.g. \"9-12, 13-17\")."
                        "\nSet your timezone if you use your local time and it will be shifted to Eastern Time."
-                       "\nCurrently supported timezones: AT, ET, CT, MT, PT"
+                       "\n\tCurrently supported timezones: AT, ET, CT, MT, PT"
                        "\nNote: Allows you to leave a note in the availability embed, with or without availability."
                        "\nLeaving the note field blank when resubmitting the form will clear your note.",
                        inline=False)

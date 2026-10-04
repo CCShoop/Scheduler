@@ -1,11 +1,36 @@
 import re
 from discord import Guild, Member
 from asyncio import Lock
-from datetime import datetime, timedelta
-from calendar import isleap
+from datetime import date, datetime, timedelta
+from calendar import monthrange
 
 
 HOURS_PAST_MIDNIGHT_CUTOFF = 2
+
+
+def parse_time_string(time_string: str, label: str) -> str:
+    """
+    Converts a user-entered time (e.g. "9", "930", "1:12pm", "12:30am") to a 4-digit 24-hour "HHMM" string.
+    Returns an empty string if no time was entered.
+    """
+    is_pm = 'pm' in time_string
+    is_am = 'am' in time_string
+    digits = re.sub(r"\D", "", time_string)
+    if digits == '':
+        return ''
+    if len(digits) <= 2:
+        hour, minute = int(digits), 0
+    elif len(digits) <= 4:
+        hour, minute = int(digits[:-2]), int(digits[-2:])
+    else:
+        raise Exception(f'Invalid {label} time provided by user: {time_string}')
+    if is_am or is_pm:
+        if hour < 1 or hour > 12:
+            raise Exception(f'Invalid {label} time provided by user: {time_string}')
+        hour = hour % 12 + (12 if is_pm else 0)
+    if hour > 23 or minute > 59:
+        raise Exception(f'Invalid {label} time provided by user: {time_string}')
+    return f"{hour:02d}{minute:02d}"
 
 
 def print_time_until(time: datetime) -> str:
@@ -258,6 +283,9 @@ class Participant:
             start_time = cur_time.replace(day=day,
                                           month=month,
                                           year=year)
+            # Full availability on a future day starts at midnight
+            if start_time.date() != cur_time.date():
+                start_time = start_time.replace(hour=0, minute=0)
             if not end_time:
                 end_time = cur_time.replace(day=day,
                                             month=month,
@@ -316,17 +344,21 @@ class Participant:
         avail_string = avail_string.lower()
 
         # Date parsing
+        cur_date = datetime.now().astimezone().date()
+        year_given = True
         try:
             month, day, year = date_string.split('/')
         except Exception:
             try:
                 month, day = date_string.split('/')
-                year = datetime.now().astimezone().year
+                year = cur_date.year
+                year_given = False
             except Exception:
                 try:
                     day = int(date_string)
-                    month = datetime.now().astimezone().month
-                    year = datetime.now().astimezone().year
+                    month = cur_date.month
+                    year = cur_date.year
+                    year_given = False
                 except Exception:
                     raise Exception(f'Invalid date format provided by user: {date_string}')
         try:
@@ -342,52 +374,22 @@ class Participant:
         except Exception:
             raise Exception(f'Invalid year: {year}')
 
-        curYear = datetime.now().astimezone().year
         # Convert YY to YYYY
         if year < 100:
-            year += curYear - (curYear % 100)
+            year += cur_date.year - (cur_date.year % 100)
         # Date validity check
-        if year < curYear:
-            raise Exception(f'Cannot schedule for the past: {year}')
         if month < 1 or month > 12:
             raise Exception(f'Invalid month provided by user: {month}')
-        if day < 0:
+        if day < 1 or day > monthrange(year, month)[1]:
             raise Exception(f'Invalid day provided by user: {day}')
-        if month == 1 and day > 31:
-            raise Exception(f'Invalid day provided by user: {day}')
-        if isleap(curYear):
-            if month == 2 and day > 29:
-                raise Exception(f'Invalid day provided by user: {day}')
-        else:
-            if month == 2 and day > 28:
-                raise Exception(f'Invalid day provided by user: {day}')
-        if month == 3 and day > 31:
-            raise Exception(f'Invalid day provided by user: {day}')
-        if month == 4 and day > 30:
-            raise Exception(f'Invalid day provided by user: {day}')
-        if month == 5 and day > 31:
-            raise Exception(f'Invalid day provided by user: {day}')
-        if month == 6 and day > 30:
-            raise Exception(f'Invalid day provided by user: {day}')
-        if month == 7 and day > 31:
-            raise Exception(f'Invalid day provided by user: {day}')
-        if month == 8 and day > 31:
-            raise Exception(f'Invalid day provided by user: {day}')
-        if month == 9 and day > 30:
-            raise Exception(f'Invalid day provided by user: {day}')
-        if month == 10 and day > 31:
-            raise Exception(f'Invalid day provided by user: {day}')
-        if month == 11 and day > 30:
-            raise Exception(f'Invalid day provided by user: {day}')
-        if month == 12 and day > 31:
-            raise Exception(f'Invalid day provided by user: {day}')
+        if date(year, month, day) < cur_date:
+            # A past date without a year refers to next year
+            if year_given or day > monthrange(year + 1, month)[1]:
+                raise Exception(f'Cannot schedule for the past: {month}/{day}/{year}')
+            year += 1
 
         # Check if the entered date is today
-        date_is_today = False
-        curMonth = datetime.now().astimezone().month
-        curDay = datetime.now().astimezone().day
-        if curMonth == month and curDay == day:
-            date_is_today = True
+        date_is_today = date(year, month, day) == cur_date
 
         # Keyword shortcuts
         if 'full' in avail_string:
@@ -420,13 +422,7 @@ class Participant:
             timezone_offset += 3
             avail_string = avail_string.replace('pt', '')
 
-        # 12-hour time parsing pt. 1
         avail_string = avail_string.replace('.', '')
-        if '12am' in avail_string:
-            avail_string = avail_string.replace('12am', '0000')
-        if '1200am' in avail_string:
-            avail_string = avail_string.replace('1200am', '0000')
-        avail_string = avail_string.replace('am', '')
 
         # Make timeblock string list
         timeblock_strings = avail_string.split(',')
@@ -441,6 +437,16 @@ class Participant:
             timeblock = timeblock.replace(';', '')
             if '--' in timeblock:
                 raise Exception("Invalid time provided by user: cannot double hyphen (--)")
+            timeblock = timeblock.replace('X', 'x')
+            # Handle extensions, e.g. 22-x2, where the day specified plus
+            # the next day will have timeblocks of 2200-0000 applied.
+            extend = 1
+            if 'x' in timeblock:
+                timeblock, part, extend = timeblock.partition('x')
+                try:
+                    extend = int(extend)
+                except Exception as e:
+                    raise Exception(f"Invalid extension provided by user: {e}")
             start_time, part, end_time = timeblock.partition('-')
 
             # Start/end time keywords
@@ -449,45 +455,8 @@ class Participant:
             if 'now' in end_time or 'cur' in end_time or 'curr' in end_time or 'current' in end_time:
                 raise Exception("Invalid end time provided by user: cannot use current time as end time")
 
-            # 12-hour time parsing pt. 2
-            if 'pm' in start_time and '12' not in start_time:
-                start_time = re.sub(r"\D", "", start_time)
-                if len(start_time) == 1 or len(start_time) == 2:
-                    start_time = str(int(start_time) + 12)
-                elif len(start_time) == 3 or len(start_time) == 4:
-                    start_time = str(int(start_time) + 1200)
-                else:
-                    raise Exception(f'Invalid start time provided by user: {start_time}')
-            else:
-                start_time = re.sub(r"\D", "", start_time)
-            if 'pm' in end_time and '12' not in end_time:
-                end_time = re.sub(r"\D", "", end_time)
-                if len(end_time) == 1 or len(end_time) == 2:
-                    end_time = str(int(end_time) + 12)
-                elif len(end_time) == 3 or len(end_time) == 4:
-                    end_time = str(int(end_time) + 1200)
-                else:
-                    raise Exception(f'Invalid end time provided by user: {start_time}')
-            else:
-                end_time = re.sub(r"\D", "", end_time)
-
-            # Affixing and Appending 0s
-            if start_time != '':
-                if (int(start_time) < 10 and len(start_time) == 1) or len(start_time) == 3:
-                    start_time = '0' + start_time
-                if int(start_time) < 24:
-                    start_time = start_time + '00'
-            if end_time != '':
-                if (int(end_time) < 10 and len(end_time) == 1) or len(end_time) == 3:
-                    end_time = '0' + end_time
-                if int(end_time) < 24:
-                    end_time = end_time + '00'
-
-            # Validity check
-            if start_time != '' and (len(start_time) < 4 or int(start_time) > 2359):
-                raise Exception(f'Invalid start time provided by user: {start_time}')
-            if end_time != '' and (len(end_time) < 4 or int(end_time) > 2359):
-                raise Exception(f'Invalid end time provided by user: {start_time}')
+            start_time = parse_time_string(start_time, 'start')
+            end_time = parse_time_string(end_time, 'end')
 
             # Convert to datetime objects
             start_time_string = start_time
@@ -523,6 +492,11 @@ class Participant:
                 end_time += timedelta(days=1)
 
             self.add_to_availability(TimeBlock(start_time, end_time))
+            while extend > 1:
+                start_time += timedelta(days=1)
+                end_time += timedelta(days=1)
+                self.add_to_availability(TimeBlock(start_time, end_time))
+                extend -= 1
 
     def clean_availability(self) -> None:
         """Cleans the participant's availability by sorting and then combining overlapping/touching timeblocks."""
@@ -576,9 +550,6 @@ class Participant:
         """Removes a timeblock from availability."""
         new_availability = []
         for tb in self.availability:
-            if timeblock.end_time <= tb.start_time:
-                # We've passed the timeblock
-                return
             if tb.overlaps_with(timeblock):
                 if tb.start_time < timeblock.start_time:
                     new_availability.append(TimeBlock(start_time=tb.start_time,
@@ -620,14 +591,19 @@ class Participant:
         event_name: :class:`str`
             The name of the event to restore availability for.
         """
+        restored_timeblocks = []
         new_removed_times = []
         for removed_time in self.removed_times:
             if removed_time.event_name == event_name:
                 if removed_time.removed_timeblock:
-                    self.add_to_availability(removed_time.removed_timeblock)
+                    restored_timeblocks.append(removed_time.removed_timeblock)
             else:
                 new_removed_times.append(removed_time)
+        # Drop the event's removed times before restoring so that
+        # clean_availability() doesn't remove the restored blocks again
         self.removed_times = new_removed_times
+        for timeblock in restored_timeblocks:
+            self.add_to_availability(timeblock)
         self.update_removed_times()
 
     def confirm_answered(self, duration: timedelta = timedelta(minutes=30)) -> None:

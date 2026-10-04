@@ -19,22 +19,32 @@ class Server:
         self.callback = None
 
     async def handle_client(self, reader, writer):
+        buffer = ""
         while True:
             data = await reader.read(99999)
             if not data:
                 break
-            message = data.decode()
+            buffer += data.decode()
 
             try:
-                data_dict = json.loads(message)
-                if self.callback:
-                    if asyncio.iscoroutinefunction(self.callback):
-                        await self.callback(data_dict)
-                    else:
-                        self.callback(data_dict)
-                response = "valid"
-            except json.JSONDecodeError:
+                data_dict = json.loads(buffer)
+            except json.JSONDecodeError as e:
+                # A message split across reads fails at the end of the buffer; wait for the rest
+                if e.pos >= len(buffer.rstrip()):
+                    continue
+                buffer = ""
                 response = "invalid JSON"
+            else:
+                buffer = ""
+                try:
+                    if self.callback:
+                        if asyncio.iscoroutinefunction(self.callback):
+                            await self.callback(data_dict)
+                        else:
+                            self.callback(data_dict)
+                    response = "valid"
+                except Exception as e:
+                    response = f"error: {e}"
 
             writer.write(response.encode())
             await writer.drain()
