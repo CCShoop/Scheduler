@@ -1565,12 +1565,12 @@ class Event:
         if status == "No common availability" or status == "Awaiting availability":
             embed.description = status
         for participant in self.participants:
-            participantName = f'{participant}'
+            participantName = f"{participant}"
             availString = participant.availability_string
+            if not participant.subscribed:
+                availString = "[Unsubscribed]\n" + availString
             if availString != "":
                 embed.add_field(name=participantName, value=availString, inline=False)
-            if not participant.subscribed:
-                embed.add_field(name=participantName, value="[Unsubscribed]", inline=False)
         return embed
 
     def restore_availabilities(self, event) -> None:
@@ -2805,18 +2805,10 @@ class AvailabilityButtons(View):
                 logger.info(f'[{self.event}] {interaction.user.name} unsubscribed')
                 participant.subscribed = False
                 participant.answered = True
-                followup = await interaction.followup.send(content=f"You have been unsubscribed from {self.event}.",
-                                                           silent=True,
-                                                           ephemeral=True)
-                await followup.delete(delay=3)
             else:
                 logger.info(f'[{self.event}] {interaction.user.name} resubscribed')
                 participant.subscribed = True
                 participant.confirm_answered(duration=self.event.duration)
-                followup = await interaction.followup.send(content=f"You have been resubscribed to {self.event}.",
-                                                           silent=True,
-                                                           ephemeral=True)
-                await followup.delete(delay=3)
             await self.event.handle_input_received(exclude=[participant])
         button.callback = unsub_button_callback
         self.add_item(button)
