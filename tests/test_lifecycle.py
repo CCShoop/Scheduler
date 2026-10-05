@@ -1,3 +1,5 @@
+import json
+import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -6,6 +8,11 @@ from discord import EventStatus
 
 from libs.participant import Participant, TimeBlock
 from fakes import FakeScheduledEvent, at, run
+import scheduler
+
+# The env fixture stubs these out, keep the real ones for tests that check message sends
+REAL_UPDATE_AVAILABILITY_MESSAGE = scheduler.Event.update_availability_message
+REAL_DELETE_AVAILABILITY_MESSAGE = scheduler.Event.delete_availability_message
 
 
 class FakeMessage:
@@ -14,7 +21,7 @@ class FakeMessage:
         self.edits = []
         self.unpinned = False
 
-    async def delete(self):
+    async def delete(self, delay=None):
         self.deleted = True
 
     async def edit(self, **kwargs):
@@ -23,6 +30,30 @@ class FakeMessage:
 
     async def unpin(self):
         self.unpinned = True
+
+
+class FakeInteraction:
+    """Stands in for discord.Interaction, recording responses and followups."""
+
+    def __init__(self, member):
+        self.user = member
+        self.responses = []
+        self.followups = []
+        self.response = SimpleNamespace(defer=self._defer, send_message=self._send_message, send_modal=self._send_modal)
+        self.followup = SimpleNamespace(send=self._followup_send)
+
+    async def _defer(self, **kwargs):
+        self.responses.append(("defer", kwargs))
+
+    async def _send_message(self, **kwargs):
+        self.responses.append(("send_message", kwargs))
+
+    async def _send_modal(self, modal):
+        self.responses.append(("send_modal", modal))
+
+    async def _followup_send(self, **kwargs):
+        self.followups.append(kwargs)
+        return FakeMessage()
 
 
 def fake_event_buttons():
@@ -335,3 +366,281 @@ class TestUpdateWhileCreated:
         env.voice_channel.members.append(event.participants[0].member)
         run(event.update())
         assert not event.started
+
+
+class TestAutoCancelWhenAllUnsubscribed:
+    """Regression: auto cancelling after everyone unsubscribes must not send another availability message."""
+
+    @pytest.fixture
+    def real_availability_message(self, env, monkeypatch):
+        monkeypatch.setattr(env.sched.Event, "update_availability_message", REAL_UPDATE_AVAILABILITY_MESSAGE)
+        monkeypatch.setattr(env.sched.Event, "delete_availability_message", REAL_DELETE_AVAILABILITY_MESSAGE)
+
+    def unsubscribed_participants(self, env):
+        participants = [env.make_participant("a"), env.make_participant("b")]
+        for participant in participants:
+            participant.subscribed = False
+            participant.answered = True
+        return participants
+
+    def assert_cancelled_once(self, env, event):
+        assert event not in env.sched.client.events
+        assert len(env.text_channel.sent) == 1
+        assert env.text_channel.sent[0]["embed"].title == "Event Cancelled"
+        assert env.text_channel.sent[0].get("view") is None
+
+    def test_unsubscribe_button_path(self, env, real_availability_message):
+        participants = self.unsubscribed_participants(env)
+        event = env.make_event(participants)
+        old_message = FakeMessage()
+        event.availability_message = old_message
+        run(event.handle_input_received(exclude=[participants[-1]]))
+        self.assert_cancelled_once(env, event)
+        assert old_message.deleted
+        assert event.availability_message is None
+
+    def test_multi_event_cooldown_path(self, env, real_availability_message):
+        event = env.make_event(self.unsubscribed_participants(env), multi_event=True)
+        event.availability_message = FakeMessage()
+        event.availability_input_timer = env.sched.now() - timedelta(seconds=env.sched.AVAILABILITY_COOLDOWN_SECONDS + 1)
+        run(event.update())
+        self.assert_cancelled_once(env, event)
+        assert event.availability_message is None
+        assert env.update_messages_calls == []
+
+    def test_concurrent_callers_cancel_once(self, env, real_availability_message):
+        event = env.make_event(self.unsubscribed_participants(env))
+
+        async def both():
+            await asyncio.gather(event.create_if_possible(), event.create_if_possible())
+
+        run(both())
+        self.assert_cancelled_once(env, event)
+
+    def test_cancelled_flag_set(self, env, real_availability_message):
+        event = env.make_event(self.unsubscribed_participants(env))
+        run(event.create_if_possible())
+        assert event.cancelled
+
+    def test_created_event_cancelled_by_update(self, env, real_availability_message):
+        event, (scheduled_event,) = make_created_event(env, participants=self.unsubscribed_participants(env))
+        run(event.update())
+        self.assert_cancelled_once(env, event)
+        assert event.cancelled
+        assert scheduled_event.deleted
+
+    def test_created_multi_event_cancels_every_occurrence_with_one_message(self, env, real_availability_message):
+        event, scheduled_events = make_created_event(env, days=(1, 2, 3), participants=self.unsubscribed_participants(env))
+        run(event.update())
+        self.assert_cancelled_once(env, event)
+        assert all(scheduled_event.deleted for scheduled_event in scheduled_events)
+
+    def test_concurrent_multi_event_cancellation_cancels_once(self, env, real_availability_message):
+        event, scheduled_events = make_created_event(env, days=(1, 2, 3), participants=self.unsubscribed_participants(env))
+
+        # Yield like a real HTTP call so the second caller runs while occurrences are being deleted
+        def yielding_delete(scheduled_event):
+            async def delete(reason=None):
+                await asyncio.sleep(0.01)
+                scheduled_event.deleted = True
+            return delete
+
+        for scheduled_event in scheduled_events:
+            scheduled_event.delete = yielding_delete(scheduled_event)
+
+        async def both():
+            await asyncio.gather(event.update(), event.cancel_if_everyone_unsubscribed())
+
+        run(both())
+        self.assert_cancelled_once(env, event)
+
+    def test_started_event_is_left_to_end(self, env, real_availability_message):
+        event, (scheduled_event,) = make_created_event(env, participants=self.unsubscribed_participants(env), started=True)
+        scheduled_event.status = EventStatus.active
+        assert not run(event.cancel_if_everyone_unsubscribed())
+        assert event in env.sched.client.events
+        assert not event.cancelled
+        assert not scheduled_event.deleted
+
+    def test_remaining_subscriber_keeps_event(self, env, real_availability_message):
+        participants = self.unsubscribed_participants(env)
+        participants[0].subscribed = True
+        event, _ = make_created_event(env, participants=participants)
+        assert not run(event.cancel_if_everyone_unsubscribed())
+        assert event in env.sched.client.events
+
+    def test_everyone_left_the_text_channel(self, env, real_availability_message):
+        participants = self.unsubscribed_participants(env)
+        for participant in participants:
+            participant.subscribed = True
+            env.text_channel.members.remove(participant.member)
+        event, _ = make_created_event(env, participants=participants)
+        run(event.update())
+        self.assert_cancelled_once(env, event)
+        reason = env.text_channel.sent[0]["embed"].fields[0].value
+        assert reason == f"All participants left {env.text_channel.mention}."
+
+    def test_unsubscribed_reason(self, env, real_availability_message):
+        event = env.make_event(self.unsubscribed_participants(env))
+        run(event.create_if_possible())
+        assert env.text_channel.sent[0]["embed"].fields[0].value == "All participants unsubscribed."
+
+    def test_event_buttons_unsubscribe_cancels_created_event(self, env, real_availability_message):
+        participants = self.unsubscribed_participants(env)
+        last = participants[0]
+        last.subscribed = True
+        event, (scheduled_event,) = make_created_event(env, participants=participants)
+
+        async def click():
+            buttons = env.sched.EventButtons(event)
+            await buttons.unsubscribe_button.callback(FakeInteraction(last.member))
+
+        run(click())
+        self.assert_cancelled_once(env, event)
+        assert scheduled_event.deleted
+
+    def test_cancelled_event_buttons_do_not_revive_event(self, env, real_availability_message):
+        participants = self.unsubscribed_participants(env)
+        event = env.make_event(participants)
+        run(event.create_if_possible())
+        interaction = FakeInteraction(participants[0].member)
+
+        async def click():
+            buttons = env.sched.AvailabilityButtons(event)
+            unsub_button = next(item for item in buttons.children if getattr(item, "label", None) == buttons.unsub_label)
+            await unsub_button.callback(interaction)
+
+        run(click())
+        assert event not in env.sched.client.events
+        assert not participants[0].subscribed
+        assert interaction.responses == [("send_message", {"content": f"{event} has been cancelled.", "ephemeral": True})]
+        self.assert_cancelled_once(env, event)
+
+    def test_cancelling_one_occurrence_does_not_set_flag(self, env):
+        event, (first, second) = make_created_event(env, days=(1, 2))
+        run(event.cancel())
+        assert not event.cancelled
+        assert event in env.sched.client.events
+
+    def test_recreate_after_manual_cancellation_cleans_up(self, env, real_availability_message):
+        participants = self.unsubscribed_participants(env)
+        event, (scheduled_event,) = make_created_event(env, participants=participants)
+        # Reminder already sent, so a fall through would try to start the cancelled event
+        event.start_times[0] = env.sched.now() + timedelta(minutes=5)
+        event.reminder_flag = True
+        scheduled_event.status = EventStatus.cancelled
+        buttons_message = FakeMessage()
+        event.event_buttons_message = buttons_message
+        start_attempts = []
+
+        async def record_start(reason=None):
+            start_attempts.append(reason)
+
+        event.start = record_start
+        run(event.update())
+        self.assert_cancelled_once(env, event)
+        assert start_attempts == []
+        assert buttons_message.deleted
+        assert event.event_buttons_message is None
+
+
+class TestScheduleAgain:
+    def cancel_with_schedule_again(self, env, **kwargs):
+        event = env.make_event([env.make_participant("a")], **kwargs)
+        run(event.cancel(schedule_again=True))
+        (after_buttons,) = env.sched.client.schedule_again_events
+        return event, after_buttons
+
+    def restore(self, env, monkeypatch, data):
+        monkeypatch.setattr(env.sched.client, "get_guild", lambda guild_id: env.guild)
+        return run(env.sched.AfterButtons.from_dict(data))
+
+    def test_cancel_has_no_buttons_by_default(self, env):
+        event = env.make_event([env.make_participant("a")])
+        run(event.cancel())
+        assert env.text_channel.sent[-1].get("view") is None
+        assert env.sched.client.schedule_again_events == []
+
+    def test_cancel_with_schedule_again_attaches_buttons(self, env):
+        event, after_buttons = self.cancel_with_schedule_again(env)
+        assert env.text_channel.sent[-1]["view"] is after_buttons
+        assert after_buttons.message is not None
+
+    def test_cancelling_one_occurrence_ignores_schedule_again(self, env):
+        event, _ = make_created_event(env, days=(1, 2))
+        run(event.cancel(schedule_again=True))
+        assert env.text_channel.sent[-1].get("view") is None
+        assert env.sched.client.schedule_again_events == []
+
+    def test_cancelling_every_occurrence_passes_schedule_again(self, env):
+        event, scheduled_events = make_created_event(env, days=(1, 2, 3))
+        run(event.cancel_occurrences(list(scheduled_events), schedule_again=True))
+        (after_buttons,) = env.sched.client.schedule_again_events
+        assert env.text_channel.sent[-1]["view"] is after_buttons
+
+    def test_saved_like_a_normal_event(self, env):
+        event, after_buttons = self.cancel_with_schedule_again(env)
+        (saved,) = env.sched.client.events_dict["schedule_again_events"]
+        assert {key: value for key, value in saved.items() if key in event.to_dict()} == event.to_dict()
+        assert saved["after_buttons_message_id"] == after_buttons.message.id
+        assert saved["schedule_again_timeout"] == after_buttons.schedule_again_timeout
+        json.dumps(saved)
+
+    def test_round_trip_re_enables_buttons(self, env, monkeypatch):
+        event, after_buttons = self.cancel_with_schedule_again(env, duration=timedelta(minutes=90), image_url="https://example.com/a.png")
+        after_buttons.schedule_again_timeout = 1234
+        run(after_buttons.disable())
+        (saved,) = env.sched.client.events_dict["schedule_again_events"]
+        env.sched.client.schedule_again_events.clear()
+        restored = self.restore(env, monkeypatch, saved)
+        assert env.sched.client.schedule_again_events == [restored]
+        assert restored.event.name == event.name
+        assert restored.event.voice_channel is env.voice_channel
+        assert restored.event.duration == timedelta(minutes=90)
+        assert restored.event.image_url == "https://example.com/a.png"
+        assert [participant.member.id for participant in restored.event.participants] == [event.participants[0].member.id]
+        assert restored.event.after_buttons is restored
+        assert restored.schedule_again_timeout == 1234
+        assert restored.message is after_buttons.message
+        assert restored.message.edits[-1]["view"] is restored
+        assert not restored.schedule_again_button.disabled and not restored.forget_button.disabled
+        assert restored.event not in env.sched.client.events
+
+    def test_missing_message_is_dropped(self, env, monkeypatch):
+        _, after_buttons = self.cancel_with_schedule_again(env)
+        (saved,) = env.sched.client.events_dict["schedule_again_events"]
+        env.sched.client.schedule_again_events.clear()
+        after_buttons.message.deleted = True
+        with pytest.raises(LookupError):
+            self.restore(env, monkeypatch, saved)
+        assert env.sched.client.schedule_again_events == []
+
+    def test_disable_keeps_buttons_saved(self, env):
+        _, after_buttons = self.cancel_with_schedule_again(env)
+        run(after_buttons.disable())
+        assert after_buttons.schedule_again_button.disabled and after_buttons.forget_button.disabled
+        assert after_buttons.message.edits[-1]["view"] is after_buttons
+        assert env.sched.client.schedule_again_events == [after_buttons]
+
+    def test_shutdown_disables_instead_of_removing(self, env, monkeypatch):
+        _, after_buttons = self.cancel_with_schedule_again(env)
+        monkeypatch.setattr(env.sched.client, "close", lambda: env.sched.asyncio.sleep(0))
+        run(env.sched.cleanup())
+        assert after_buttons.schedule_again_button.disabled
+        assert env.sched.client.schedule_again_events == [after_buttons]
+
+    def test_retrieve_events_restores_schedule_again_events(self, env, monkeypatch):
+        _, after_buttons = self.cancel_with_schedule_again(env)
+        env.sched.persist.write(env.sched.client.events_dict)
+        env.sched.client.schedule_again_events.clear()
+        monkeypatch.setattr(env.sched.client, "loaded_json", False)
+        monkeypatch.setattr(env.sched.client, "get_guild", lambda guild_id: env.guild)
+        run(env.sched.client.retrieve_events())
+        (restored,) = env.sched.client.schedule_again_events
+        assert restored.message is after_buttons.message
+
+    def test_retrieve_events_without_schedule_again_events(self, env, monkeypatch):
+        env.sched.persist.write({"events": []})
+        monkeypatch.setattr(env.sched.client, "loaded_json", False)
+        run(env.sched.client.retrieve_events())
+        assert env.sched.client.schedule_again_events == []

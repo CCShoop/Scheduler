@@ -303,7 +303,34 @@ class TestCancelModal:
             await modal.on_submit(self.make_interaction(nick="Nick"))
 
         run(submit())
-        assert calls == [{"reason": "", "canceller": "Nick"}]
+        assert calls == [{"reason": "", "canceller": "Nick", "schedule_again": False}]
+
+    def test_schedule_again_unchecked_by_default(self, env):
+        event = env.make_event([env.make_participant("a")])
+
+        async def build():
+            return env.sched.CancelModal(event=event, title="Cancel")
+
+        modal = run(build())
+        assert modal.schedule_again.default is False
+        assert modal.schedule_again.value is False
+
+    def test_submit_passes_schedule_again(self, env, monkeypatch):
+        event = env.make_event([env.make_participant("a")])
+        calls = []
+
+        async def fake_cancel(**kwargs):
+            calls.append(kwargs)
+
+        monkeypatch.setattr(event, "cancel", fake_cancel)
+
+        async def submit():
+            modal = env.sched.CancelModal(event=event, title="Cancel")
+            modal.schedule_again._value = True
+            await modal.on_submit(self.make_interaction())
+
+        run(submit())
+        assert calls[0]["schedule_again"] is True
 
     def test_submit_with_select_cancels_chosen_occurrences(self, env, monkeypatch):
         scheduled_events = [FakeScheduledEvent(at(day, 20)) for day in (1, 2, 3)]
@@ -323,6 +350,7 @@ class TestCancelModal:
         run(submit())
         assert calls[0]["occurrences"] == [scheduled_events[0], scheduled_events[2]]
         assert calls[0]["canceller"] == "a"
+        assert calls[0]["schedule_again"] is False
 
 
 class TestPersistence:

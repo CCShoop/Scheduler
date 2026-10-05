@@ -14,7 +14,7 @@ from discord import (app_commands, Interaction, Intents, Client, Embed, Color, A
                      ButtonStyle, EntityType, TextChannel, ActivityType, Status, EventStatus,
                      VoiceChannel, Message, SelectOption, ScheduledEvent, Member,
                      Guild, PrivacyLevel, User, utils, NotFound, DiscordServerError)
-from discord.ui import View, Button, Modal, TextInput, Select, Label
+from discord.ui import View, Button, Modal, TextInput, Select, Label, Checkbox
 from discord.ext import tasks
 
 from libs.persistence import Persistence
@@ -369,21 +369,32 @@ class SchedulerClient(Client):
                         await event.update_messages()
                     except Exception as e:
                         logger.error(f"[{event}] Error updating messages: {e}")
+                # Data saved before schedule again buttons were persisted has no entry
+                for idx, after_buttons_data in enumerate(events_data.get('schedule_again_events', [])):
+                    if idx != 0:
+                        # Prevent rate limiting when loading data
+                        await asyncio.sleep(1)
+                    try:
+                        after_buttons = await AfterButtons.from_dict(after_buttons_data)
+                        logger.info(f'[{after_buttons.event}] schedule again buttons loaded and re-enabled')
+                    except Exception as e:
+                        logger.error(f"[{after_buttons_data.get('name')}] Could not restore schedule again buttons: {e}")
             else:
                 logger.info('No json data found')
 
     @property
     def events_dict(self) -> dict:
         """
-        Shove all events into a dictionary for writing to the data file.
+        Shove all events and schedule again buttons into a dictionary for writing to the data file.
 
         Returns
         -------
         events_data: :class:`dict`
-            A dict containing all of the data for each event.
+            A dict containing all of the data for each event and schedule again buttons.
         """
         events_data = {}
         events_data['events'] = [event.to_dict() for event in self.events]
+        events_data['schedule_again_events'] = [after_buttons.to_dict() for after_buttons in self.schedule_again_events]
         return events_data
 
     async def setup_hook(self):
@@ -425,8 +436,9 @@ async def cleanup():
             event.event_buttons.cancel_button.disabled = True
         logger.info(f"[{event}] Updating message with disabled buttons")
         await event.update_messages()
+    # Already saved by handle_signal, re-enabled by retrieve_events on startup
     for schedule_again_event in client.schedule_again_events.copy():
-        await schedule_again_event.remove()
+        await schedule_again_event.disable()
     logger.info("Closing client")
     await client.close()
 
@@ -492,6 +504,8 @@ class Event:
         Indicator of whether or not the first in line guild event has been started.
     ended: :class:`Optional[bool]`
         Indicator of whether or not the first in line guild event has been ended.
+    cancelled: :class:`bool`
+        Indicator of whether or not the event has been cancelled entirely, rather than just one occurrence.
     scheduled_events: :class:`Optional[list]`
         List of guild scheduled event objects.
     reminder_flag: :class:`Optional[bool]`
@@ -558,6 +572,7 @@ class Event:
         self.created: bool = created
         self.started: bool = started
         self.ended: bool = False
+        self.cancelled: bool = False
         self.scheduled_events: list[ScheduledEvent] = scheduled_events if scheduled_events is not None else []
         self.reminder_flag: bool = reminder_flag
         self.reminder_message: Message = reminder_message
@@ -603,12 +618,15 @@ class Event:
                 self.stop_input_timer()
                 await self.create_if_possible()
                 # Creation updates messages itself, otherwise clear the "waiting" status
-                if not self.created:
+                # unless creation cancelled the event
+                if not self.created and not self.cancelled:
                     await self.update_messages()
             elif not self.input_timer_running:
                 await self.create_if_possible()
         # Event has been created
         else:
+            if await self.cancel_if_everyone_unsubscribed():
+                return
             # Create guild events for start times that are missing one,
             # e.g. the bot shut down partway through creating a multi event
             if len(self.scheduled_events) < len(self.start_times):
@@ -634,6 +652,9 @@ class Event:
                     self.created = False
                     self.ready_to_create = True
                     await self.create_if_possible()
+                    # Recreation may have cancelled the event or put it back into scheduling,
+                    # either way the reminder and start checks below no longer apply
+                    return
                 elif self.scheduled_events[0].status == EventStatus.active:
                     await self.start()
                 elif self.scheduled_events[0].status == EventStatus.ended:
@@ -689,8 +710,13 @@ class Event:
         # Serialize creation so the update loop and an input callback can't both
         # pass the `created` check while the first create_scheduled_event is in flight
         async with self.create_lock:
+            # Another caller may have cancelled the event while this one waited on the lock
+            if self.cancelled:
+                return
             if not self.created:
                 if self.everyone_answered:
+                    if await self.cancel_if_everyone_unsubscribed():
+                        return
                     self.compare_availabilities()
                     # Create the event
                     if self.ready_to_create:
@@ -1044,7 +1070,7 @@ class Event:
 
     async def prep_next_scheduled_event(self) -> None:
         """Preps the next guild scheduled event and update the event control buttons message."""
-        if len(self.scheduled_events) > 1 and len(self.start_times) > 1:
+        if not self.on_last_occurrence:
             try:
                 self.start_times = self.start_times[1:]
                 self.scheduled_events = self.scheduled_events[1:]
@@ -1105,6 +1131,9 @@ class Event:
     async def handle_input_received(self, exclude: Optional[list[Participant]] = None) -> None:
         self.start_input_timer()
         await self.create_if_possible()
+        # Creation may have cancelled the event
+        if self.cancelled:
+            return
         await self.update_availability_message()
         await self.ping_last_participant(exclude=exclude)
 
@@ -1526,7 +1555,10 @@ class Event:
         if not self.everyone_answered:
             mentions = self.get_names_string(subscribed_only=True, unanswered_only=True, mention=True)
             if mentions.strip() == "" and self.multi_event and self.input_timer_running:
-                output += f"\n\nWaiting {AVAILABILITY_COOLDOWN_SECONDS} second(s) for additional multi event availabilities."
+                output += f"\n\nWaiting {AVAILABILITY_COOLDOWN_SECONDS} second"
+                if AVAILABILITY_COOLDOWN_SECONDS != 1:
+                    output += "s"
+                output += " for additional multi event availabilities."
             else:
                 output += f"\n\nWaiting for a response from:\n{mentions}"
         elif self.scheduling_status == "No common availability":
@@ -1561,9 +1593,6 @@ class Event:
             The embed containing each participant's availability.
         """
         embed = Embed(title='Availabilities', color=Color.blue())
-        status = self.scheduling_status
-        if status == "No common availability" or status == "Awaiting availability":
-            embed.description = status
         for participant in self.participants:
             participantName = f"{participant}"
             availString = participant.availability_string
@@ -1647,8 +1676,8 @@ class Event:
             Default: None
         """
         async with self.availability_message_lock:
-            # Delete the message if the event was created
-            if self.created:
+            # Delete the message if the event was created or cancelled
+            if self.created or self.cancelled:
                 await self.delete_availability_message()
                 return
             if rescheduler is not None:
@@ -1782,13 +1811,11 @@ class Event:
         return embed
 
     def get_after_buttons(self) -> View:
-        if not self.ended:
-            return None
         if not self.after_buttons:
             self.after_buttons = AfterButtons(self)
         return self.after_buttons
 
-    async def cancel(self, reason: Optional[str] = "", canceller: Optional[str] = "") -> None:
+    async def cancel(self, reason: Optional[str] = "", canceller: Optional[str] = "", schedule_again: Optional[bool] = False) -> None:
         """
         Cancels the event.
 
@@ -1798,24 +1825,29 @@ class Event:
             The reason for the cancellation of the event.
         canceller: :class:`str`
             The name of the canceller of the event.
+        schedule_again: :class:`bool`
+            Whether to add Schedule Again and Forget buttons to the cancel message.
+            Ignored unless the whole event is cancelled.
         """
         if reason == "":
             reason = "(No reason provided)"
+        # Set before any awaits so concurrent callbacks and the update loop see it
+        if self.on_last_occurrence:
+            self.cancelled = True
         content = self.get_names_string(subscribed_only=True, mention=True)
         embed = self.get_cancel_embed(reason, canceller)
-        buttons = self.get_after_buttons()
+        buttons = self.get_after_buttons() if schedule_again and self.cancelled else None
         if buttons:
             buttons.message = await self.text_channel.send(content=content, embed=embed, view=buttons)
         else:
             await self.text_channel.send(content=content, embed=embed)
-        if not self.created:
-            await self.delete_availability_message()
-        else:
-            await self.delete_event_buttons_message()
-            await self.delete_reminder_message()
+        # An event reset to scheduling after a manual cancellation can still have its event buttons message
+        await self.delete_availability_message()
+        await self.delete_event_buttons_message()
+        await self.delete_reminder_message()
         try:
             if len(self.scheduled_events) > 0:
-                await self.scheduled_events[0].delete(reason=f'Cancel button pressed by {canceller}: {reason}')
+                await self.scheduled_events[0].delete(reason=f"Cancelled by {canceller}: {reason}")
         except Exception as e:
             logger.error(f'[{self}] Error in cancel while deleting scheduled event: {e}')
         await self.prep_next_scheduled_event()
@@ -1826,7 +1858,31 @@ class Event:
         for event in client.events:
             await event.update_messages()
 
-    async def cancel_occurrences(self, occurrences: list[ScheduledEvent], reason: Optional[str] = "", canceller: Optional[str] = "") -> None:
+    async def cancel_if_everyone_unsubscribed(self) -> bool:
+        """
+        Cancels the event, including every remaining occurrence, if no subscribed participants remain.
+        A started occurrence is left to end on its own, the rest are cancelled once it has.
+
+        Returns
+        -------
+        cancelled: :class:`bool`
+            True if the event was cancelled.
+        """
+        if self.cancelled or self.started or self.subscribed_participants:
+            return False
+        if self.participants:
+            reason = "All participants unsubscribed."
+        else:
+            reason = f"All participants left {self.text_channel.mention}."
+        logger.info(f"[{self}] Cancelling, no subscribed participants remain")
+        if self.created and len(self.scheduled_events) > 1:
+            await self.cancel_occurrences(list(self.scheduled_events), reason=reason, canceller="Event Scheduler")
+        else:
+            await self.cancel(reason=reason, canceller="Event Scheduler")
+        return True
+
+    async def cancel_occurrences(self, occurrences: list[ScheduledEvent], reason: Optional[str] = "", canceller: Optional[str] = "",
+                                 schedule_again: Optional[bool] = False) -> None:
         """
         Cancels specific occurrences of a multi event.
         Cancels the whole event if every remaining occurrence is selected.
@@ -1839,6 +1895,8 @@ class Event:
             The reason for the cancellation.
         canceller: :class:`str`
             The name of the canceller.
+        schedule_again: :class:`bool`
+            Whether to add Schedule Again and Forget buttons to the cancel message if every occurrence is cancelled.
         """
         if reason == "":
             reason = "(No reason provided)"
@@ -1849,6 +1907,9 @@ class Event:
         if not indices:
             return
         cancel_all = len(indices) == len(self.scheduled_events)
+        # Set before deleting occurrences so concurrent callers don't start their own cancellation
+        if cancel_all:
+            self.cancelled = True
         cancelled_times = []
         # Pop from the end so the remaining indices stay aligned between scheduled_events and start_times
         for i in sorted(indices, reverse=True):
@@ -1865,7 +1926,7 @@ class Event:
             if i < len(self.start_times):
                 self.start_times.pop(i)
         if cancel_all:
-            await self.cancel(reason=reason, canceller=canceller)
+            await self.cancel(reason=reason, canceller=canceller, schedule_again=schedule_again)
             return
         if 0 in indices:
             await self.delete_reminder_message()
@@ -1935,6 +1996,16 @@ class Event:
             False if this is the last occurence.
         """
         return len(self.scheduled_events) >= 1
+
+    @property
+    def on_last_occurrence(self) -> bool:
+        """
+        Returns
+        -------
+        last: :class:`bool`
+            True if moving past the current occurrence would leave none, removing the event.
+        """
+        return len(self.scheduled_events) <= 1 or len(self.start_times) <= 1
 
     @property
     def has_more_events(self) -> bool:
@@ -2510,6 +2581,30 @@ class ScheduleAgainModal(Modal):
         logger.exception(f"[{self.event_name.value}] Error scheduling again: {error}")
 
 
+async def respond_if_cancelled(event: Event, interaction: Interaction) -> bool:
+    """
+    Tells the user the event was cancelled, if it was.
+    A cancelled event's buttons and modals can still be used while its message deletion reaches Discord,
+    and their callbacks would otherwise add the event back to the client events list.
+
+    Arguments
+    ---------
+    event: :class:`Event`
+        The event the interaction is for.
+    interaction: :class:`Interaction`
+        The interaction to respond to.
+
+    Returns
+    -------
+    cancelled: :class:`bool`
+        True if the event was cancelled and the interaction has been responded to.
+    """
+    if not event.cancelled:
+        return False
+    await interaction.response.send_message(content=f"{event} has been cancelled.", ephemeral=True)
+    return True
+
+
 class CancelModal(Modal):
     """
     Represents a modal for cancelling an event.
@@ -2520,6 +2615,8 @@ class CancelModal(Modal):
         The event that is being cancelled.
     reason: :class:`TextInput`
         The reason for the event's cancellation.
+    schedule_again: :class:`Checkbox`
+        Whether to offer Schedule Again and Forget buttons on the cancel message.
     """
 
     def __init__(self, event: Event, *args, **kwargs) -> None:
@@ -2540,20 +2637,28 @@ class CancelModal(Modal):
                                       min_values=1,
                                       max_values=len(options))
             self.add_item(Label(text="Occurrences to Cancel", component=self.occurrences))
+        self.schedule_again = Checkbox(default=False)
+        description = "Adds Schedule Again and Forget buttons to the cancel message"
+        if self.occurrences is not None:
+            description += " when every occurrence is cancelled"
+        self.add_item(Label(text="Offer Schedule Again", description=description, component=self.schedule_again))
 
     async def on_submit(self, interaction: Interaction) -> None:
+        if await respond_if_cancelled(self.event, interaction):
+            return
         await interaction.response.defer(ephemeral=True)
         canceller = interaction.user.name
         if interaction.user.nick:
             canceller = interaction.user.nick
         if self.occurrences is None:
             logger.info(f"[{self.event}] {interaction.user} cancelled event with reason: {self.reason.value}")
-            await self.event.cancel(reason=self.reason.value, canceller=canceller)
+            await self.event.cancel(reason=self.reason.value, canceller=canceller, schedule_again=self.schedule_again.value)
             return
         selected_ids = [int(value) for value in self.occurrences.values]
         selected = [occurrence for occurrence in self.event.scheduled_events if occurrence.id in selected_ids]
         logger.info(f"[{self.event}] {interaction.user} cancelled {len(selected)} occurrence(s) with reason: {self.reason.value}")
-        await self.event.cancel_occurrences(occurrences=selected, reason=self.reason.value, canceller=canceller)
+        await self.event.cancel_occurrences(occurrences=selected, reason=self.reason.value, canceller=canceller,
+                                            schedule_again=self.schedule_again.value)
 
     async def on_error(self, interaction: Interaction, error: Exception) -> None:
         await interaction.response.send_message(content=f"Error cancelling event: {error}",
@@ -2569,12 +2674,8 @@ class AvailabilityModal(Modal):
     ----------
     event: :class:`Event`
         The event that the availability is being collected for.
-    timeslot1: :class`TextInput`
-        The first field for availability time input.
-    timeslot2: :class`TextInput`
-        The second field for availability time input.
-    timeslot3: :class`TextInput`
-        The third field for availability time input.
+    timeslot: :class`TextInput`
+        The field for availability time input.
     date: :class:`TextInput`
         The date for the availability.
     timezone: :class:`TextInput`
@@ -2585,23 +2686,23 @@ class AvailabilityModal(Modal):
         super().__init__(*args, **kwargs)
         self.event = event
         self.participant = participant
-        date = now().strftime('%m/%d/%Y')
-        self.timeslot1 = TextInput(label='Timeslot 1', placeholder='8-11, 1pm-3pm (i.e. Available 0800-1100, 1300-1500)', default='', required=False)
-        self.timeslot2 = TextInput(label='Timeslot 2', placeholder='15:30-17 (i.e. Available 1530-1700)', default='', required=False)
-        self.note = TextInput(label='Note', placeholder='A note to show with your availability', default=self.participant.note, required=False)
-        self.date = TextInput(label='Date', placeholder='MM/DD/YYYY', default=date)
-        self.timezone = TextInput(label='Timezone', placeholder='AT|AST|ADT|ET|EST|EDT|CT|CST|CDT|MT|MST|MDT|PT|PST|PDT', default='ET')
-        self.add_item(self.timeslot1)
-        self.add_item(self.timeslot2)
+        date = now().strftime("%m/%d/%Y")
+        self.timeslot = TextInput(label="Timeslot", placeholder="e.g. 8-11, 1pm-3pm, 22-x3, 1730-2030", default="", required=False)
+        self.note = TextInput(label="Note", placeholder="A note to show with your availability", default=self.participant.note, required=False)
+        self.date = TextInput(label="Date", placeholder="MM/DD/YYYY", default=date)
+        self.timezone = TextInput(label="Timezone", placeholder="AT|AST|ADT|ET|EST|EDT|CT|CST|CDT|MT|MST|MDT|PT|PST|PDT", default="ET")
+        self.add_item(self.timeslot)
         self.add_item(self.note)
         self.add_item(self.date)
         self.add_item(self.timezone)
 
     async def on_submit(self, interaction: Interaction) -> None:
+        if await respond_if_cancelled(self.event, interaction):
+            return
         await interaction.response.defer(ephemeral=True)
         embed = None
         # Participant availability
-        avail_string = f'{self.timeslot1.value}, {self.timeslot2.value} {self.timezone.value}'
+        avail_string = f'{self.timeslot.value} {self.timezone.value}'
         try:
             logger.info(f'[{self.event}] Received availability from {interaction.user.name}')
             self.participant.note = self.note.value
@@ -2680,6 +2781,8 @@ class AvailabilityButtons(View):
         button = Button(label=self.respond_label, style=ButtonStyle.green)
 
         async def respond_button_callback(interaction: Interaction):
+            if await respond_if_cancelled(self.event, interaction):
+                return
             if self.event not in client.events:
                 client.events.append(self.event)
             am_title = f'Availability for {self.event}'
@@ -2709,6 +2812,8 @@ class AvailabilityButtons(View):
         button = Button(label=self.full_label, style=ButtonStyle.green)
 
         async def full_button_callback(interaction: Interaction):
+            if await respond_if_cancelled(self.event, interaction):
+                return
             if self.event not in client.events:
                 client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
@@ -2749,6 +2854,8 @@ class AvailabilityButtons(View):
         button = Button(label=self.reuse_label, style=ButtonStyle.blurple)
 
         async def reuse_button_callback(interaction: Interaction):
+            if await respond_if_cancelled(self.event, interaction):
+                return
             if self.event not in client.events:
                 client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
@@ -2793,6 +2900,8 @@ class AvailabilityButtons(View):
         button = Button(label=self.unsub_label, style=ButtonStyle.red)
 
         async def unsub_button_callback(interaction: Interaction):
+            if await respond_if_cancelled(self.event, interaction):
+                return
             if self.event not in client.events:
                 client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
@@ -2826,6 +2935,8 @@ class AvailabilityButtons(View):
         button = Button(label=self.cancel_label, style=ButtonStyle.red)
 
         async def cancel_button_callback(interaction: Interaction):
+            if await respond_if_cancelled(self.event, interaction):
+                return
             if self.event not in client.events:
                 client.events.append(self.event)
             title = f"Cancel {self.event.get_limited_name(38)}"
@@ -2889,6 +3000,8 @@ class EventButtons(View):
     def add_start_end_button(self) -> None:
         """Sets up the Start/End button."""
         async def end_button_callback(interaction: Interaction):
+            if await respond_if_cancelled(self.event, interaction):
+                return
             if self.event not in client.events:
                 client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
@@ -2903,6 +3016,8 @@ class EventButtons(View):
         self.end_callback = end_button_callback
 
         async def start_button_callback(interaction: Interaction):
+            if await respond_if_cancelled(self.event, interaction):
+                return
             if self.event not in client.events:
                 client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
@@ -2929,6 +3044,8 @@ class EventButtons(View):
     def add_end_and_forget_button(self) -> None:
         """Sets up the End and Forget button."""
         async def end_and_forget_button_callback(interaction: Interaction):
+            if await respond_if_cancelled(self.event, interaction):
+                return
             if self.event not in client.events:
                 client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
@@ -2940,9 +3057,8 @@ class EventButtons(View):
             self.remove_item(self.end_and_forget_button)
             self.remove_item(self.unsubscribe_button)
             await self.event.end(f"Event ended by {interaction.user} pressing end button.", forget=True)
-            after_buttons = self.event.get_after_buttons()
-            if after_buttons:
-                await after_buttons.remove()
+            if self.event.after_buttons:
+                await self.event.after_buttons.remove()
         self.end_and_forget_button.callback = end_and_forget_button_callback
         if self.event.started:
             self.add_item(self.end_and_forget_button)
@@ -2957,6 +3073,8 @@ class EventButtons(View):
             The Unsubscribe button.
         """
         async def unsubscribe_button_callback(interaction: Interaction):
+            if await respond_if_cancelled(self.event, interaction):
+                return
             if self.event not in client.events:
                 client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
@@ -2972,7 +3090,7 @@ class EventButtons(View):
                                                            silent=True,
                                                            ephemeral=True)
                 await followup.delete(delay=3)
-                await self.event.create_if_possible()
+                await self.event.cancel_if_everyone_unsubscribed()
             else:
                 logger.info(f'[{self.event}] {interaction.user.name} resubscribed')
                 participant.subscribed = True
@@ -2997,6 +3115,8 @@ class EventButtons(View):
             return
 
         async def reschedule_button_callback(interaction: Interaction):
+            if await respond_if_cancelled(self.event, interaction):
+                return
             if self.event not in client.events:
                 client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
@@ -3024,6 +3144,8 @@ class EventButtons(View):
             return
 
         async def cancel_button_callback(interaction: Interaction):
+            if await respond_if_cancelled(self.event, interaction):
+                return
             if self.event not in client.events:
                 client.events.append(self.event)
             if interaction.user.id not in [participant.member.id for participant in self.event.participants]:
@@ -3052,7 +3174,7 @@ class EventButtons(View):
 
 class AfterButtons(View):
     """
-    Represents the buttons attached to the cancellation message.
+    Represents the buttons attached to the cancellation or event ended message.
 
     Attributes
     ----------
@@ -3060,18 +3182,104 @@ class AfterButtons(View):
         The event that the buttons will reference.
     schedule_again_button: :class:`Button`
         A button that allows for scheduling of an event mimicking the provided event.
+    forget_button: :class:`Button`
+        A button that removes these buttons.
+    schedule_again_timeout: :class:`int`
+        Updates remaining until the buttons remove themselves.
+    message: :class:`Optional[Message]`
+        The message the buttons are attached to.
     """
 
-    def __init__(self, event):
+    def __init__(self, event, schedule_again_timeout: int = SCHEDULE_AGAIN_TIMEOUT):
         super().__init__(timeout=None)
         self.event = event
         self.schedule_again_label = "Schedule Again"
         self.forget_label = "Forget"
         self.schedule_again_button = self.add_schedule_again_button()
         self.forget_button = self.add_forget_button()
-        self.schedule_again_timeout = SCHEDULE_AGAIN_TIMEOUT
+        self.schedule_again_timeout = schedule_again_timeout
         self.message = None
         client.schedule_again_events.append(self)
+
+    @classmethod
+    async def from_dict(cls, data: dict):
+        """
+        Rebuilds saved schedule again buttons and re-enables them on their message.
+        The event is rebuilt with only what Schedule Again needs, it is not added to the client events list.
+
+        Arguments
+        ---------
+        data: :class:`dict`
+            The saved schedule again event data.
+
+        Returns
+        -------
+        after_buttons: :class:`AfterButtons`
+            The restored buttons.
+        """
+        guild = client.get_guild(data["guild_id"])
+        if not guild:
+            raise Exception("Could not find guild")
+        text_channel = guild.get_channel(data["text_channel_id"])
+        if not text_channel:
+            raise Exception("Could not find text channel")
+        location = data.get("location") or None
+        voice_channel = None
+        if location is None:
+            voice_channel = guild.get_channel(data["voice_channel_id"])
+            if not voice_channel:
+                raise Exception("Could not find voice channel")
+        participants = [Participant.from_dict(guild, participant_data) for participant_data in data["participants"]]
+        participants = [participant for participant in participants if participant.member is not None]
+        if not data["after_buttons_message_id"]:
+            raise Exception("No message to attach to")
+        message = await text_channel.fetch_message(data["after_buttons_message_id"])
+        event = Event(name=data["name"],
+                      voice_channel=voice_channel,
+                      location=location,
+                      guild=guild,
+                      text_channel=text_channel,
+                      image_url=data["image_url"] or None,
+                      participants=participants,
+                      duration=timedelta(minutes=data["duration"]),
+                      multi_event=data["multi_event"])
+        after_buttons = cls(event, schedule_again_timeout=data["schedule_again_timeout"])
+        event.after_buttons = after_buttons
+        try:
+            after_buttons.message = await message.edit(view=after_buttons)
+        except Exception:
+            client.schedule_again_events.remove(after_buttons)
+            raise
+        return after_buttons
+
+    def to_dict(self) -> dict:
+        """
+        Packs the event into a dict for saving, along with the message to restore the buttons on
+        and the updates remaining until they time out.
+
+        Returns
+        -------
+        data: :class:`dict`
+            The schedule again event data dict.
+        """
+        try:
+            message_id = self.message.id
+        except Exception:
+            message_id = 0
+        data = self.event.to_dict()
+        data['after_buttons_message_id'] = message_id
+        data['schedule_again_timeout'] = self.schedule_again_timeout
+        return data
+
+    async def disable(self) -> None:
+        """Disables the buttons on their message while the bot is offline."""
+        self.schedule_again_button.disabled = True
+        self.forget_button.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except Exception as e:
+                logger.error(f"[{self.event}] Error disabling schedule again buttons: {e}")
 
     async def update(self):
         self.schedule_again_timeout -= 1
@@ -3584,7 +3792,7 @@ async def on_message(message: Message):
     if message.author.id == OWNER_ID and 'scheduler: check' in message.content:
         content = ""
         if len(client.events) > 0:
-            for event in client.events:
+            for event in client.events.copy():
                 [participant.confirm_answered() for participant in event.participants]
                 await event.create_if_possible()
                 content += f"Checked {event}\n"

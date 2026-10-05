@@ -93,16 +93,48 @@ class FakeGuild:
         return self.members.get(member_id)
 
 
+class FakeSentMessage:
+    """Stands in for a discord.Message sent by the bot, recording edits."""
+
+    def __init__(self, channel, **kwargs):
+        self.id = next_id()
+        self.channel = channel
+        self.kwargs = kwargs
+        self.edits = []
+        self.deleted = False
+
+    async def delete(self, delay=None):
+        self.deleted = True
+
+    async def edit(self, **kwargs):
+        self.edits.append(kwargs)
+        return self
+
+    async def pin(self):
+        pass
+
+    async def unpin(self):
+        pass
+
+
 class FakeTextChannel:
     def __init__(self, channel_id=1):
         self.id = channel_id
         self.members = []
         self.mention = f"<#{channel_id}>"
         self.sent = []
+        self.messages = {}
 
     async def send(self, **kwargs):
         self.sent.append(kwargs)
-        return SimpleNamespace(id=next_id(), delete=noop, edit=noop, pin=noop, unpin=noop)
+        message = FakeSentMessage(self, **kwargs)
+        self.messages[message.id] = message
+        return message
+
+    async def fetch_message(self, message_id):
+        if message_id not in self.messages or self.messages[message_id].deleted:
+            raise LookupError(f"Unknown message {message_id}")
+        return self.messages[message_id]
 
 
 async def noop(*args, **kwargs):
