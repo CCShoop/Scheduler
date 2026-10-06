@@ -376,6 +376,21 @@ class TestPersistence:
         assert loaded.scheduled_events == event.scheduled_events
         assert [p.member for p in loaded.participants] == [a.member]
 
+    def test_round_trips_timeout_deadlines(self, env, monkeypatch):
+        event = env.make_event([env.make_participant("a")], timeout_at=at(3, 12), availability_resent_at=at(0, 1))
+        loaded = self.load(env, monkeypatch, self.save_data(env, event))
+        assert loaded.timeout_at == at(3, 12)
+        assert loaded.availability_resent_at == at(0, 1)
+
+    def test_legacy_timeout_counter_becomes_deadline(self, env, monkeypatch):
+        event = env.make_event([env.make_participant("a")])
+        data = self.save_data(env, event)
+        del data["timeout_at"]
+        data["timeout_counter"] = 3 * 60 * 60 // env.sched.UPDATE_INTERVAL
+        monkeypatch.setattr(env.sched, "now", lambda: at(0, 12))
+        loaded = self.load(env, monkeypatch, data)
+        assert loaded.timeout_at == at(0, 15)
+
     def test_drops_start_times_of_guild_events_deleted_while_offline(self, env, monkeypatch):
         a = env.make_participant("a")
         scheduled_events = [FakeScheduledEvent(at(day, 20)) for day in (1, 2, 3)]

@@ -70,21 +70,15 @@ EVENT_BUFFER_MINUTES: int = 0
 # Seconds to wait before deleting a followup message
 FOLLOWUP_DELAY_SECONDS: int = 3
 
-# Number of updates before an event is cleared
-UPDATES_PER_MINUTE: int = 60 // UPDATE_INTERVAL
-MINUTES_PER_HOUR: int = 60
-HOURS_PER_DAY: int = 24
+# Time before an unscheduled event is cleared
 DEFAULT_EVENT_TIMEOUT_DAYS: int = 7
-EVENT_TIMEOUT_CONSTANT_DAYS: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * HOURS_PER_DAY
-DEFAULT_EVENT_TIMEOUT: int = EVENT_TIMEOUT_CONSTANT_DAYS * DEFAULT_EVENT_TIMEOUT_DAYS
+DEFAULT_EVENT_TIMEOUT: timedelta = timedelta(days=DEFAULT_EVENT_TIMEOUT_DAYS)
 
 SCHEDULE_AGAIN_TIMEOUT_DAYS: int = 8
-SCHEDULE_AGAIN_TIMEOUT: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * HOURS_PER_DAY * SCHEDULE_AGAIN_TIMEOUT_DAYS
+SCHEDULE_AGAIN_TIMEOUT: timedelta = timedelta(days=SCHEDULE_AGAIN_TIMEOUT_DAYS)
 
 RESEND_INTERVAL_HOURS: int = 23
-RESEND_INTERVAL: int = UPDATES_PER_MINUTE * MINUTES_PER_HOUR * RESEND_INTERVAL_HOURS
-
-OFFSET = DEFAULT_EVENT_TIMEOUT % RESEND_INTERVAL
+RESEND_INTERVAL: timedelta = timedelta(hours=RESEND_INTERVAL_HOURS)
 
 
 def now() -> datetime:
@@ -511,8 +505,12 @@ class Event:
         Indicator of whether a reminder message has been sent.
     reminder_message: :class:`Optional[Message]`
         The message object warning participants that an event is starting soon.
-    timeout_counter: :class:`Optional[int]`
-        The event's time to live. Also used to resend the availability message for visibility.
+    timeout_at: :class:`Optional[datetime]`
+        When scheduling times out and the event is cancelled.
+        Default: DEFAULT_EVENT_TIMEOUT from now
+    availability_resent_at: :class:`Optional[datetime]`
+        When the availability message was last resent for visibility.
+        Default: Now
     """
 
     def __init__(self,
@@ -537,7 +535,8 @@ class Event:
                  scheduled_events: Optional[list] = None,
                  reminder_flag: Optional[bool] = False,
                  reminder_message: Optional[Message] = None,
-                 timeout_counter: Optional[int] = DEFAULT_EVENT_TIMEOUT,
+                 timeout_at: Optional[datetime] = None,
+                 availability_resent_at: Optional[datetime] = None,
                  location: Optional[str] = None) -> None:
         self.name: str = name
         self.guild: Guild = guild
@@ -578,7 +577,8 @@ class Event:
         self.start_times: list[datetime] = start_times or []
         self.duration: timedelta = duration
         self.multi_event: bool = multi_event
-        self.timeout_counter: int = timeout_counter
+        self.timeout_at: datetime = timeout_at or now() + DEFAULT_EVENT_TIMEOUT
+        self.availability_resent_at: datetime = availability_resent_at or now()
         self.availability_input_timer = None
         self.after_buttons: AfterButtons = None
 
@@ -678,8 +678,7 @@ class Event:
 
     async def update_timeout(self) -> bool:
         """
-        Updates the event's timeout counter,
-        resends the availability message every RESEND_INTERVAL hours,
+        Resends the availability message every RESEND_INTERVAL,
         and cancels the event if it times out.
 
         Returns
@@ -690,10 +689,10 @@ class Event:
         if self.created:
             return
         cancelled = False
-        self.timeout_counter -= 1
-        if self.timeout_counter > 0:
+        if now() < self.timeout_at:
             # Resend availability message
-            if (self.timeout_counter - OFFSET) % RESEND_INTERVAL == 0:
+            if now() - self.availability_resent_at >= RESEND_INTERVAL:
+                self.availability_resent_at = now()
                 await self.delete_availability_message()
                 await self.update_availability_message()
         # Event has timed out
@@ -847,7 +846,7 @@ class Event:
             self.start_times = self.start_times[:1]
 
     async def reschedule(self, rescheduler: Participant = None) -> None:
-        self.reset_timeout_counter()
+        self.reset_timeout()
         for scheduled_event in self.scheduled_events:
             try:
                 if rescheduler is not None:
@@ -1516,11 +1515,11 @@ class Event:
                         break
         return event_availabilities
 
-    def reset_timeout_counter(self) -> None:
+    def reset_timeout(self) -> None:
         """
-        Resets the timeout counter to the default value.
+        Resets the timeout to the default length from now.
         """
-        self.timeout_counter = DEFAULT_EVENT_TIMEOUT
+        self.timeout_at = now() + DEFAULT_EVENT_TIMEOUT
 
     def get_start_time_string(self, index: int = 0) -> str:
         """
@@ -2177,7 +2176,7 @@ class Event:
 
     @property
     def timeout_minutes(self) -> int:
-        return self.timeout_counter // UPDATES_PER_MINUTE
+        return max(0, int((self.timeout_at - now()).total_seconds() // 60))
 
     @classmethod
     async def from_dict(cls, data):
@@ -2364,12 +2363,21 @@ class Event:
             logger.warning(f'Failed to read multi_event data: {e}')
             event_multi_event = False
 
-        # Timeout counter
+        # Timeout
         try:
-            event_timeout_counter = data["timeout_counter"]
+            if "timeout_at" in data:
+                event_timeout_at = datetime.fromisoformat(data["timeout_at"])
+            else:
+                # Saved before timeouts were deadlines, the counter was decremented every UPDATE_INTERVAL seconds
+                event_timeout_at = now() + timedelta(seconds=data["timeout_counter"] * UPDATE_INTERVAL)
         except Exception as e:
-            logger.warning(f'Failed to read timeout counter data: {e}')
-            event_timeout_counter = DEFAULT_EVENT_TIMEOUT
+            logger.warning(f'Failed to read timeout data: {e}')
+            event_timeout_at = None
+        try:
+            event_availability_resent_at = datetime.fromisoformat(data["availability_resent_at"])
+        except Exception as e:
+            logger.warning(f'Failed to read availability resent data: {e}')
+            event_availability_resent_at = None
 
         return cls(
             name=event_name,
@@ -2394,7 +2402,8 @@ class Event:
             start_times=event_start_times,
             duration=event_duration,
             multi_event=event_multi_event,
-            timeout_counter=event_timeout_counter
+            timeout_at=event_timeout_at,
+            availability_resent_at=event_availability_resent_at
         )
 
     def to_dict(self) -> dict:
@@ -2466,7 +2475,8 @@ class Event:
             'start_times': start_times,
             'duration': self.duration_minutes,
             'multi_event': self.multi_event,
-            'timeout_counter': self.timeout_counter
+            'timeout_at': self.timeout_at.isoformat(),
+            'availability_resent_at': self.availability_resent_at.isoformat()
         }
 
     def __repr__(self) -> str:
@@ -3182,20 +3192,20 @@ class AfterButtons(View):
         A button that allows for scheduling of an event mimicking the provided event.
     forget_button: :class:`Button`
         A button that removes these buttons.
-    schedule_again_timeout: :class:`int`
-        Updates remaining until the buttons remove themselves.
+    expires_at: :class:`datetime`
+        When the buttons remove themselves.
     message: :class:`Optional[Message]`
         The message the buttons are attached to.
     """
 
-    def __init__(self, event, schedule_again_timeout: int = SCHEDULE_AGAIN_TIMEOUT):
+    def __init__(self, event, expires_at: Optional[datetime] = None):
         super().__init__(timeout=None)
         self.event = event
         self.schedule_again_label = "Schedule Again"
         self.forget_label = "Forget"
         self.schedule_again_button = self.add_schedule_again_button()
         self.forget_button = self.add_forget_button()
-        self.schedule_again_timeout = schedule_again_timeout
+        self.expires_at = expires_at or now() + SCHEDULE_AGAIN_TIMEOUT
         self.message = None
         client.schedule_again_events.append(self)
 
@@ -3241,7 +3251,12 @@ class AfterButtons(View):
                       participants=participants,
                       duration=timedelta(minutes=data["duration"]),
                       multi_event=data["multi_event"])
-        after_buttons = cls(event, schedule_again_timeout=data["schedule_again_timeout"])
+        if "schedule_again_expires_at" in data:
+            expires_at = datetime.fromisoformat(data["schedule_again_expires_at"])
+        else:
+            # Saved before timeouts were deadlines, the counter was decremented every UPDATE_INTERVAL seconds
+            expires_at = now() + timedelta(seconds=data["schedule_again_timeout"] * UPDATE_INTERVAL)
+        after_buttons = cls(event, expires_at=expires_at)
         event.after_buttons = after_buttons
         try:
             after_buttons.message = await message.edit(view=after_buttons)
@@ -3253,7 +3268,7 @@ class AfterButtons(View):
     def to_dict(self) -> dict:
         """
         Packs the event into a dict for saving, along with the message to restore the buttons on
-        and the updates remaining until they time out.
+        and when they time out.
 
         Returns
         -------
@@ -3266,7 +3281,7 @@ class AfterButtons(View):
             message_id = 0
         data = self.event.to_dict()
         data['after_buttons_message_id'] = message_id
-        data['schedule_again_timeout'] = self.schedule_again_timeout
+        data['schedule_again_expires_at'] = self.expires_at.isoformat()
         return data
 
     async def disable(self) -> None:
@@ -3280,8 +3295,7 @@ class AfterButtons(View):
                 logger.error(f"[{self.event}] Error disabling schedule again buttons: {e}")
 
     async def update(self):
-        self.schedule_again_timeout -= 1
-        if self.schedule_again_timeout == 0:
+        if now() >= self.expires_at:
             logger.info(f"[{self.event}] schedule again timed out, forgetting")
             await self.remove()
 
@@ -3716,17 +3730,17 @@ async def edit_event(event: Event,
 
     # Timeout
     if timeout_days is not None:
-        timeout = timeout_days * EVENT_TIMEOUT_CONSTANT_DAYS
-        old_timeout = event.timeout_counter
-        if old_timeout == timeout:
+        timeout_minutes = int(timedelta(days=timeout_days).total_seconds() // 60)
+        old_timeout_minutes = event.timeout_minutes
+        if old_timeout_minutes == timeout_minutes:
             embed.add_field(name="Timeout (Unchanged)",
                             value="The new timeout is the same as the old timeout",
                             inline=False)
         else:
-            event.timeout_counter = timeout
+            event.timeout_at = now() + timedelta(days=timeout_days)
             embed.add_field(name="Timeout",
-                            value=f"{get_time_str_from_minutes(old_timeout // UPDATES_PER_MINUTE)}"
-                            f" -> {get_time_str_from_minutes(timeout // UPDATES_PER_MINUTE)}",
+                            value=f"{get_time_str_from_minutes(old_timeout_minutes)}"
+                            f" -> {get_time_str_from_minutes(timeout_minutes)}",
                             inline=False)
 
     if event.image_url:
@@ -4297,7 +4311,7 @@ async def schedule(event_name: str,
         image_url = None
 
     # Timeout
-    timeout = timeout_days * EVENT_TIMEOUT_CONSTANT_DAYS
+    timeout_at = now() + timedelta(days=timeout_days)
 
     # Make event object
     duration = timedelta(minutes=duration)
@@ -4311,7 +4325,7 @@ async def schedule(event_name: str,
                   image_url=image_url,
                   duration=duration,
                   multi_event=multi_event,
-                  timeout_counter=timeout)
+                  timeout_at=timeout_at)
     client.events.append(event)
 
     remove_times_from_availabilities_for_events()

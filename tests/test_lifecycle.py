@@ -250,17 +250,45 @@ class TestPrepNextScheduledEvent:
         assert event not in env.sched.client.events
 
 
+class TestTimeout:
+    def test_cancels_once_deadline_passes(self, env):
+        event = env.make_event([env.make_participant("a")])
+        assert run(event.update_timeout()) is False
+        assert event in env.sched.client.events
+        event.timeout_at = env.sched.now() - timedelta(minutes=1)
+        assert run(event.update_timeout()) is True
+        assert event not in env.sched.client.events
+        assert env.text_channel.sent[-1]["embed"].title == "Event Cancelled"
+
+    def test_resends_availability_message_after_interval(self, env, monkeypatch):
+        resends = []
+
+        async def fake_update_availability_message(self):
+            resends.append(self)
+
+        monkeypatch.setattr(env.sched.Event, "update_availability_message", fake_update_availability_message)
+        monkeypatch.setattr(env.sched, "now", lambda: at(0, 12))
+        event = env.make_event([env.make_participant("a")])
+        run(event.update_timeout())
+        assert resends == []
+        event.availability_resent_at = env.sched.now() - env.sched.RESEND_INTERVAL
+        run(event.update_timeout())
+        assert resends == [event]
+        assert event.availability_resent_at == at(0, 12)
+
+
 class TestReschedule:
-    def test_clears_guild_events_and_resets_state(self, env):
+    def test_clears_guild_events_and_resets_state(self, env, monkeypatch):
+        monkeypatch.setattr(env.sched, "now", lambda: at(0, 12))
         event, scheduled_events = make_created_event(env, days=(1, 2), reminder_flag=True)
-        event.timeout_counter = 5
+        event.timeout_at = at(-1, 0)
         reminder = FakeMessage()
         event.reminder_message = reminder
         run(event.reschedule())
         assert all(se.deleted for se in scheduled_events)
         assert event.scheduled_events == [] and event.start_times == []
         assert not event.created and not event.ready_to_create and not event.reminder_flag
-        assert event.timeout_counter == env.sched.DEFAULT_EVENT_TIMEOUT
+        assert event.timeout_at == at(0, 12) + env.sched.DEFAULT_EVENT_TIMEOUT
         assert reminder.deleted
 
     def test_rescheduler_availability_is_cleared(self, env):
@@ -583,12 +611,12 @@ class TestScheduleAgain:
         (saved,) = env.sched.client.events_dict["schedule_again_events"]
         assert {key: value for key, value in saved.items() if key in event.to_dict()} == event.to_dict()
         assert saved["after_buttons_message_id"] == after_buttons.message.id
-        assert saved["schedule_again_timeout"] == after_buttons.schedule_again_timeout
+        assert saved["schedule_again_expires_at"] == after_buttons.expires_at.isoformat()
         json.dumps(saved)
 
     def test_round_trip_re_enables_buttons(self, env, monkeypatch):
         event, after_buttons = self.cancel_with_schedule_again(env, duration=timedelta(minutes=90), image_url="https://example.com/a.png")
-        after_buttons.schedule_again_timeout = 1234
+        after_buttons.expires_at = at(3, 12)
         run(after_buttons.disable())
         (saved,) = env.sched.client.events_dict["schedule_again_events"]
         env.sched.client.schedule_again_events.clear()
@@ -600,11 +628,29 @@ class TestScheduleAgain:
         assert restored.event.image_url == "https://example.com/a.png"
         assert [participant.member.id for participant in restored.event.participants] == [event.participants[0].member.id]
         assert restored.event.after_buttons is restored
-        assert restored.schedule_again_timeout == 1234
+        assert restored.expires_at == at(3, 12)
         assert restored.message is after_buttons.message
         assert restored.message.edits[-1]["view"] is restored
         assert not restored.schedule_again_button.disabled and not restored.forget_button.disabled
         assert restored.event not in env.sched.client.events
+
+    def test_restores_legacy_tick_counter_as_deadline(self, env, monkeypatch):
+        _, after_buttons = self.cancel_with_schedule_again(env)
+        (saved,) = env.sched.client.events_dict["schedule_again_events"]
+        env.sched.client.schedule_again_events.clear()
+        del saved["schedule_again_expires_at"]
+        saved["schedule_again_timeout"] = 2 * 60 * 60 // env.sched.UPDATE_INTERVAL
+        monkeypatch.setattr(env.sched, "now", lambda: at(0, 12))
+        restored = self.restore(env, monkeypatch, saved)
+        assert restored.expires_at == at(0, 14)
+
+    def test_expires_at_deadline(self, env):
+        _, after_buttons = self.cancel_with_schedule_again(env)
+        run(after_buttons.update())
+        assert env.sched.client.schedule_again_events == [after_buttons]
+        after_buttons.expires_at = env.sched.now() - timedelta(minutes=1)
+        run(after_buttons.update())
+        assert env.sched.client.schedule_again_events == []
 
     def test_missing_message_is_dropped(self, env, monkeypatch):
         _, after_buttons = self.cancel_with_schedule_again(env)
