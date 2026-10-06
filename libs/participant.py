@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 from calendar import monthrange
 
 
-HOURS_PAST_MIDNIGHT_CUTOFF = 2
+HOURS_PAST_MIDNIGHT_CUTOFF = 1
 
 
 def parse_time_string(time_string: str, label: str) -> str:
@@ -253,33 +253,24 @@ class Participant:
                 return True
         return False
 
-    def set_full_availability(self, day=None, month=None, year=None, end_time=None) -> None:
+    def set_full_availability(self, date: datetime = None, end_time: datetime = None) -> None:
         """
-        Sets the aprticipant to have full deliver.
+        Sets the participant to have full availability.
 
         Arguments
         ----------
-        day: :class:`int`
-            Optional. Current entered day.
-            Default: Current
-        month: :class:`int`
-            Optional. Current entered month.
-            Default: Current
-        year: :class:`int`
-            Optional. Current entered year.
-            Default: Current
+        date: :class:`datetime`
+            Optional. Current entered date.
+            Default: None
         end_time: class:`datetime`
             Optional. Current end time.
-            Default: Current
+            Default: None
         """
         try:
             cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
-            if not month:
-                month = cur_time.month
-            if not day:
-                day = cur_time.day
-            if not year:
-                year = cur_time.year
+            month = cur_time.month if not date else date.month
+            day = cur_time.day if not date else date.day
+            year = cur_time.year if not date else date.year
             start_time = cur_time.replace(day=day,
                                           month=month,
                                           year=year)
@@ -300,33 +291,21 @@ class Participant:
         except Exception as e:
             raise e
 
-    def set_no_availability(self, day=None, month=None, year=None) -> None:
+    def set_no_availability(self, date: date = None) -> None:
         """
         Sets the participant to have no availability.
 
         Arguments
         ----------
-        day: :class:`int`
-            Optional. Current entered day.
-            Default: None
-        month: :class:`int`
-            Optional. Current entered month.
-            Default: None
-        year: :class:`int`
-            Optional. Current entered year.
+        date: :class:`date`
+            Optional. Current entered date.
             Default: None
         """
         self.full_availability_flag = False
-        if day is None or month is None or year is None:
+        if date is None:
             self.availability.clear()
         else:
-            new_availability = []
-            for timeblock in self.availability:
-                if timeblock.start_time.day != day or \
-                        timeblock.start_time.month != month or \
-                        timeblock.start_time.year != year:
-                    new_availability.append(timeblock)
-            self.availability = new_availability
+            self.availability = [tb for tb in self.availability if tb.start_time.date() != date]
 
     def set_specific_availability(self, avail_string: str, date_string: str) -> None:
         """
@@ -394,14 +373,26 @@ class Participant:
             year += 1
 
         # Check if the entered date is today
-        date_is_today = date(year, month, day) == cur_date
+        entered_date = date(year, month, day)
+        date_is_today = entered_date == cur_date
 
         # Keyword shortcuts
         if 'full' in avail_string:
-            self.set_full_availability(day=day, month=month, year=year)
+            self.set_full_availability(entered_date)
             return
         if 'clear' in avail_string:
-            self.set_no_availability(day=day, month=month, year=year)
+            extend = 1
+            if 'x' in avail_string:
+                clear, part, extend = avail_string.partition('x')
+                try:
+                    extend = int(extend)
+                except Exception as e:
+                    raise Exception(f"Invalid extension provided by user: {e}")
+            extend_date = entered_date
+            while extend > 0:
+                self.set_no_availability(extend_date)
+                extend_date += timedelta(days=1)
+                extend -= 1
             return
         if 'none' in avail_string:
             self.set_no_availability()

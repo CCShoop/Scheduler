@@ -190,7 +190,7 @@ class TestAvailabilityEditing:
         participant = make_participant(availability=[TimeBlock(at(1, 8), at(1, 10)), TimeBlock(at(2, 8), at(2, 10))],
                                        full_availability_flag=True)
         tomorrow = at(1, 0)
-        participant.set_no_availability(day=tomorrow.day, month=tomorrow.month, year=tomorrow.year)
+        participant.set_no_availability(tomorrow.date())
         assert blocks(participant) == [(at(2, 8), at(2, 10))]
         assert not participant.full_availability_flag
 
@@ -277,6 +277,12 @@ class TestSetSpecificAvailability:
         participant = make_participant(availability=[TimeBlock(at(1, 8), at(1, 10)), TimeBlock(at(2, 8), at(2, 10))])
         participant.set_specific_availability("clear", date_string(1))
         assert blocks(participant) == [(at(2, 8), at(2, 10))]
+
+    def test_clear_keyword_extension_clears_following_days(self):
+        participant = make_participant(availability=[TimeBlock(at(1, 8), at(1, 10)), TimeBlock(at(2, 8), at(2, 10)),
+                                                     TimeBlock(at(3, 8), at(3, 10))])
+        participant.set_specific_availability("clear x2", date_string(1))
+        assert blocks(participant) == [(at(3, 8), at(3, 10))]
 
     def test_none_keyword_clears_everything(self):
         participant = make_participant(availability=[TimeBlock(at(1, 8), at(1, 10)), TimeBlock(at(2, 8), at(2, 10))])
