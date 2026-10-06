@@ -66,6 +66,10 @@ UPDATE_INTERVAL: int = 1
 
 # Default length of events in minutes
 DEFAULT_EVENT_DURATION: int = 30
+MAX_EVENT_DURATION: int = 24 * 60
+
+# Discord's limit for a guild event's name
+MAX_EVENT_NAME_LENGTH: int = 100
 
 # Default time between events in minutes
 EVENT_BUFFER_MINUTES: int = 0
@@ -75,6 +79,7 @@ FOLLOWUP_DELAY_SECONDS: int = 3
 
 # Time before an unscheduled event is cleared
 DEFAULT_EVENT_TIMEOUT_DAYS: int = 7
+MAX_EVENT_TIMEOUT_DAYS: int = 30
 DEFAULT_EVENT_TIMEOUT: timedelta = timedelta(days=DEFAULT_EVENT_TIMEOUT_DAYS)
 
 SCHEDULE_AGAIN_TIMEOUT_DAYS: int = 8
@@ -183,6 +188,31 @@ def parse_start_time(start_time: str) -> datetime:
 # Discord's limit for an external guild event's location
 MAX_LOCATION_LENGTH = 100
 
+# Slash command option types, which Discord enforces before the command reaches the bot
+EventName = app_commands.Range[str, 1, MAX_EVENT_NAME_LENGTH]
+Location = app_commands.Range[str, 1, MAX_LOCATION_LENGTH]
+Duration = app_commands.Range[int, 0, MAX_EVENT_DURATION]
+TimeoutDays = app_commands.Range[int, 1, MAX_EVENT_TIMEOUT_DAYS]
+
+
+def validate_event_options(event_name: Optional[str] = None,
+                           duration: Optional[int] = None,
+                           timeout_days: Optional[int] = None) -> None:
+    """
+    Checks event options that didn't come through a slash command, e.g. a modal or a json packet.
+
+    Raises
+    ------
+    Exception
+        A message describing the invalid option.
+    """
+    if event_name is not None and not 1 <= len(event_name) <= MAX_EVENT_NAME_LENGTH:
+        raise Exception(f"Event name must be 1 to {MAX_EVENT_NAME_LENGTH} characters.")
+    if duration is not None and not 0 <= duration <= MAX_EVENT_DURATION:
+        raise Exception(f"Duration must be 0 to {MAX_EVENT_DURATION} minutes.")
+    if timeout_days is not None and not 1 <= timeout_days <= MAX_EVENT_TIMEOUT_DAYS:
+        raise Exception(f"Timeout must be 1 to {MAX_EVENT_TIMEOUT_DAYS} days.")
+
 
 def get_voice_channels(guild: Guild) -> list[VoiceChannel | StageChannel]:
     """Gets the guild's voice and stage channels that events can take place in, voice channels first."""
@@ -240,6 +270,28 @@ async def find_member(guild: Guild, member_id: int) -> Member:
     if member is None:
         member = await guild.fetch_member(member_id)
     return member
+
+
+def prune_user_cutoffs(user_ids: Optional[list[int]] = None) -> None:
+    """
+    Deletes the saved Full Availability cutoffs of users who no longer share a guild with the bot.
+
+    Arguments
+    ---------
+    user_ids: :class:`Optional[list[int]]`
+        The users to check. Default: every user with a saved cutoff.
+    """
+    # A member missing from an incomplete member cache would look like they left
+    if not all(guild.chunked for guild in client.guilds):
+        return
+    if user_ids is None:
+        user_ids = list(participant_lib.user_cutoffs)
+    for user_id in user_ids:
+        if user_id not in participant_lib.user_cutoffs:
+            continue
+        if not any(guild.get_member(user_id) is not None for guild in client.guilds):
+            del participant_lib.user_cutoffs[user_id]
+            logger.info(f"Deleted Full Availability cutoff of user {user_id}, who no longer shares a server with the bot")
 
 
 def get_location_key(voice_channel: Optional[VoiceChannel], location: Optional[str]) -> tuple:
@@ -375,6 +427,13 @@ class SchedulerClient(Client):
             self.loaded_json = True
             events_data = persist.read()
             if events_data:
+                # Data saved before cutoffs were per user has no entry
+                try:
+                    participant_lib.user_cutoffs.update({int(user_id): int(cutoff)
+                                                         for user_id, cutoff in events_data.get('user_cutoffs', {}).items()})
+                except Exception as e:
+                    logger.error(f"Could not load Full Availability cutoffs: {e}")
+                prune_user_cutoffs()
                 for idx, event_data in enumerate(events_data['events']):
                     if idx != 0:
                         # Prevent rate limiting when loading data
@@ -408,7 +467,7 @@ class SchedulerClient(Client):
     @property
     def events_dict(self) -> dict:
         """
-        Shove all events and schedule again buttons into a dictionary for writing to the data file.
+        Shove all events, schedule again buttons, and users' Full Availability cutoffs into a dictionary for writing to the data file.
 
         Returns
         -------
@@ -418,6 +477,8 @@ class SchedulerClient(Client):
         events_data = {}
         events_data['events'] = [event.to_dict() for event in self.events]
         events_data['schedule_again_events'] = [after_buttons.to_dict() for after_buttons in self.schedule_again_events]
+        # JSON keys are strings
+        events_data['user_cutoffs'] = {str(user_id): cutoff for user_id, cutoff in participant_lib.user_cutoffs.items()}
         return events_data
 
     async def setup_hook(self):
@@ -2849,10 +2910,12 @@ class ScheduleAgainModal(Modal):
         self.after_buttons = after_buttons
         self.event_name = TextInput(label="Name",
                                     default=event.name,
-                                    placeholder=event.get_limited_name(100))
+                                    placeholder=event.get_limited_name(100),
+                                    max_length=MAX_EVENT_NAME_LENGTH)
         self.event_duration = TextInput(label="Duration (Minutes)",
                                         default=str(event.duration_minutes),
-                                        placeholder="\"0\" for automatic",
+                                        placeholder=f"0 to {MAX_EVENT_DURATION}, \"0\" for automatic",
+                                        max_length=len(str(MAX_EVENT_DURATION)),
                                         required=False)
         if event.image_url:
             image_url = event.image_url
@@ -2875,7 +2938,8 @@ class ScheduleAgainModal(Modal):
         logger.info(f"[{self.event_name.value}] {interaction.user.name} scheduled again")
         event_name = self.event_name.value
         try:
-            event_duration = int(self.event_duration.value)
+            event_duration = int(self.event_duration.value or 0)
+            validate_event_options(event_name=event_name, duration=event_duration)
         except Exception as e:
             logger.exception(f"[{event_name}] Error scheduling again: {e}")
             await interaction.followup.send(content=f"Error scheduling again: {e}",
@@ -3172,7 +3236,11 @@ class AvailabilityButtons(View):
             # Participant has full availability
             if not participant.full_availability_flag:
                 logger.info(f'[{self.event}] {participant} selected full availability')
-                participant.set_full_availability()
+                try:
+                    participant.set_full_availability()
+                except Exception as e:
+                    await interaction.followup.send(content=str(e), ephemeral=True)
+                    return
                 remove_times_from_availabilities_for_events()
                 await self.event.handle_input_received(exclude=[participant])
             # Participant no longer has full availability
@@ -4034,6 +4102,7 @@ async def edit_event(event: Event,
                      multi_event: Optional[bool] = None,
                      timeout_days: Optional[int] = None,
                      location: Optional[str] = None) -> None:
+    validate_event_options(event_name=name, duration=duration, timeout_days=timeout_days)
     embed = Embed(title=f"{event} Edited",
                   description=f"{event} has been edited.",
                   color=Color.orange())
@@ -4178,6 +4247,13 @@ async def on_guild_remove(guild: Guild):
         if after_buttons.event.guild.id == guild.id:
             client.schedule_again_events.remove(after_buttons)
             logger.info(f"[{after_buttons.event}] Forgot schedule again buttons of removed guild")
+    prune_user_cutoffs()
+
+
+@client.event
+async def on_raw_member_remove(payload):
+    # A member left, was kicked, or was banned from a guild
+    prune_user_cutoffs([payload.user.id])
 
 
 @client.event
@@ -4255,14 +4331,14 @@ async def on_message(message: Message):
 @app_commands.describe(roles='Comma separated roles of users to include/exclude.')
 @app_commands.describe(duration=f'Event duration in minutes ({DEFAULT_EVENT_DURATION} minutes default).')
 async def create_command(interaction: Interaction,
-                         event_name: str,
-                         location: str,
+                         event_name: EventName,
+                         location: Location,
                          start_time: str,
                          image_url: Optional[str] = None,
                          include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
                          usernames: Optional[str] = None,
                          roles: Optional[str] = None,
-                         duration: Optional[int] = DEFAULT_EVENT_DURATION):
+                         duration: Optional[Duration] = DEFAULT_EVENT_DURATION):
     await interaction.response.defer(ephemeral=True)
     logger.info(f"[{event_name}] Received event creation request from {interaction.user.name}")
     participants = get_participants_from_interaction(event_name=event_name,
@@ -4357,6 +4433,7 @@ async def create(event_name: str,
     Exception: :class:`Exception`
         A string message describing the error.
      """
+    validate_event_options(event_name=event_name, duration=duration)
     # Location
     if location is None and voice_channel is None and not get_voice_channels(guild):
         logger.info(f"[{event_name}] Scheduling cancelled due to no location and no voice channel in guild")
@@ -4510,15 +4587,15 @@ async def create(event_name: str,
 @app_commands.describe(multi_event='Create an event on each date that everyone is available.')
 @app_commands.describe(timeout=f'Number of days that the event should wait for responses ({DEFAULT_EVENT_TIMEOUT_DAYS} days default).')
 async def schedule_command(interaction: Interaction,
-                           event_name: str,
-                           location: str,
+                           event_name: EventName,
+                           location: Location,
                            image_url: Optional[str] = None,
                            include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
                            usernames: Optional[str] = None,
                            roles: Optional[str] = None,
-                           duration: Optional[int] = 0,
+                           duration: Optional[Duration] = 0,
                            multi_event: Optional[bool] = False,
-                           timeout: Optional[int] = DEFAULT_EVENT_TIMEOUT_DAYS):
+                           timeout: Optional[TimeoutDays] = DEFAULT_EVENT_TIMEOUT_DAYS):
     await interaction.response.defer(ephemeral=True)
     logger.info(f'[{event_name}] Received event schedule request from {interaction.user.name}')
     try:
@@ -4610,6 +4687,7 @@ async def schedule(event_name: str,
     Exception: :class:`Exception`
         A string message describing the error.
     """
+    validate_event_options(event_name=event_name, duration=duration, timeout_days=timeout_days)
     # Location
     if location is None and voice_channel is None and not get_voice_channels(guild):
         logger.info(f"[{event_name}] Scheduling cancelled due to no location and no voice channel in guild")
@@ -4707,12 +4785,12 @@ async def schedule(event_name: str,
 @app_commands.describe(multi_event='Create an event on each date that everyone is available.')
 @app_commands.describe(timeout=f'Number of days that the event should wait for responses ({DEFAULT_EVENT_TIMEOUT_DAYS} days default).')
 async def edit_command(interaction: Interaction,
-                       name: Optional[str] = None,
-                       location: Optional[str] = None,
+                       name: Optional[EventName] = None,
+                       location: Optional[Location] = None,
                        image_url: Optional[str] = None,
-                       duration: Optional[int] = None,
+                       duration: Optional[Duration] = None,
                        multi_event: Optional[bool] = None,
-                       timeout: Optional[int] = None):
+                       timeout: Optional[TimeoutDays] = None):
     await interaction.response.defer(ephemeral=True, thinking=True)
     try:
         voice_channel, location = resolve_location(interaction.guild, location)
@@ -4929,18 +5007,27 @@ async def availability_command(interaction: Interaction):
         await interaction.followup.send(view=view, ephemeral=True)
 
 
-@client.tree.command(name='cutoff', description='Set how many hours past midnight Full Availability extends to.')
-@app_commands.describe(cutoff='The hour after midnight to automatically extend Full Availability to.')
-async def cutoff_command(interaction: Interaction, cutoff: int = participant_lib.DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF):
-    # The cutoff is shared by every guild, so only the owner can change it
-    if interaction.user.id != OWNER_ID:
-        await interaction.response.send_message(content="Only the bot owner can change the Full Availability cutoff.", ephemeral=True)
+@client.tree.command(name='cutoff', description='Set how many hours past midnight your Full Availability extends to.')
+@app_commands.describe(hours=f'Hours past midnight ({participant_lib.MIN_HOURS_PAST_MIDNIGHT_CUTOFF} to {participant_lib.MAX_HOURS_PAST_MIDNIGHT_CUTOFF}), '
+                             f'e.g. -2 is 10 PM. Leave blank to reset to {participant_lib.DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF}.')
+async def cutoff_command(interaction: Interaction,
+                         hours: Optional[app_commands.Range[int,
+                                                            participant_lib.MIN_HOURS_PAST_MIDNIGHT_CUTOFF,
+                                                            participant_lib.MAX_HOURS_PAST_MIDNIGHT_CUTOFF]] = None):
+    min_cutoff = participant_lib.MIN_HOURS_PAST_MIDNIGHT_CUTOFF
+    max_cutoff = participant_lib.MAX_HOURS_PAST_MIDNIGHT_CUTOFF
+    # Discord enforces the range, this is a backstop
+    if hours is not None and not min_cutoff <= hours <= max_cutoff:
+        await interaction.response.send_message(content=f"The cutoff must be between {min_cutoff} and {max_cutoff} hours.", ephemeral=True)
         return
-    if cutoff < 0 or cutoff > 23:
-        await interaction.response.send_message(content="The cutoff must be between 0 and 23 hours.", ephemeral=True)
-        return
-    participant_lib.HOURS_PAST_MIDNIGHT_CUTOFF = cutoff
-    await interaction.response.send_message(content=f"Full Availability cutoff has been set to {cutoff} hour(s) past midnight.")
+    # Only cutoffs that differ from the default are saved
+    if hours is None or hours == participant_lib.DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF:
+        participant_lib.user_cutoffs.pop(interaction.user.id, None)
+        hours = participant_lib.DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF
+    else:
+        participant_lib.user_cutoffs[interaction.user.id] = hours
+    logger.info(f"{interaction.user.name} set their Full Availability cutoff to {hours}")
+    await interaction.response.send_message(content=f"Your Full Availability now extends to {participant_lib.format_cutoff(hours)}.", ephemeral=True)
 
 
 @client.tree.command(name='help', description='Show helpful information.')

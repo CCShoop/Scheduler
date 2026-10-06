@@ -54,9 +54,11 @@ def sched():
     """The scheduler module, with a clean client event list for each test."""
     scheduler.client.events.clear()
     scheduler.client.schedule_again_events.clear()
+    scheduler.participant_lib.user_cutoffs.clear()
     yield scheduler
     scheduler.client.events.clear()
     scheduler.client.schedule_again_events.clear()
+    scheduler.participant_lib.user_cutoffs.clear()
 
 
 @pytest.fixture

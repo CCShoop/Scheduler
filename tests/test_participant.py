@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from libs.participant import (Participant, TimeBlock, RemovedTime, parse_time_string,
-                              HOURS_PAST_MIDNIGHT_CUTOFF)
+                              DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF)
 
 
 def at(days: int, hour: int, minute: int = 0) -> datetime:
@@ -269,7 +269,7 @@ class TestSetSpecificAvailability:
     def test_full_keyword(self):
         participant = make_participant()
         participant.set_specific_availability("full", date_string(1))
-        assert blocks(participant) == [(at(1, 0), at(2, HOURS_PAST_MIDNIGHT_CUTOFF))]
+        assert blocks(participant) == [(at(1, 0), at(2, DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF))]
         assert participant.full_availability_flag
         assert participant.answered
 

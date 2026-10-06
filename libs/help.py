@@ -46,6 +46,10 @@ commands.add_field(name="listevents",
 commands.add_field(name="availability",
                    value="Shows the availability for an event tied to this text channel.",
                    inline=False)
+commands.add_field(name="cutoff",
+                   value="Set how many hours past midnight your Full Availability extends to (-6 to 23, default 0). Negative ends it before midnight, e.g. -2 is 10 PM."
+                   "\nLeave it blank to go back to the default.",
+                   inline=False)
 commands.add_field(name="help",
                    value="Shows this help message.",
                    inline=False)
@@ -70,7 +74,7 @@ instructions.add_field(name="Respond Button",
                        "\nLeaving the note field blank when resubmitting the form will clear your note.",
                        inline=False)
 instructions.add_field(name="Full Availability Button",
-                       value="Sets a \"full availability flag\" and adds a time period from now until 1 AM."
+                       value="Sets a \"full availability flag\" and adds a time period from now until midnight, or the time you set with /cutoff."
                        "\nIf someone else puts availability extending past that, yours will be extended to the same time.",
                        inline=False)
 instructions.add_field(name="Use Existing Button",

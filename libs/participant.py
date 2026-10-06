@@ -5,8 +5,28 @@ from datetime import date, datetime, timedelta
 from calendar import monthrange
 
 
-DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF = 1
-HOURS_PAST_MIDNIGHT_CUTOFF = DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF
+DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF = 0
+# Negative cutoffs end Full Availability before midnight, e.g. -2 is 10 PM
+MIN_HOURS_PAST_MIDNIGHT_CUTOFF = -6
+MAX_HOURS_PAST_MIDNIGHT_CUTOFF = 23
+# Hours past midnight that each user's Full Availability extends to, set with /cutoff.
+# Users without an entry use DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF.
+user_cutoffs: dict[int, int] = {}
+
+
+def get_cutoff(user_id: int) -> int:
+    """Gets how many hours past midnight the user's Full Availability extends to."""
+    return user_cutoffs.get(user_id, DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF)
+
+
+def format_cutoff(hours: int) -> str:
+    """Gets the time of day a cutoff ends at, e.g. "midnight", "2 AM", or "10 PM"."""
+    hour = hours % 24
+    if hour == 0:
+        return "midnight"
+    if hour == 12:
+        return "noon"
+    return f"{hour % 12 or 12} {'AM' if hour < 12 else 'PM'}"
 
 
 def parse_time_string(time_string: str, label: str) -> str:
@@ -279,12 +299,16 @@ class Participant:
             if start_time.date() != cur_time.date():
                 start_time = start_time.replace(hour=0, minute=0)
             if not end_time:
+                cutoff = get_cutoff(self.member.id)
+                # Midnight at the end of the day, shifted by the cutoff
                 end_time = cur_time.replace(day=day,
                                             month=month,
                                             year=year,
-                                            hour=HOURS_PAST_MIDNIGHT_CUTOFF,
+                                            hour=0,
                                             minute=0)
-                end_time += timedelta(days=1)
+                end_time += timedelta(days=1, hours=cutoff)
+                if end_time <= start_time:
+                    raise Exception(f"Your Full Availability ends at {format_cutoff(cutoff)} (set with /cutoff), which has already passed.")
             self.add_to_availability(TimeBlock(start_time, end_time))
             self.answered = True
             self.full_availability_flag = True

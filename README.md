@@ -83,15 +83,15 @@ This is the main command. The bot posts an availability message in the channel a
 
 | Option            | Required | Description |
 |-------------------|----------|-------------|
-| `event_name`      | Yes | The event's name. Two events can't have the same name at the same time. |
+| `event_name`      | Yes | The event's name, up to 100 characters. Two events can't have the same name at the same time. |
 | `location`        | Yes | Where the event takes place. The voice and stage channels appear as suggestions, so press Enter to pick the first one. Or type any other location, such as an address, up to 100 characters. See [Locations](#locations). |
 | `image_url`       | No  | An image for the Discord event and the bot's messages. |
 | `include_exclude` | No  | Whether `usernames` and `roles` add people (`INCLUDE`, the default) or leave people out (`EXCLUDE`). |
 | `usernames`       | No  | Comma-separated usernames or user IDs to include or exclude. |
 | `roles`           | No  | Comma-separated role names to include or exclude. |
-| `duration`        | No  | The length in minutes. The default, `0`, sets the length to however long everyone is available. |
+| `duration`        | No  | The length in minutes, up to 1440 (24 hours). The default, `0`, sets the length to however long everyone is available. |
 | `multi_event`     | No  | Creates one event on each day everyone is available, instead of a single event. |
-| `timeout`         | No  | The number of days to wait for responses before giving up. The default is 7. |
+| `timeout`         | No  | The number of days to wait for responses before giving up, from 1 to 30. The default is 7. |
 
 **Who gets invited:** You're always a participant. If you don't set `usernames` or `roles`, everyone who can see the text channel is invited. Bots are never invited. If you set `roles`, `usernames` is ignored.
 
@@ -127,7 +127,7 @@ Use this command when you already know the time. It takes the same options as `/
 | Option       | Required | Description |
 |--------------|----------|-------------|
 | `start_time` | Yes | A time such as `2200`, or a full ISO date and time such as `2026-10-04T22:00`. |
-| `duration`   | No  | The length in minutes. The default is 30. |
+| `duration`   | No  | The length in minutes, up to 1440 (24 hours). The default is 30. |
 
 ### Other commands
 
@@ -138,6 +138,7 @@ Use this command when you already know the time. It takes the same options as `/
 | `/availability` | Show everyone's availability for an event in the current channel. |
 | `/listevents`   | List every event the bot is managing in this server. |
 | `/listmyevents` | List every event you're a participant in. |
+| `/cutoff`       | Set how many hours past midnight your **Full Availability** extends to, from -6 to 23. Negative numbers end it before midnight to match an earlier bedtime, so `-2` means 10 PM. The default is 0, which means midnight. Leave the number blank to go back to the default. The setting is yours alone and applies in every server. It's deleted if you no longer share a server with the bot. |
 | `/help`         | Show the built-in help. |
 
 ### Adding an image later
@@ -153,7 +154,7 @@ The availability message has these buttons:
 | Button | What it does |
 |--------|--------------|
 | **Respond** | Opens a form for entering when you're free. |
-| **Full Availability (Today)** | Marks you as available from now until 1 AM. If someone else enters availability later than that, yours is extended to match. |
+| **Full Availability (Today)** | Marks you as available from now until midnight, or the time you set with `/cutoff`. If that time has already passed today, the bot tells you instead. If someone else enters availability later than that, yours is extended to match. |
 | **Use Existing Availability** | Copies your availability from another event you're in. If you're in more than one, choose which event to copy from. |
 | **Unsubscribe from Event** | Stops the bot from mentioning you. You're still a participant. |
 | **Cancel Scheduling** | Cancels the event, with an optional reason. |
@@ -216,8 +217,6 @@ Only the user set as `OWNER_ID` can run these. Send them to the bot as direct me
 |---------|--------------|
 | `scheduler: events` | List every event the bot is tracking, in all servers, with its status. |
 | `scheduler: debug` | Turn debug logging on or off. |
-
-The slash command `/cutoff <hours>` is also owner-only. It sets how many hours past midnight **Full Availability (Today)** extends to, from 0 to 23. The default is 1, which means 1 AM. The setting applies to every server, and goes back to the default when the bot restarts.
 
 ---
 
