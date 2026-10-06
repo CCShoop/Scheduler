@@ -11,9 +11,9 @@ from typing import Optional
 from datetime import datetime, timedelta
 from discord import (app_commands, Interaction, Intents, Client, Embed, Color, Activity,
                      ButtonStyle, EntityType, TextChannel, ActivityType, Status, EventStatus,
-                     VoiceChannel, Message, SelectOption, ScheduledEvent,
-                     Guild, PrivacyLevel, User, utils, NotFound, DiscordServerError)
-from discord.ui import View, Button, Modal, TextInput, Select, Label, Checkbox
+                     VoiceChannel, Message, SelectOption, ScheduledEvent, ChannelType,
+                     Guild, Member, PrivacyLevel, User, utils, NotFound, DiscordServerError)
+from discord.ui import View, Button, Modal, TextInput, Select, ChannelSelect, Label, Checkbox
 from discord.ext import tasks
 
 from libs.persistence import Persistence
@@ -51,6 +51,9 @@ INCLUDE_EXCLUDE: Literal = Literal[INCLUDE, EXCLUDE]
 
 # Time in seconds to wait before making multi-event events
 AVAILABILITY_COOLDOWN_SECONDS = 30
+
+# Time between attempts to look up participants that could not be found when loading an event
+PARTICIPANT_RESOLVE_RETRY: timedelta = timedelta(minutes=1)
 
 # Time in minutes to delay "immediate" start
 START_TIME_DELAY = 30
@@ -212,6 +215,21 @@ def resolve_location(guild: Guild, location: Optional[str]) -> tuple[Optional[Vo
     if len(location) > MAX_LOCATION_LENGTH:
         raise Exception(f"Location must be {MAX_LOCATION_LENGTH} characters or fewer.")
     return None, location
+
+
+async def find_member(guild: Guild, member_id: int) -> Member:
+    """
+    Gets a guild member from the cache, or from Discord if the cache doesn't have them.
+
+    Raises
+    ------
+    NotFound
+        The member is no longer in the guild.
+    """
+    member = guild.get_member(member_id)
+    if member is None:
+        member = await guild.fetch_member(member_id)
+    return member
 
 
 def get_location_key(voice_channel: Optional[VoiceChannel], location: Optional[str]) -> tuple:
@@ -429,6 +447,8 @@ async def cleanup():
             event.event_buttons.cancel_button.disabled = True
         logger.info(f"[{event}] Updating message with disabled buttons")
         await event.update_messages()
+        if event.voice_channel_prompt is not None:
+            await event.voice_channel_prompt.disable()
     # Already saved by handle_signal, re-enabled by retrieve_events on startup
     for schedule_again_event in client.schedule_again_events.copy():
         await schedule_again_event.disable()
@@ -511,6 +531,16 @@ class Event:
     availability_resent_at: :class:`Optional[datetime]`
         When the availability message was last resent for visibility.
         Default: Now
+    voice_channel_deleted: :class:`Optional[bool]`
+        Whether the event's voice channel was deleted, leaving voice_channel None until a new one is chosen.
+    availability_input_timer: :class:`Optional[datetime]`
+        When the multi event availability cooldown started, None if it isn't running.
+    unresolved_participants: :class:`Optional[list[dict]]`
+        Saved data of participants whose members could not be looked up yet.
+    unresolved_scheduler_id: :class:`Optional[int]`
+        The scheduler's member id while they are an unresolved participant, otherwise 0.
+    unresolved_rescheduler_id: :class:`Optional[int]`
+        The rescheduler's member id while they are an unresolved participant, otherwise 0.
     """
 
     def __init__(self,
@@ -537,7 +567,12 @@ class Event:
                  reminder_message: Optional[Message] = None,
                  timeout_at: Optional[datetime] = None,
                  availability_resent_at: Optional[datetime] = None,
-                 location: Optional[str] = None) -> None:
+                 location: Optional[str] = None,
+                 voice_channel_deleted: Optional[bool] = False,
+                 availability_input_timer: Optional[datetime] = None,
+                 unresolved_participants: Optional[list[dict]] = None,
+                 unresolved_scheduler_id: Optional[int] = 0,
+                 unresolved_rescheduler_id: Optional[int] = 0) -> None:
         self.name: str = name
         self.guild: Guild = guild
         self.text_channel: TextChannel = text_channel
@@ -548,6 +583,9 @@ class Event:
             self.voice_channel: Optional[VoiceChannel] = None
         elif voice_channel:
             self.voice_channel: VoiceChannel = voice_channel
+        elif voice_channel_deleted:
+            # Waits for a new voice channel to be chosen through the voice channel prompt
+            self.voice_channel: Optional[VoiceChannel] = None
         else:
             try:
                 self.voice_channel: VoiceChannel = self.guild.voice_channels[0]
@@ -579,8 +617,13 @@ class Event:
         self.multi_event: bool = multi_event
         self.timeout_at: datetime = timeout_at or now() + DEFAULT_EVENT_TIMEOUT
         self.availability_resent_at: datetime = availability_resent_at or now()
-        self.availability_input_timer = None
+        self.availability_input_timer: Optional[datetime] = availability_input_timer
         self.after_buttons: AfterButtons = None
+        self.voice_channel_prompt: Optional[VoiceChannelPrompt] = None
+        self.unresolved_participants: list[dict] = unresolved_participants or []
+        self.unresolved_scheduler_id: int = unresolved_scheduler_id
+        self.unresolved_rescheduler_id: int = unresolved_rescheduler_id
+        self.participants_resolve_retry_at: datetime = now()
 
     async def update(self) -> None:
         """
@@ -599,14 +642,29 @@ class Event:
         # Cancel the event if the text channel has vaporized
         text_channel = self.guild.get_channel(self.text_channel.id)
         if not text_channel:
-            self.remove()
+            await self.discard(reason="Its text channel was deleted.")
             return
-        # Remove participants who are not longer in the text channel
-        keep_participants = []
-        for participant in self.participants:
-            if participant.member in self.text_channel.members:
-                keep_participants.append(participant)
-        self.participants = keep_participants
+        if self.unresolved_participants:
+            if await self.resolve_participants():
+                await self.update_messages()
+        # Remove participants who are not longer in the text channel.
+        # Skipped while the member cache is incomplete, since members missing from it would be removed too.
+        if self.guild.chunked:
+            keep_participants = []
+            for participant in self.participants:
+                if participant.member in self.text_channel.members:
+                    keep_participants.append(participant)
+            self.participants = keep_participants
+        # Wait for a new voice channel to be chosen or the event to be cancelled
+        if self.voice_channel_missing:
+            if self.voice_channel_prompt is None:
+                await self.send_voice_channel_prompt()
+            if not self.created:
+                await self.update_timeout()
+            return
+        # A new location was set some other way, e.g. /edit
+        if self.voice_channel_prompt is not None:
+            await self.delete_voice_channel_prompt()
         if not self.created:
             self.reminder_flag = False
             # Timeout check
@@ -710,6 +768,10 @@ class Event:
         async with self.create_lock:
             # Another caller may have cancelled the event while this one waited on the lock
             if self.cancelled:
+                return
+            # Don't create the event without the availability of participants that couldn't be looked up yet,
+            # or while it has no voice channel
+            if self.unresolved_participants or self.voice_channel_missing:
                 return
             if not self.created:
                 if self.everyone_answered:
@@ -1325,7 +1387,7 @@ class Event:
         if subscribed_only and unsubscribed_only:
             subscribed_only = False
             unsubscribed_only = False
-        voice_channel_members = self.voice_channel.members if not self.is_external else []
+        voice_channel_members = self.voice_channel.members if self.voice_channel is not None else []
 
         for participant in self.participants:
             if mention:
@@ -1843,6 +1905,8 @@ class Event:
         await self.delete_availability_message()
         await self.delete_event_buttons_message()
         await self.delete_reminder_message()
+        if self.cancelled:
+            await self.delete_voice_channel_prompt()
         try:
             if len(self.scheduled_events) > 0:
                 await self.scheduled_events[0].delete(reason=f"Cancelled by {canceller}: {reason}")
@@ -1945,6 +2009,165 @@ class Event:
         remove_times_from_availabilities_for_events()
         for event in client.events:
             await event.update_messages()
+
+    async def discard(self, reason: str) -> None:
+        """
+        Cancels the event without messaging its text channel, for when its guild or text channel is gone.
+
+        Arguments
+        ---------
+        reason: :class:`str`
+            The reason for the cancellation, used in the log and the audit log.
+        """
+        if self.cancelled:
+            return
+        logger.info(f"[{self}] Cancelling without a message: {reason}")
+        self.cancelled = True
+        for scheduled_event in self.scheduled_events:
+            try:
+                await scheduled_event.delete(reason=f"Cancelled by {client.user}: {reason}")
+            except Exception as e:
+                logger.warning(f"[{self}] Error deleting guild event while discarding: {e}")
+        if self.voice_channel_prompt is not None:
+            self.voice_channel_prompt.stop()
+            self.voice_channel_prompt = None
+        self.remove()
+        # Restore availability taken by this event
+        for event in client.events:
+            event.restore_availabilities(self)
+        remove_times_from_availabilities_for_events()
+        for event in client.events:
+            # Events in the same missing text channel or guild are discarded too
+            if event.text_channel.id == self.text_channel.id or client.get_guild(event.guild.id) is None:
+                continue
+            try:
+                await event.update_messages()
+            except Exception as e:
+                logger.error(f"[{event}] Error updating messages after discarding {self}: {e}")
+
+    async def handle_voice_channel_deleted(self) -> None:
+        """
+        Ends a started occurrence whose voice channel was deleted, then asks participants
+        to choose a new voice channel or cancel the event.
+        Guild events are deleted and recreated once a new voice channel is chosen.
+        """
+        if self.is_external or self.cancelled:
+            return
+        logger.info(f"[{self}] Voice channel was deleted")
+        if self.started:
+            await self.end(reason=f"Event ended by {client.user} because its voice channel was deleted.")
+            if self not in client.events:
+                return
+        self.voice_channel = None
+        await self.delete_scheduled_events_for_missing_voice_channel()
+        await self.send_voice_channel_prompt()
+        await self.update_messages()
+
+    async def delete_scheduled_events_for_missing_voice_channel(self) -> None:
+        """
+        Deletes the event's guild events, keeping its start times so they're recreated
+        by update() once a new voice channel is chosen.
+        """
+        for scheduled_event in self.scheduled_events:
+            try:
+                await scheduled_event.delete(reason=f"Voice channel deleted, recreated once {client.user} is given a new one.")
+            except Exception as e:
+                # Discord may have already deleted it along with the voice channel
+                logger.info(f"[{self}] Could not delete guild event of deleted voice channel: {e}")
+        self.scheduled_events.clear()
+        self.started = False
+
+    async def send_voice_channel_prompt(self) -> None:
+        """Sends a message asking participants to choose a new voice channel or cancel the event."""
+        prompt = VoiceChannelPrompt(self)
+        embed = Embed(title="Voice Channel Deleted",
+                      description=f"The voice channel for **{self}** was deleted.\n"
+                                  "Select a different voice channel in the server for it, or cancel the event.",
+                      color=Color.orange())
+        prompt.message = await self.text_channel.send(content=self.get_names_string(subscribed_only=True, mention=True),
+                                                      embed=embed,
+                                                      view=prompt)
+        self.voice_channel_prompt = prompt
+        logger.info(f"[{self}] Sent voice channel prompt")
+
+    async def delete_voice_channel_prompt(self) -> None:
+        """Deletes the voice channel prompt message, if there is one."""
+        prompt = self.voice_channel_prompt
+        if prompt is None:
+            return
+        self.voice_channel_prompt = None
+        prompt.stop()
+        if prompt.message is not None:
+            try:
+                await prompt.message.delete()
+            except Exception as e:
+                logger.warning(f"[{self}] Error deleting voice channel prompt message: {e}")
+
+    async def move_to_voice_channel(self, voice_channel: VoiceChannel, mover: str) -> None:
+        """
+        Moves the event to a new voice channel after its voice channel was deleted.
+        Its guild events are recreated in the new voice channel by update().
+
+        Arguments
+        ---------
+        voice_channel: :class:`VoiceChannel`
+            The new voice channel.
+        mover: :class:`str`
+            The name of whoever chose the new voice channel.
+        """
+        self.voice_channel = voice_channel
+        await self.delete_voice_channel_prompt()
+        logger.info(f"[{self}] Moved to voice channel {voice_channel.name} by {mover}")
+        await self.text_channel.send(embed=Embed(title="Voice Channel Changed",
+                                                 description=f"{mover} moved **{self}** to {voice_channel.mention}.",
+                                                 color=Color.blue()))
+        await self.update_messages()
+
+    async def resolve_participants(self) -> bool:
+        """
+        Looks up the members of unresolved participants, at most once every PARTICIPANT_RESOLVE_RETRY.
+        Participants who left the guild are dropped, the rest are retried later.
+
+        Returns
+        -------
+        resolved: :class:`bool`
+            True if any participant was added.
+        """
+        if now() < self.participants_resolve_retry_at:
+            return False
+        self.participants_resolve_retry_at = now() + PARTICIPANT_RESOLVE_RETRY
+        resolved = False
+        still_unresolved = []
+        for participant_data in self.unresolved_participants:
+            member_id = participant_data["member_id"]
+            try:
+                member = await find_member(self.guild, member_id)
+            except NotFound:
+                logger.info(f"[{self}] Participant {participant_data.get('member_name')} left the server, removing")
+                continue
+            except Exception as e:
+                logger.warning(f"[{self}] Could not look up participant {participant_data.get('member_name')}, retrying later: {e}")
+                still_unresolved.append(participant_data)
+                continue
+            participant = Participant.from_dict(self.guild, participant_data, member=member)
+            self.participants.append(participant)
+            resolved = True
+            if member_id == self.unresolved_scheduler_id:
+                self.scheduler = participant
+                self.unresolved_scheduler_id = 0
+            if member_id == self.unresolved_rescheduler_id:
+                self.rescheduler = participant
+                self.unresolved_rescheduler_id = 0
+        self.unresolved_participants = still_unresolved
+        if not self.unresolved_participants:
+            self.unresolved_scheduler_id = 0
+            self.unresolved_rescheduler_id = 0
+        return resolved
+
+    @property
+    def voice_channel_missing(self) -> bool:
+        """Indicates whether the event's voice channel was deleted and a new one hasn't been chosen yet."""
+        return not self.is_external and self.voice_channel is None
 
     def remove(self) -> None:
         """
@@ -2127,7 +2350,9 @@ class Event:
     @property
     def location_string(self) -> str:
         """The voice channel mention, or the external location."""
-        return self.location if self.is_external else self.voice_channel.mention
+        if self.is_external:
+            return self.location
+        return self.voice_channel.mention if self.voice_channel is not None else "(Deleted voice channel)"
 
     def same_location(self, event) -> bool:
         """Indicates whether this event takes place in the same voice channel or external location as the provided event."""
@@ -2200,6 +2425,14 @@ class Event:
             raise Exception(f'[{data.get("name")}] Could not find guild, discarding event')
         event_text_channel = event_guild.get_channel(data["text_channel_id"])
         if not event_text_channel:
+            # Cancel the event's guild events, nowhere is left to manage them from
+            for scheduled_event_id in data.get("scheduled_event_ids", []):
+                scheduled_event = event_guild.get_scheduled_event(scheduled_event_id)
+                if scheduled_event is not None:
+                    try:
+                        await scheduled_event.delete(reason=f"Cancelled by {client.user}: Its text channel was deleted.")
+                    except Exception as e:
+                        logger.warning(f'[{data.get("name")}] Error deleting guild event of deleted text channel: {e}')
             raise Exception(f'[{data.get("name")}] Could not find text channel, discarding event')
         try:
             return await cls._from_dict(data, event_guild, event_text_channel)
@@ -2223,43 +2456,21 @@ class Event:
         # Location: an external location, otherwise a voice channel
         event_location = data.get("location") or None
         event_voice_channel = None
+        event_voice_channel_deleted = False
         if event_location is None:
             event_voice_channel = utils.get(event_guild.voice_channels, id=data["voice_channel_id"])
             if not event_voice_channel:
-                raise Exception(f'[{event_name}] Could not find voice channel, discarding event')
+                logger.warning(f'[{event_name}] Could not find voice channel, asking for a new one')
+                event_voice_channel_deleted = True
 
-        # Participants
-        event_participants = [Participant.from_dict(event_guild, participant) for participant in data["participants"]]
-        for participant in event_participants.copy():
-            try:
-                if participant is None or participant.member is None:
-                    event_participants.remove(participant)
-            except Exception as e:
-                logger.warning(f"[{event_name}] Exception while adding participant: {e}")
-                event_participants.remove(participant)
-        if not event_participants:
+        # Participants are looked up after the event is made, by resolve_participants()
+        event_participants = []
+        event_unresolved_participants = data["participants"]
+        if not event_unresolved_participants:
             event_participants = get_participants_from_channel(event_name=event_name,
                                                                guild=event_guild,
                                                                channel=event_text_channel)
-            logger.warning(f'[{event_name}] no participant(s) found, added everyone in the text channel')
-
-        # Scheduler
-        event_scheduler_id = data['scheduler_id']
-        event_scheduler = None
-        if event_scheduler_id != 0:
-            for participant in event_participants:
-                if participant.member.id == event_scheduler_id:
-                    event_scheduler = participant
-                    break
-
-        # Rescheduler
-        event_rescheduler_id = data['rescheduler_id']
-        event_rescheduler = None
-        if event_rescheduler_id != 0:
-            for participant in event_participants:
-                if participant.member.id == event_rescheduler_id:
-                    event_rescheduler = participant
-                    break
+            logger.warning(f'[{event_name}] no participant(s) saved, added everyone in the text channel')
 
         # Availability message id
         event_availability_message_id = data["availability_message_id"]
@@ -2313,6 +2524,10 @@ class Event:
                     missing_scheduled_event_indices.append(i)
         except Exception as e:
             logger.warning(f'[{event_name}] error getting guild scheduled events: {e}')
+        # Guild events of a deleted voice channel are recreated once a new one is chosen,
+        # so every start time is kept
+        if event_voice_channel_deleted:
+            missing_scheduled_event_indices = []
 
         # Reminder flag
         event_reminder_flag = data["reminder_flag"]
@@ -2379,7 +2594,24 @@ class Event:
             logger.warning(f'Failed to read availability resent data: {e}')
             event_availability_resent_at = None
 
-        return cls(
+        # Multi event availability cooldown
+        try:
+            event_availability_input_timer = data["availability_input_timer"]
+            if event_availability_input_timer is not None:
+                event_availability_input_timer = datetime.fromisoformat(event_availability_input_timer)
+        except Exception as e:
+            logger.warning(f'Failed to read availability input timer data: {e}')
+            event_availability_input_timer = None
+
+        # Voice channel prompt message
+        event_voice_channel_prompt_message = None
+        if event_voice_channel_deleted and data.get("voice_channel_prompt_message_id"):
+            try:
+                event_voice_channel_prompt_message = await event_text_channel.fetch_message(data["voice_channel_prompt_message_id"])
+            except Exception as e:
+                logger.warning(f"[{event_name}] voice channel prompt message not found, sending a new one: {e}")
+
+        event = cls(
             name=event_name,
             guild=event_guild,
             text_channel=event_text_channel,
@@ -2387,8 +2619,6 @@ class Event:
             availability_buttons=None,
             voice_channel=event_voice_channel,
             location=event_location,
-            scheduler=event_scheduler,
-            rescheduler=event_rescheduler,
             participants=event_participants,
             image_url=event_image_url,
             event_buttons_message=event_event_buttons_message,
@@ -2403,8 +2633,32 @@ class Event:
             duration=event_duration,
             multi_event=event_multi_event,
             timeout_at=event_timeout_at,
-            availability_resent_at=event_availability_resent_at
+            availability_resent_at=event_availability_resent_at,
+            voice_channel_deleted=event_voice_channel_deleted,
+            availability_input_timer=event_availability_input_timer,
+            unresolved_participants=event_unresolved_participants,
+            unresolved_scheduler_id=data["scheduler_id"],
+            unresolved_rescheduler_id=data["rescheduler_id"]
         )
+        # Participants added from the text channel when none were saved
+        for participant in event.participants:
+            if participant.member.id == event.unresolved_scheduler_id:
+                event.scheduler = participant
+            if participant.member.id == event.unresolved_rescheduler_id:
+                event.rescheduler = participant
+        await event.resolve_participants()
+        if event.voice_channel_missing:
+            if event.created:
+                await event.delete_scheduled_events_for_missing_voice_channel()
+            if event_voice_channel_prompt_message is not None:
+                # Re-enable the prompt on its existing message, otherwise update() sends a new one
+                prompt = VoiceChannelPrompt(event)
+                try:
+                    prompt.message = await event_voice_channel_prompt_message.edit(view=prompt)
+                    event.voice_channel_prompt = prompt
+                except Exception as e:
+                    logger.warning(f"[{event_name}] Error re-enabling voice channel prompt: {e}")
+        return event
 
     def to_dict(self) -> dict:
         """
@@ -2430,16 +2684,22 @@ class Event:
         try:
             scheduler_id = self.scheduler.member.id
         except Exception:
-            scheduler_id = 0
+            scheduler_id = self.unresolved_scheduler_id
         try:
             rescheduler_id = self.rescheduler.member.id
         except Exception:
-            rescheduler_id = 0
+            rescheduler_id = self.unresolved_rescheduler_id
         try:
             participants = [participant.to_dict() for participant in self.participants]
         except Exception as e:
             logger.warning(f'Failed getting participants dict list: {e}')
             participants = []
+        # Kept so they can be looked up again after another restart
+        participants += self.unresolved_participants
+        try:
+            voice_channel_prompt_message_id = self.voice_channel_prompt.message.id
+        except Exception:
+            voice_channel_prompt_message_id = 0
         if self.image_url is not None:
             image_url = self.image_url
         else:
@@ -2476,7 +2736,9 @@ class Event:
             'duration': self.duration_minutes,
             'multi_event': self.multi_event,
             'timeout_at': self.timeout_at.isoformat(),
-            'availability_resent_at': self.availability_resent_at.isoformat()
+            'availability_resent_at': self.availability_resent_at.isoformat(),
+            'availability_input_timer': self.availability_input_timer.isoformat() if self.availability_input_timer is not None else None,
+            'voice_channel_prompt_message_id': voice_channel_prompt_message_id
         }
 
     def __repr__(self) -> str:
@@ -3029,6 +3291,10 @@ class EventButtons(View):
             if self.event not in client.events:
                 client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
+            if self.event.voice_channel_missing:
+                await interaction.followup.send(content=f"{self.event}'s voice channel was deleted, choose a new one before starting it.",
+                                                ephemeral=True)
+                return
             self.event.add_user_as_participant(interaction.user)
             if not self.event.is_external and interaction.user.id not in [member.id for member in self.event.voice_channel.members]:
                 logger.info(f"[{self.event}] {interaction.user} tried to press start button while not in the event's voice channel")
@@ -3357,6 +3623,68 @@ class AfterButtons(View):
                 await self.message.edit(view=None)
             except Exception as e:
                 logger.error(f"[{self}] Error in AfterButtons remove while editing message: {e}")
+
+
+class VoiceChannelPrompt(View):
+    """
+    Represents the buttons on the message asking participants to choose a new voice channel
+    for an event whose voice channel was deleted, or to cancel the event.
+
+    Attributes
+    ----------
+    event: :class:`Event`
+        The event that needs a new voice channel.
+    channel_select: :class:`ChannelSelect`
+        The dropdown of the guild's voice channels.
+    cancel_button: :class:`Button`
+        The Cancel Event button.
+    message: :class:`Optional[Message]`
+        The message the prompt is attached to.
+    """
+
+    def __init__(self, event: Event) -> None:
+        super().__init__(timeout=None)
+        self.event = event
+        self.message = None
+        self.channel_select = ChannelSelect(channel_types=[ChannelType.voice],
+                                            placeholder="Select a new voice channel",
+                                            min_values=1,
+                                            max_values=1)
+        self.channel_select.callback = self.channel_select_callback
+        self.add_item(self.channel_select)
+        self.cancel_button = Button(label="Cancel Event", style=ButtonStyle.red)
+        self.cancel_button.callback = self.cancel_button_callback
+        self.add_item(self.cancel_button)
+
+    async def channel_select_callback(self, interaction: Interaction) -> None:
+        if await respond_if_cancelled(self.event, interaction):
+            return
+        voice_channel = utils.get(self.event.guild.voice_channels, id=self.channel_select.values[0].id)
+        if voice_channel is None:
+            await interaction.response.send_message(content="That voice channel could not be found.", ephemeral=True)
+            return
+        if not self.event.voice_channel_missing:
+            await interaction.response.send_message(content=f"{self.event} already has a location.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        mover = interaction.user.nick if getattr(interaction.user, "nick", None) else interaction.user.name
+        await self.event.move_to_voice_channel(voice_channel, mover)
+
+    async def cancel_button_callback(self, interaction: Interaction) -> None:
+        if await respond_if_cancelled(self.event, interaction):
+            return
+        await interaction.response.send_modal(CancelModal(event=self.event,
+                                                          title=f"Cancel {self.event.get_limited_name(38)}"))
+
+    async def disable(self) -> None:
+        """Disables the prompt on its message while the bot is offline."""
+        self.channel_select.disabled = True
+        self.cancel_button.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except Exception as e:
+                logger.error(f"[{self.event}] Error disabling voice channel prompt: {e}")
 
 
 class ExistingGuildEventsSelect(Select):
@@ -3759,6 +4087,39 @@ async def on_ready():
         update.start()
     logger.info('Ready!')
     await client.change_presence(activity=Activity(type=ActivityType.watching, state="Online", name="for event scheduling commands"), status=Status.online)
+
+
+@client.event
+async def on_guild_remove(guild: Guild):
+    # The guild was deleted or the bot was removed from it
+    for event in client.events.copy():
+        if event.guild.id == guild.id:
+            try:
+                await event.discard(reason="The bot is no longer in its server.")
+            except Exception as e:
+                logger.exception(f"[{event}] Error cancelling event of removed guild: {e}")
+    for after_buttons in client.schedule_again_events.copy():
+        if after_buttons.event.guild.id == guild.id:
+            client.schedule_again_events.remove(after_buttons)
+            logger.info(f"[{after_buttons.event}] Forgot schedule again buttons of removed guild")
+
+
+@client.event
+async def on_guild_channel_delete(channel):
+    for event in client.events.copy():
+        if event.guild.id != channel.guild.id:
+            continue
+        try:
+            if event.text_channel.id == channel.id:
+                await event.discard(reason="Its text channel was deleted.")
+            elif event.voice_channel is not None and event.voice_channel.id == channel.id:
+                await event.handle_voice_channel_deleted()
+        except Exception as e:
+            logger.exception(f"[{event}] Error handling deleted channel: {e}")
+    for after_buttons in client.schedule_again_events.copy():
+        if after_buttons.event.text_channel.id == channel.id:
+            client.schedule_again_events.remove(after_buttons)
+            logger.info(f"[{after_buttons.event}] Forgot schedule again buttons of deleted text channel")
 
 
 @client.event

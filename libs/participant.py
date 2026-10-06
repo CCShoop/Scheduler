@@ -687,9 +687,9 @@ class Participant:
         return response
 
     @classmethod
-    def from_dict(cls, guild: Guild, data: dict):
+    def from_dict(cls, guild: Guild, data: dict, member: Member = None):
         return cls(
-            member=guild.get_member(data['member_id']),
+            member=member or guild.get_member(data['member_id']),
             answered=data['answered'],
             subscribed=data['subscribed'],
             unavailable=data['unavailable'],

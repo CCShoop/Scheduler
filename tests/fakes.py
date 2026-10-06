@@ -5,7 +5,7 @@ import itertools
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
-from discord import EntityType, EventStatus
+from discord import EntityType, EventStatus, NotFound
 
 _ids = itertools.count(1000)
 
@@ -69,6 +69,11 @@ class FakeGuild:
         self.channels = {}
         self.voice_channels = []
         self.members = {}
+        # Members missing from the cache that fetch_member can still find
+        self.uncached_members = {}
+        # Raised by fetch_member instead of looking the member up, e.g. a Discord outage
+        self.fetch_member_error = None
+        self.chunked = True
 
     async def create_scheduled_event(self, start_time, **kwargs):
         await asyncio.sleep(0.01)
@@ -91,6 +96,13 @@ class FakeGuild:
 
     def get_member(self, member_id):
         return self.members.get(member_id)
+
+    async def fetch_member(self, member_id):
+        if self.fetch_member_error is not None:
+            raise self.fetch_member_error
+        if member_id in self.uncached_members:
+            return self.uncached_members[member_id]
+        raise NotFound(SimpleNamespace(status=404, reason="Not Found"), "Unknown Member")
 
 
 class FakeSentMessage:

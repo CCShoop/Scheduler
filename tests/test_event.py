@@ -391,6 +391,89 @@ class TestPersistence:
         loaded = self.load(env, monkeypatch, data)
         assert loaded.timeout_at == at(0, 15)
 
+    def test_round_trips_availability_input_timer(self, env, monkeypatch):
+        event = env.make_event([env.make_participant("a")], multi_event=True)
+        event.start_input_timer()
+        started = event.availability_input_timer
+        loaded = self.load(env, monkeypatch, self.save_data(env, event))
+        assert loaded.availability_input_timer == started
+        assert loaded.input_timer_running
+
+    def test_participant_missing_from_cache_is_fetched(self, env, monkeypatch):
+        a = env.make_participant("a", [TimeBlock(at(1, 20), at(1, 22))])
+        b = env.make_participant("b")
+        event = env.make_event([a, b], scheduler=a)
+        data = self.save_data(env, event)
+        del env.guild.members[a.member.id]
+        env.guild.uncached_members[a.member.id] = a.member
+        loaded = self.load(env, monkeypatch, data)
+        assert [p.member for p in loaded.participants] == [a.member, b.member]
+        assert [(tb.start_time, tb.end_time) for tb in loaded.participants[0].availability] == [(at(1, 20), at(1, 22))]
+        assert loaded.scheduler is loaded.participants[0]
+        assert loaded.unresolved_participants == []
+
+    def test_participant_who_left_is_dropped_without_adding_the_channel(self, env, monkeypatch):
+        a = env.make_participant("a")
+        b = env.make_participant("b")
+        c = env.make_participant("c")
+        event = env.make_event([a, b])
+        data = self.save_data(env, event)
+        del env.guild.members[a.member.id]
+        loaded = self.load(env, monkeypatch, data)
+        assert [p.member for p in loaded.participants] == [b.member]
+        assert c.member not in [p.member for p in loaded.participants]
+        assert loaded.unresolved_participants == []
+
+    def test_unresolved_participant_is_kept_retried_and_blocks_creation(self, env, monkeypatch):
+        a = env.make_participant("a", [TimeBlock(at(1, 18), at(1, 23))])
+        b = env.make_participant("b", [TimeBlock(at(1, 18), at(1, 23))])
+        event = env.make_event([a, b], scheduler=b)
+        data = self.save_data(env, event)
+        del env.guild.members[b.member.id]
+        env.guild.fetch_member_error = RuntimeError("Discord is down")
+        loaded = self.load(env, monkeypatch, data)
+        env.sched.client.events.append(loaded)
+        assert [p.member for p in loaded.participants] == [a.member]
+        assert [d["member_id"] for d in loaded.unresolved_participants] == [b.member.id]
+        assert loaded.scheduler is None
+        # Saved back so another restart can still look them up
+        saved = loaded.to_dict()
+        assert [d["member_id"] for d in saved["participants"]] == [a.member.id, b.member.id]
+        assert saved["scheduler_id"] == b.member.id
+        run(loaded.create_if_possible())
+        assert not loaded.created
+        # Discord is back, the next retry adds them
+        env.guild.fetch_member_error = None
+        env.guild.members[b.member.id] = b.member
+        loaded.participants_resolve_retry_at = env.sched.now()
+        assert run(loaded.resolve_participants())
+        assert [p.member for p in loaded.participants] == [a.member, b.member]
+        assert loaded.scheduler is loaded.participants[1]
+        assert loaded.unresolved_participants == []
+
+    def test_resolve_participants_waits_between_retries(self, env, monkeypatch):
+        a = env.make_participant("a")
+        b = env.make_participant("b")
+        event = env.make_event([a, b])
+        data = self.save_data(env, event)
+        del env.guild.members[b.member.id]
+        env.guild.fetch_member_error = RuntimeError("Discord is down")
+        loaded = self.load(env, monkeypatch, data)
+        env.guild.fetch_member_error = None
+        env.guild.members[b.member.id] = b.member
+        assert not run(loaded.resolve_participants())
+        assert loaded.unresolved_participants
+
+    def test_no_saved_participants_adds_the_text_channel(self, env, monkeypatch):
+        a = env.make_participant("a")
+        a.member.bot = False
+        event = env.make_event([a], scheduler=a)
+        data = self.save_data(env, event)
+        data["participants"] = []
+        loaded = self.load(env, monkeypatch, data)
+        assert [p.member for p in loaded.participants] == [a.member]
+        assert loaded.scheduler is loaded.participants[0]
+
     def test_drops_start_times_of_guild_events_deleted_while_offline(self, env, monkeypatch):
         a = env.make_participant("a")
         scheduled_events = [FakeScheduledEvent(at(day, 20)) for day in (1, 2, 3)]
