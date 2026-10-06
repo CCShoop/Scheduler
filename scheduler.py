@@ -1,7 +1,6 @@
 '''Written by Cael Shoop.'''
 
 import os
-import sys
 import signal
 import logging
 import asyncio
@@ -12,7 +11,7 @@ from typing import Optional
 from datetime import datetime, timedelta
 from discord import (app_commands, Interaction, Intents, Client, Embed, Color, Activity,
                      ButtonStyle, EntityType, TextChannel, ActivityType, Status, EventStatus,
-                     VoiceChannel, Message, SelectOption, ScheduledEvent, Member,
+                     VoiceChannel, Message, SelectOption, ScheduledEvent,
                      Guild, PrivacyLevel, User, utils, NotFound, DiscordServerError)
 from discord.ui import View, Button, Modal, TextInput, Select, Label, Checkbox
 from discord.ext import tasks
@@ -2348,8 +2347,7 @@ class Event:
         if event_created and not event_start_times:
             location_key = get_location_key(event_voice_channel, event_location)
             event_scheduled_events = sorted((guild_event for guild_event in event_guild.scheduled_events
-                                             if guild_event.name == event_name and
-                                             get_location_key(*get_guild_event_location(guild_event)) == location_key),
+                                             if guild_event.name == event_name and get_location_key(*get_guild_event_location(guild_event)) == location_key),
                                             key=lambda guild_event: guild_event.start_time)
             if not event_scheduled_events:
                 raise Exception(f'[{event_name}] No guild events or start times remain, discarding event')
