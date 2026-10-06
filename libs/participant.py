@@ -346,11 +346,16 @@ class Participant:
         # Date parsing
         cur_date = datetime.now().astimezone().date()
         year_given = True
+        date_string = date_string.replace('/', '-')
+        date_parts = date_string.split('-')
+        # Catch the old MM/DD/YYYY format so users aren't told their year is an invalid day
+        if len(date_parts) == 3 and len(date_parts[2]) == 4 and len(date_parts[0]) != 4:
+            raise Exception(f'Dates must be in YYYY-MM-DD format (e.g. {cur_date:%Y-%m-%d}), got: {date_string}')
         try:
-            month, day, year = date_string.split('/')
+            year, month, day = date_parts
         except Exception:
             try:
-                month, day = date_string.split('/')
+                month, day = date_string.split('-')
                 year = cur_date.year
                 year_given = False
             except Exception:
@@ -385,7 +390,7 @@ class Participant:
         if date(year, month, day) < cur_date:
             # A past date without a year refers to next year
             if year_given or day > monthrange(year + 1, month)[1]:
-                raise Exception(f'Cannot schedule for the past: {month}/{day}/{year}')
+                raise Exception(f'Cannot set availability for a past date: {year:04}-{month:02}-{day:02}')
             year += 1
 
         # Check if the entered date is today

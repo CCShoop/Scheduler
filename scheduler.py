@@ -2684,10 +2684,10 @@ class AvailabilityModal(Modal):
         super().__init__(*args, **kwargs)
         self.event = event
         self.participant = participant
-        date = now().strftime("%m/%d/%Y")
+        date = now().strftime("%Y-%m-%d")
         self.timeslot = TextInput(label="Timeslot", placeholder="e.g. 8-11, 1pm-3pm, 22-x3, 1730-2030", default="", required=False)
-        self.note = TextInput(label="Note", placeholder="A note to show with your availability", default=self.participant.note, required=False)
-        self.date = TextInput(label="Date", placeholder="MM/DD/YYYY", default=date)
+        self.note = TextInput(label="Note", placeholder="A note to show with or instead of your availability", default=self.participant.note, required=False)
+        self.date = TextInput(label="Date", placeholder="YYYY-MM-DD", default=date)
         self.timezone = TextInput(label="Timezone", placeholder="AT|AST|ADT|ET|EST|EDT|CT|CST|CDT|MT|MST|MDT|PT|PST|PDT", default="ET")
         self.add_item(self.timeslot)
         self.add_item(self.note)

@@ -15,7 +15,7 @@ def at(days: int, hour: int, minute: int = 0) -> datetime:
 
 def date_string(days: int, with_year: bool = True) -> str:
     day = at(days, 0)
-    return day.strftime("%m/%d/%Y") if with_year else day.strftime("%m/%d")
+    return day.strftime("%Y-%m-%d") if with_year else day.strftime("%m-%d")
 
 
 def make_participant(**kwargs) -> Participant:
@@ -263,7 +263,7 @@ class TestSetSpecificAvailability:
     def test_two_digit_year(self):
         participant = make_participant()
         tomorrow = at(1, 0)
-        participant.set_specific_availability("8-11", tomorrow.strftime("%m/%d/%y"))
+        participant.set_specific_availability("8-11", tomorrow.strftime("%y-%m-%d"))
         assert blocks(participant) == [(at(1, 8), at(1, 11))]
 
     def test_full_keyword(self):
@@ -299,8 +299,10 @@ class TestSetSpecificAvailability:
             make_participant().set_specific_availability(avail, date_string(1))
 
     @pytest.mark.parametrize("date_entered, match", [
-        ("13/01/2030", "Invalid month"),
-        ("02/30/2030", "Invalid day"),
+        ("2030-13-01", "Invalid month"),
+        ("2030/02/30", "Invalid day"),
+        ("02/15/2030", "must be in YYYY-MM-DD format"),
+        ("2-15-2030", "must be in YYYY-MM-DD format"),
         ("abc", "Invalid date format"),
         ("a/b", "Invalid month"),
     ])
@@ -309,7 +311,7 @@ class TestSetSpecificAvailability:
             make_participant().set_specific_availability("8-11", date_entered)
 
     def test_past_date_with_year_raises(self):
-        with pytest.raises(Exception, match="Cannot schedule for the past"):
+        with pytest.raises(Exception, match="Cannot set availability for a past date"):
             make_participant().set_specific_availability("8-11", date_string(-1))
 
     def test_past_date_without_year_means_next_year(self):
@@ -318,7 +320,7 @@ class TestSetSpecificAvailability:
         # Feb 29 may not exist next year; that case raises instead
         if (yesterday.month, yesterday.day) == (2, 29):
             pytest.skip("Feb 29 has no equivalent next year")
-        participant.set_specific_availability("8-11", yesterday.strftime("%m/%d"))
+        participant.set_specific_availability("8-11", yesterday.strftime("%m-%d"))
         start = participant.availability[0].start_time
         assert (start.year, start.month, start.day, start.hour) == (yesterday.year + 1, yesterday.month, yesterday.day, 8)
 
