@@ -55,12 +55,14 @@ instructions = Embed(title="Instructions",
                      description="How to respond with your availability:",
                      color=Color.purple())
 instructions.add_field(name="Respond Button",
-                       value="Set the date and enter the periods of time you are available."
+                       value="Set the date and enter the periods of time you are available in the Timeslot field."
+                       "\nDates are entered as YYYY-MM-DD (e.g. 2026-10-31). Leave off the year (MM-DD) for the next time that date comes around, or enter just the day of the month."
                        "\nAllows for some keyword inputs: full, clear, none"
                        "\n\tfull: full availability"
                        "\n\tclear: removes availability for selected day"
                        "\n\tnone: removes all availability"
                        "\nAdding \"x\" and a number of days to the end of a time block will copy that timeblock over that many days, including the specified day."
+                       "\n\tThis also works with clear (e.g. \"clear x3\")."
                        "\nSeparate multiple periods of time with commas (e.g. \"9-12, 13-17\")."
                        "\nSet your timezone if you use your local time and it will be shifted to Eastern Time."
                        "\n\tCurrently supported timezones: AT, ET, CT, MT, PT"
@@ -68,8 +70,8 @@ instructions.add_field(name="Respond Button",
                        "\nLeaving the note field blank when resubmitting the form will clear your note.",
                        inline=False)
 instructions.add_field(name="Full Availability Button",
-                       value="Sets a \"full availability flag\" and adds a time period from now until midnight."
-                       "\nIf someone else puts availability extending past midnight, yours will be extended to the same time.",
+                       value="Sets a \"full availability flag\" and adds a time period from now until 1 AM."
+                       "\nIf someone else puts availability extending past that, yours will be extended to the same time.",
                        inline=False)
 instructions.add_field(name="Use Existing Button",
                        value="Grabs your availability from another event."

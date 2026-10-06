@@ -11,7 +11,7 @@ from typing import Optional
 from datetime import datetime, timedelta
 from discord import (app_commands, Interaction, Intents, Client, Embed, Color, Activity,
                      ButtonStyle, EntityType, TextChannel, ActivityType, Status, EventStatus,
-                     VoiceChannel, Message, SelectOption, ScheduledEvent, ChannelType,
+                     VoiceChannel, StageChannel, Message, SelectOption, ScheduledEvent, ChannelType,
                      Guild, Member, PrivacyLevel, User, utils, NotFound, DiscordServerError)
 from discord.ui import View, Button, Modal, TextInput, Select, ChannelSelect, Label, Checkbox
 from discord.ext import tasks
@@ -184,6 +184,16 @@ def parse_start_time(start_time: str) -> datetime:
 MAX_LOCATION_LENGTH = 100
 
 
+def get_voice_channels(guild: Guild) -> list[VoiceChannel | StageChannel]:
+    """Gets the guild's voice and stage channels that events can take place in, voice channels first."""
+    return list(guild.voice_channels) + list(guild.stage_channels)
+
+
+def is_stage_channel(channel) -> bool:
+    """Indicates whether the channel is a stage channel."""
+    return getattr(channel, "type", None) == ChannelType.stage_voice
+
+
 def resolve_location(guild: Guild, location: Optional[str]) -> tuple[Optional[VoiceChannel], Optional[str]]:
     """
     Resolves a location option into a voice channel or an external location.
@@ -193,7 +203,7 @@ def resolve_location(guild: Guild, location: Optional[str]) -> tuple[Optional[Vo
     guild: :class:`Guild`
         The guild to look for voice channels in.
     location: :class:`Optional[str]`
-        A voice channel id (sent when a suggestion is picked), a voice channel name,
+        A voice or stage channel id (sent when a suggestion is picked), a voice or stage channel name,
         or any other text for an external location such as a physical address.
 
     Returns
@@ -206,10 +216,10 @@ def resolve_location(guild: Guild, location: Optional[str]) -> tuple[Optional[Vo
         return None, None
     location = location.strip()
     if location.isdigit():
-        voice_channel = utils.get(guild.voice_channels, id=int(location))
+        voice_channel = utils.get(get_voice_channels(guild), id=int(location))
         if voice_channel is not None:
             return voice_channel, None
-    for voice_channel in guild.voice_channels:
+    for voice_channel in get_voice_channels(guild):
         if voice_channel.name.casefold() == location.lstrip('#').casefold():
             return voice_channel, None
     if len(location) > MAX_LOCATION_LENGTH:
@@ -248,14 +258,16 @@ def get_guild_event_location(guild_event: ScheduledEvent) -> tuple[Optional[Voic
 
 async def location_autocomplete(interaction: Interaction, current: str) -> list[app_commands.Choice[str]]:
     """
-    Suggests the guild's voice channels for a location option, so pressing enter picks the first one.
-    Text that doesn't match a voice channel is offered as an external location.
+    Suggests the guild's voice and stage channels for a location option, so pressing enter picks the first one.
+    Text that doesn't match a channel is offered as an external location.
     """
     current = current.strip()
-    choices = [app_commands.Choice(name=f"🔊 {voice_channel.name}"[:100], value=str(voice_channel.id))
-               for voice_channel in interaction.guild.voice_channels
+    voice_channels = get_voice_channels(interaction.guild)
+    choices = [app_commands.Choice(name=f"{'🎙️' if is_stage_channel(voice_channel) else '🔊'} {voice_channel.name}"[:100],
+                                   value=str(voice_channel.id))
+               for voice_channel in voice_channels
                if current.casefold() in voice_channel.name.casefold()]
-    if current and not any(voice_channel.name.casefold() == current.casefold() for voice_channel in interaction.guild.voice_channels):
+    if current and not any(voice_channel.name.casefold() == current.casefold() for voice_channel in voice_channels):
         choices.append(app_commands.Choice(name=f"📍 {current}"[:100], value=current[:100]))
     return choices[:25]
 
@@ -418,7 +430,18 @@ class SchedulerClient(Client):
 OWNER_ID = int(os.getenv('OWNER_ID'))
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 
-client = SchedulerClient(intents=Intents.all())
+# Only what the bot uses. Owner commands and event images arrive as DMs,
+# whose content Discord sends without the message content intent.
+intents = Intents.none()
+intents.guilds = True
+# Member cache, text channel membership, and role filtering
+intents.members = True
+# Who is in an event's voice or stage channel
+intents.voice_states = True
+# Guild event status changes made in Discord
+intents.guild_scheduled_events = True
+intents.dm_messages = True
+client = SchedulerClient(intents=intents)
 
 
 def handle_signal(signum, frame):
@@ -588,7 +611,7 @@ class Event:
             self.voice_channel: Optional[VoiceChannel] = None
         else:
             try:
-                self.voice_channel: VoiceChannel = self.guild.voice_channels[0]
+                self.voice_channel: VoiceChannel = get_voice_channels(self.guild)[0]
             except Exception as e:
                 message = f"Failed to get voice channel: {e}"
                 logger.exception(message)
@@ -1012,7 +1035,8 @@ class Event:
         logger.info(f"[{self}] Starting, reason: {reason}")
         await self.delete_reminder_message()
         try:
-            await self.scheduled_events[0].start(reason=reason)
+            if not await self.open_stage(reason):
+                await self.scheduled_events[0].start(reason=reason)
         except Exception as e:
             logger.error(f"[{self}] Failed to start: {e}")
             return
@@ -1045,6 +1069,46 @@ class Event:
             if event.event_buttons is not None:
                 event.event_buttons.start_end_button.disabled = True
             await event.update_event_buttons_message()
+
+    async def open_stage(self, reason: str) -> bool:
+        """
+        Opens the stage for the current occurrence of an event in a stage channel,
+        which also starts its guild event.
+
+        Returns
+        -------
+        opened: :class:`bool`
+            True if the stage was opened. False if the event isn't in a stage channel,
+            or the stage couldn't be opened and the guild event should be started directly.
+        """
+        if not self.is_stage:
+            return False
+        if self.voice_channel.instance is not None:
+            logger.info(f"[{self}] {self.voice_channel.name} already has a live stage, starting the guild event without one")
+            return False
+        try:
+            await self.voice_channel.create_instance(topic=self.name[:120],
+                                                     scheduled_event=self.scheduled_events[0],
+                                                     reason=reason)
+        except Exception as e:
+            logger.error(f"[{self}] Failed to open stage, starting the guild event without one: {e}")
+            return False
+        logger.info(f"[{self}] Opened stage in {self.voice_channel.name}")
+        return True
+
+    async def close_stage(self, reason: str) -> None:
+        """Closes the stage opened for the current occurrence, if there is one."""
+        if not self.is_stage or not self.scheduled_events:
+            return
+        instance = self.voice_channel.instance
+        # Leave stages that were opened for something else alone
+        if instance is None or instance.scheduled_event_id != self.scheduled_events[0].id:
+            return
+        try:
+            await instance.delete(reason=reason)
+            logger.info(f"[{self}] Closed stage in {self.voice_channel.name}")
+        except Exception as e:
+            logger.error(f"[{self}] Failed to close stage: {e}")
 
     async def start_if_participants_in_vc(self) -> None:
         """
@@ -1079,6 +1143,7 @@ class Event:
             reason = f"Event ended by {client.user}."
         logger.info(f"[{self}] Ending, reason: {reason}")
         self.ended = True
+        await self.close_stage(reason)
         # Delete scheduled event
         try:
             await self.scheduled_events[0].delete(reason=reason)
@@ -1907,6 +1972,8 @@ class Event:
         await self.delete_reminder_message()
         if self.cancelled:
             await self.delete_voice_channel_prompt()
+        if self.started:
+            await self.close_stage(f"Cancelled by {canceller}: {reason}")
         try:
             if len(self.scheduled_events) > 0:
                 await self.scheduled_events[0].delete(reason=f"Cancelled by {canceller}: {reason}")
@@ -2023,6 +2090,8 @@ class Event:
             return
         logger.info(f"[{self}] Cancelling without a message: {reason}")
         self.cancelled = True
+        if self.started:
+            await self.close_stage(f"Cancelled by {client.user}: {reason}")
         for scheduled_event in self.scheduled_events:
             try:
                 await scheduled_event.delete(reason=f"Cancelled by {client.user}: {reason}")
@@ -2340,8 +2409,15 @@ class Event:
         return self.location is not None
 
     @property
+    def is_stage(self) -> bool:
+        """Indicates whether the event takes place in a stage channel."""
+        return not self.is_external and is_stage_channel(self.voice_channel)
+
+    @property
     def entity_type(self) -> EntityType:
-        return EntityType.external if self.is_external else EntityType.voice
+        if self.is_external:
+            return EntityType.external
+        return EntityType.stage_instance if self.is_stage else EntityType.voice
 
     @property
     def location_key(self) -> tuple:
@@ -2458,7 +2534,7 @@ class Event:
         event_voice_channel = None
         event_voice_channel_deleted = False
         if event_location is None:
-            event_voice_channel = utils.get(event_guild.voice_channels, id=data["voice_channel_id"])
+            event_voice_channel = utils.get(get_voice_channels(event_guild), id=data["voice_channel_id"])
             if not event_voice_channel:
                 logger.warning(f'[{event_name}] Could not find voice channel, asking for a new one')
                 event_voice_channel_deleted = True
@@ -3646,7 +3722,7 @@ class VoiceChannelPrompt(View):
         super().__init__(timeout=None)
         self.event = event
         self.message = None
-        self.channel_select = ChannelSelect(channel_types=[ChannelType.voice],
+        self.channel_select = ChannelSelect(channel_types=[ChannelType.voice, ChannelType.stage_voice],
                                             placeholder="Select a new voice channel",
                                             min_values=1,
                                             max_values=1)
@@ -3659,7 +3735,7 @@ class VoiceChannelPrompt(View):
     async def channel_select_callback(self, interaction: Interaction) -> None:
         if await respond_if_cancelled(self.event, interaction):
             return
-        voice_channel = utils.get(self.event.guild.voice_channels, id=self.channel_select.values[0].id)
+        voice_channel = utils.get(get_voice_channels(self.event.guild), id=self.channel_select.values[0].id)
         if voice_channel is None:
             await interaction.response.send_message(content="That voice channel could not be found.", ephemeral=True)
             return
@@ -4146,11 +4222,9 @@ async def on_message(message: Message):
         await message.channel.send(f'Could not find event {msg_content}.\n\n__Existing events:__\n{", ".join([event.name for event in client.events])}', reference=message)
         return
 
-    # Owner syncs commands
-    if message.author.id == OWNER_ID and 'scheduler: sync' in message.content:
-        await client.tree.sync()
-        logger.info(f'User {message.author.name} synced commands')
-        await message.channel.send(content='Synced', reference=message)
+    # Owner commands are only accepted in DMs
+    if message.guild is not None:
+        return
 
     # Owner requests to see all events
     if message.author.id == OWNER_ID and 'scheduler: events' in message.content:
@@ -4161,18 +4235,6 @@ async def on_message(message: Message):
             embed.add_field(name=event.get_limited_name(25), value=eventStatus, inline=True)
         await message.channel.send(embed=embed, reference=message)
 
-    # Owner requests a recount
-    if message.author.id == OWNER_ID and 'scheduler: check' in message.content:
-        content = ""
-        if len(client.events) > 0:
-            for event in client.events.copy():
-                [participant.confirm_answered() for participant in event.participants]
-                await event.create_if_possible()
-                content += f"Checked {event}\n"
-        else:
-            content = "No events found."
-        await message.channel.send(content=content, reference=message)
-
     # Owner toggles debug
     if message.author.id == OWNER_ID and 'scheduler: debug' in message.content:
         if logger.isEnabledFor(logging.DEBUG):
@@ -4181,64 +4243,6 @@ async def on_message(message: Message):
         else:
             logger.setLevel(logging.DEBUG)
             await message.channel.send(content="Debugging enabled.", reference=message)
-
-    # Owner subscribes another user
-    if message.author.id == OWNER_ID and 'scheduler: subscribe' in message.content:
-        foundEvent = False
-        for event in client.events:
-            if event.name in message.content.split('to')[1].strip():
-                foundEvent = True
-                id = message.content.split('subscribe')[1].split('to')[0].strip()
-                id = int(id)
-                existingParticipant = False
-                for participant in event.participants:
-                    if participant.member.id == id:
-                        existingParticipant = True
-                        await message.channel.send(f"{participant} is already subscribed to {event}", reference=message)
-                        logger.info(f"[{event}] Owner tried to resubscribe existing participant {participant}")
-                        break
-                if not existingParticipant:
-                    member = event.guild.get_member(id)
-                    if member is not None:
-                        participant = Participant(member)
-                        event.participants.append(participant)
-                        await event.update_messages()
-                        await message.channel.send(f"Subscribed {participant} to {event}", reference=message)
-                        logger.info(f"[{event}] Owner force subscribed {participant}")
-                    else:
-                        await message.channel.send("Invalid ID provided", reference=message)
-                        logger.info(f"[{event}] Invalid subscribe other user format from owner")
-                break
-        if not foundEvent:
-            await message.channel.send("Event not found", reference=message)
-
-    # Owner unsubscribes another user
-    if message.author.id == OWNER_ID and 'scheduler: unsubscribe' in message.content:
-        foundEvent = False
-        for event in client.events:
-            if event.name in message.content.split('from')[1].strip():
-                foundEvent = True
-                try:
-                    id = message.content.split('unsubscribe')[1].split('from')[0].strip()
-                    id = int(id)
-                    found = False
-                    for participant in event.participants:
-                        if participant.member.id == id:
-                            logger.info(f'[{event}] Unsubscribed {participant}')
-                            found = True
-                            participant.subscribed = False
-                            await message.channel.send(f"Unsubscribed {participant}", reference=message)
-                            await event.update_availability_message()
-                            await event.ping_last_participant(exclude=[Participant(message.author)])
-                            break
-                    if not found:
-                        await message.channel.send(f"[{event}] participant not found", reference=message)
-                except Exception as e:
-                    await message.channel.send("Invalid ID provided", reference=message)
-                    logger.info(f"Invalid unsubscribe other user format from owner: {e}")
-                break
-        if not foundEvent:
-            await message.channel.send("Event not found", reference=message)
 
 
 @client.tree.command(name='create', description='Create an event.')
@@ -4354,9 +4358,9 @@ async def create(event_name: str,
         A string message describing the error.
      """
     # Location
-    if location is None and voice_channel is None and not guild.voice_channels:
+    if location is None and voice_channel is None and not get_voice_channels(guild):
         logger.info(f"[{event_name}] Scheduling cancelled due to no location and no voice channel in guild")
-        raise Exception("The server must have at least one voice channel to schedule an event without a location.")
+        raise Exception("The server must have at least one voice or stage channel to schedule an event without a location.")
 
     # Event name
     if event_name in [event.name for event in client.events]:
@@ -4451,7 +4455,7 @@ async def create(event_name: str,
     start_times = [start_time_obj]
     # Without a location or voice channel, the event falls back to the first voice channel
     if location is None and voice_channel is None:
-        voice_channel = guild.voice_channels[0]
+        voice_channel = get_voice_channels(guild)[0]
     location_key = get_location_key(voice_channel, location)
     for start_time in start_times:
         timeblock = TimeBlock(start_time=start_time, end_time=start_time + duration)
@@ -4607,9 +4611,9 @@ async def schedule(event_name: str,
         A string message describing the error.
     """
     # Location
-    if location is None and voice_channel is None and not guild.voice_channels:
+    if location is None and voice_channel is None and not get_voice_channels(guild):
         logger.info(f"[{event_name}] Scheduling cancelled due to no location and no voice channel in guild")
-        raise Exception("The server must have at least one voice channel to schedule an event without a location.")
+        raise Exception("The server must have at least one voice or stage channel to schedule an event without a location.")
 
     # Event name
     if event_name in [event.name for event in client.events]:
@@ -4925,18 +4929,18 @@ async def availability_command(interaction: Interaction):
         await interaction.followup.send(view=view, ephemeral=True)
 
 
-@client.tree.command(name='offset', description='Set the midnight offset value.')
-@app_commands.describe(offset='The offset in hours after midnight to automatically extend Full Availability to.')
-async def offset_command(interaction: Interaction, offset: int = 2):
-    # The offset is shared by every guild, so only the owner can change it
+@client.tree.command(name='cutoff', description='Set how many hours past midnight Full Availability extends to.')
+@app_commands.describe(cutoff='The hour after midnight to automatically extend Full Availability to.')
+async def cutoff_command(interaction: Interaction, cutoff: int = participant_lib.DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF):
+    # The cutoff is shared by every guild, so only the owner can change it
     if interaction.user.id != OWNER_ID:
-        await interaction.response.send_message(content="Only the bot owner can change the midnight offset.", ephemeral=True)
+        await interaction.response.send_message(content="Only the bot owner can change the Full Availability cutoff.", ephemeral=True)
         return
-    if offset < 0 or offset > 23:
-        await interaction.response.send_message(content="The offset must be between 0 and 23 hours.", ephemeral=True)
+    if cutoff < 0 or cutoff > 23:
+        await interaction.response.send_message(content="The cutoff must be between 0 and 23 hours.", ephemeral=True)
         return
-    participant_lib.HOURS_PAST_MIDNIGHT_CUTOFF = offset
-    await interaction.response.send_message(content=f"Midnight offset has been set to {offset}.")
+    participant_lib.HOURS_PAST_MIDNIGHT_CUTOFF = cutoff
+    await interaction.response.send_message(content=f"Full Availability cutoff has been set to {cutoff} hour(s) past midnight.")
 
 
 @client.tree.command(name='help', description='Show helpful information.')

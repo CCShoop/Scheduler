@@ -25,12 +25,7 @@ A Discord bot that finds a time that works for everyone and turns it into a Disc
 
 1. Go to the [Discord Developer Portal](https://discord.com/developers/applications) and create a **New Application**.
 2. Open the **Bot** tab and click **Reset Token** to get the bot token. Keep it secret.
-3. On the same tab, under **Privileged Gateway Intents**, turn on all three:
-   - Presence Intent
-   - Server Members Intent
-   - Message Content Intent
-
-   The bot requests every intent, and it won't connect unless these are enabled.
+3. On the same tab, under **Privileged Gateway Intents**, turn on **Server Members Intent**. The bot won't connect without it. It doesn't use the Presence or Message Content intents, so those can stay off.
 4. Open **OAuth2 → URL Generator**, select the `bot` and `applications.commands` scopes, then select these bot permissions:
    - View Channels
    - Send Messages
@@ -89,7 +84,7 @@ This is the main command. The bot posts an availability message in the channel a
 | Option            | Required | Description |
 |-------------------|----------|-------------|
 | `event_name`      | Yes | The event's name. Two events can't have the same name at the same time. |
-| `location`        | Yes | Where the event takes place. The voice channels appear as suggestions, so press Enter to pick the first one. Or type any other location, such as an address, up to 100 characters. See [Locations](#locations). |
+| `location`        | Yes | Where the event takes place. The voice and stage channels appear as suggestions, so press Enter to pick the first one. Or type any other location, such as an address, up to 100 characters. See [Locations](#locations). |
 | `image_url`       | No  | An image for the Discord event and the bot's messages. |
 | `include_exclude` | No  | Whether `usernames` and `roles` add people (`INCLUDE`, the default) or leave people out (`EXCLUDE`). |
 | `usernames`       | No  | Comma-separated usernames or user IDs to include or exclude. |
@@ -111,7 +106,9 @@ This is the main command. The bot posts an availability message in the channel a
 
 ### Locations
 
-The `location` option suggests the server's voice channels as you type. Picking one, or typing a voice channel's exact name, puts the event in that voice channel. Anything else becomes an external location, and the Discord event is created as a "somewhere else" event.
+The `location` option suggests the server's voice channels (🔊) and stage channels (🎙️) as you type. Picking one, or typing a channel's exact name, puts the event in that channel. Anything else becomes an external location, and the Discord event is created as a "somewhere else" event.
+
+Stage channels work like voice channels below. When the event starts, the bot opens the stage with the event's name as its topic, and closes it when the event ends. If the stage is already live, or the bot can't open it, the event starts without opening the stage. Opening and closing stages requires the bot to be a stage moderator in that channel.
 
 The location changes how the event starts and ends:
 
@@ -156,15 +153,15 @@ The availability message has these buttons:
 | Button | What it does |
 |--------|--------------|
 | **Respond** | Opens a form for entering when you're free. |
-| **Full Availability (Today)** | Marks you as available from now until 2 AM. If someone else enters availability later than that, yours is extended to match. |
+| **Full Availability (Today)** | Marks you as available from now until 1 AM. If someone else enters availability later than that, yours is extended to match. |
 | **Use Existing Availability** | Copies your availability from another event you're in. If you're in more than one, choose which event to copy from. |
 | **Unsubscribe from Event** | Stops the bot from mentioning you. You're still a participant. |
 | **Cancel Scheduling** | Cancels the event, with an optional reason. |
 
 ### The Respond form
 
-- **Date:** The day you're entering times for, as `MM/DD/YYYY`.
-- **Timeslot 1 / Timeslot 2:** The time ranges you're free. Separate multiple ranges with commas.
+- **Date:** The day you're entering times for, as `YYYY-MM-DD`. It defaults to today. You can leave off the year (`MM-DD`) to mean the next time that date comes around, or enter just the day of the month (`DD`).
+- **Timeslot:** The time ranges you're free. Separate multiple ranges with commas.
 - **Timezone:** The timezone you typed your times in. Supported values: `AT`, `ET`, `CT`, `MT`, `PT`, and their standard and daylight forms, such as `EST` or `PDT`. Times are converted to Eastern Time.
 - **Note:** An optional note that appears next to your availability. If you leave it blank when you submit again, your note is cleared.
 
@@ -179,6 +176,7 @@ Time ranges accept several formats:
 | `18-22x3` | 6:00 PM to 10:00 PM on the chosen date and the next two days |
 | `full` | Available all day |
 | `clear` | Remove your availability for the chosen date |
+| `clear x3` | Remove your availability for the chosen date and the next two days |
 | `none` | Remove all of your availability |
 
 If you're in several events, time taken up by a created event is automatically removed from your availability in the other events. It's restored if that event is cancelled or ends.
@@ -212,18 +210,14 @@ Click **Forget** to dismiss the button.
 
 ## Owner-only commands
 
-Only the user set as `OWNER_ID` can run these. Type them as normal messages in any channel the bot can read.
+Only the user set as `OWNER_ID` can run these. Send them to the bot as direct messages. They're ignored in server channels.
 
 | Message | What it does |
 |---------|--------------|
-| `scheduler: sync` | Register the slash commands with Discord again. |
 | `scheduler: events` | List every event the bot is tracking, in all servers, with its status. |
-| `scheduler: check` | Check every event right away and create any that are ready. |
 | `scheduler: debug` | Turn debug logging on or off. |
-| `scheduler: subscribe <user id> to <event name>` | Add a user to an event. |
-| `scheduler: unsubscribe <user id> from <event name>` | Unsubscribe a user from an event. |
 
-The slash command `/offset <hours>` is also owner-only. It sets how many hours past midnight **Full Availability (Today)** extends to, from 0 to 23. The default is 2, which means 2 AM. The setting applies to every server.
+The slash command `/cutoff <hours>` is also owner-only. It sets how many hours past midnight **Full Availability (Today)** extends to, from 0 to 23. The default is 1, which means 1 AM. The setting applies to every server, and goes back to the default when the bot restarts.
 
 ---
 

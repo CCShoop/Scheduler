@@ -88,7 +88,7 @@ def env(sched, monkeypatch):
 
     def make_event(participants, multi_event=False, duration=timedelta(hours=2), **kwargs):
         event = sched.Event(name=f"unit-test-{next_id()}",
-                            voice_channel=voice_channel,
+                            voice_channel=kwargs.pop("voice_channel", voice_channel),
                             guild=guild,
                             text_channel=text_channel,
                             participants=participants,

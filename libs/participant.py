@@ -5,7 +5,8 @@ from datetime import date, datetime, timedelta
 from calendar import monthrange
 
 
-HOURS_PAST_MIDNIGHT_CUTOFF = 1
+DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF = 1
+HOURS_PAST_MIDNIGHT_CUTOFF = DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF
 
 
 def parse_time_string(time_string: str, label: str) -> str:

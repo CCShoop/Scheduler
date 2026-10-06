@@ -5,7 +5,7 @@ import itertools
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
-from discord import EntityType, EventStatus, NotFound
+from discord import ChannelType, EntityType, EventStatus, NotFound
 
 _ids = itertools.count(1000)
 
@@ -68,6 +68,7 @@ class FakeGuild:
         self.fail_on_call = fail_on_call
         self.channels = {}
         self.voice_channels = []
+        self.stage_channels = []
         self.members = {}
         # Members missing from the cache that fetch_member can still find
         self.uncached_members = {}
@@ -147,6 +148,36 @@ class FakeTextChannel:
         if message_id not in self.messages or self.messages[message_id].deleted:
             raise LookupError(f"Unknown message {message_id}")
         return self.messages[message_id]
+
+
+class FakeStageInstance:
+    def __init__(self, channel, topic, scheduled_event_id):
+        self.channel = channel
+        self.topic = topic
+        self.scheduled_event_id = scheduled_event_id
+        self.deleted = False
+
+    async def delete(self, reason=None):
+        self.deleted = True
+        self.channel.instance = None
+
+
+class FakeStageChannel:
+    def __init__(self, channel_id=4, name="Stage", fail_create=False):
+        self.id = channel_id
+        self.name = name
+        self.type = ChannelType.stage_voice
+        self.members = []
+        self.mention = f"<#{channel_id}>"
+        self.instance = None
+        self.fail_create = fail_create
+
+    async def create_instance(self, topic, scheduled_event, reason=None):
+        if self.fail_create:
+            raise RuntimeError("Missing Permissions")
+        self.instance = FakeStageInstance(self, topic, scheduled_event.id)
+        scheduled_event.status = EventStatus.active
+        return self.instance
 
 
 async def noop(*args, **kwargs):
