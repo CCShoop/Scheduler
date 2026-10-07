@@ -81,9 +81,9 @@ instructions.add_field(name="Use Existing Button",
                        value="Grabs your availability from another event."
                        "\nIf you are in more than one other event, you will have to choose which event's availability to reuse.",
                        inline=False)
-instructions.add_field(name="Unsubscribe Button",
-                       value="Unsubscribe from the event."
-                       "\nYou will still be a participant, but you will not be mentioned.",
+instructions.add_field(name="Unsubscribe / Resubscribe Button",
+                       value="Unsubscribe from the event, or resubscribe if you already unsubscribed."
+                       "\nWhile unsubscribed, you will still be a participant, but you will not be mentioned.",
                        inline=False)
 instructions.add_field(name="Cancel Button",
                        value="Cancel scheduling of the event.",

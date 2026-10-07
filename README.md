@@ -156,7 +156,7 @@ The availability message has these buttons:
 | **Respond** | Opens a form for entering when you're free. |
 | **Full Availability (Today)** | Marks you as available from now until midnight, or the time you set with `/cutoff`. If that time has already passed today, the bot tells you instead. If someone else enters availability later than that, yours is extended to match. |
 | **Use Existing Availability** | Copies your availability from another event you're in. If you're in more than one, choose which event to copy from. |
-| **Unsubscribe from Event** | Stops the bot from mentioning you. You're still a participant. |
+| **Unsubscribe / Resubscribe** | Stops the bot from mentioning you. You're still a participant. Press it again to resubscribe. Your status shows in the availability message. |
 | **Cancel Scheduling** | Cancels the event, with an optional reason. |
 
 ### The Respond form
@@ -192,7 +192,7 @@ After the event is created, the bot posts a message with these buttons:
 |--------|--------------|
 | **Start Event / End Event** | Starts the event manually, then changes to an End button. Events also start automatically when every participant joins the voice channel, and end when everyone leaves. Events at a [typed location](#locations) start at their start time and end when their duration has passed. |
 | **End and Forget** | Ends the event, and the bot stops tracking it. |
-| **Unsubscribe** | Stops the bot from mentioning you about this event. |
+| **Unsubscribe / Resubscribe** | Stops the bot from mentioning you about this event. Press it again to resubscribe. |
 | **Reschedule Event** | Restarts availability collection with the same participants. |
 | **Cancel Event** | Cancels the event. |
 

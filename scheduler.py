@@ -3171,7 +3171,7 @@ class AvailabilityButtons(View):
         self.respond_label = "Respond"
         self.full_label = "Full Availability (Today)"
         self.reuse_label = "Use Existing Availability"
-        self.unsub_label = "Unsubscribe from Event"
+        self.unsub_label = "Unsubscribe / Resubscribe"
         self.cancel_label = "Cancel Scheduling"
         self.respond_button = self.add_respond_button()
         self.full_button = self.add_full_button()
@@ -3311,7 +3311,7 @@ class AvailabilityButtons(View):
         button: :class:`Button`
             The Unsubscribe button.
         """
-        button = Button(label=self.unsub_label, style=ButtonStyle.red)
+        button = Button(label=self.unsub_label, style=ButtonStyle.gray)
 
         async def unsub_button_callback(interaction: Interaction):
             if await respond_if_cancelled(self.event, interaction):
@@ -3395,14 +3395,14 @@ class EventButtons(View):
         self.start_label = "Start Event"
         self.end_label = "End Event"
         self.end_and_forget_label = "End and Forget"
-        self.unsubscribe_label = "Unsubscribe"
+        self.unsubscribe_label = "Unsubscribe / Resubscribe"
         self.reschedule_label = "Reschedule Event"
         self.cancel_label = "Cancel Event"
         self.start_callback = None
         self.end_callback = None
         self.start_end_button = Button(label=self.start_label, style=ButtonStyle.blurple)
-        self.end_and_forget_button = Button(label=self.end_and_forget_label, style=ButtonStyle.blurple)
-        self.unsubscribe_button = Button(label=self.unsubscribe_label, style=ButtonStyle.red)
+        self.end_and_forget_button = Button(label=self.end_and_forget_label, style=ButtonStyle.red)
+        self.unsubscribe_button = Button(label=self.unsubscribe_label, style=ButtonStyle.gray)
         self.reschedule_button = Button(label=self.reschedule_label, style=ButtonStyle.red)
         self.cancel_button = Button(label=self.cancel_label, style=ButtonStyle.red)
         self.add_start_end_button()
@@ -3504,18 +3504,12 @@ class EventButtons(View):
             if participant.subscribed:
                 logger.info(f'[{self.event}] {interaction.user.name} unsubscribed')
                 participant.subscribed = False
-                followup = await interaction.followup.send(content=f"You have been unsubscribed from {self.event}.",
-                                                           silent=True,
-                                                           ephemeral=True)
-                await followup.delete(delay=3)
-                await self.event.cancel_if_everyone_unsubscribed()
+                if await self.event.cancel_if_everyone_unsubscribed():
+                    return
             else:
                 logger.info(f'[{self.event}] {interaction.user.name} resubscribed')
                 participant.subscribed = True
-                followup = await interaction.followup.send(content=f"You have been resubscribed to {self.event}.",
-                                                           silent=True,
-                                                           ephemeral=True)
-                await followup.delete(delay=3)
+            await self.event.update_event_buttons_message()
 
         self.unsubscribe_button.callback = unsubscribe_button_callback
         self.add_item(self.unsubscribe_button)
