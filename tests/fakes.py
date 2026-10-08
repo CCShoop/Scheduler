@@ -53,6 +53,9 @@ class FakeScheduledEvent:
         self.edits.append(kwargs)
 
     async def start(self, reason=None):
+        # Like discord.py, which raises for guild events that aren't scheduled
+        if self.status is not EventStatus.scheduled:
+            raise ValueError("This scheduled event is already running.")
         self.status = EventStatus.active
 
     def __repr__(self):

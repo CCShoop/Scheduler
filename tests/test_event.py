@@ -399,6 +399,24 @@ class TestPersistence:
         assert loaded.availability_input_timer == started
         assert loaded.input_timer_running
 
+    def test_round_trips_attendees(self, env, monkeypatch):
+        a = env.make_participant("a")
+        b = env.make_participant("b")
+        left_at = datetime.now().astimezone().replace(microsecond=0)
+        event = env.make_event([a, b], started=True, attendee_ids={a.member.id, b.member.id}, attendees_left_at=left_at)
+        loaded = self.load(env, monkeypatch, self.save_data(env, event))
+        assert loaded.attendee_ids == {a.member.id, b.member.id}
+        assert loaded.attendees_left_at == left_at
+
+    def test_legacy_data_without_attendees(self, env, monkeypatch):
+        event = env.make_event([env.make_participant("a")], started=True)
+        data = self.save_data(env, event)
+        del data["attendee_ids"]
+        del data["attendees_left_at"]
+        loaded = self.load(env, monkeypatch, data)
+        assert loaded.attendee_ids == set()
+        assert loaded.attendees_left_at is None
+
     def test_participant_missing_from_cache_is_fetched(self, env, monkeypatch):
         a = env.make_participant("a", [TimeBlock(at(1, 20), at(1, 22))])
         b = env.make_participant("b")

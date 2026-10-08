@@ -1,13 +1,13 @@
 import json
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-from discord import EventStatus
+from discord import EntityType, EventStatus
 
 from libs.participant import Participant, TimeBlock
-from fakes import FakeScheduledEvent, at, run
+from fakes import FakeScheduledEvent, at, noop, run
 import scheduler
 
 # The env fixture stubs these out, keep the real ones for tests that check message sends
@@ -113,6 +113,12 @@ class TestStart:
         assert soon.event_buttons.start_end_button.disabled
         assert later.event_buttons.start_end_button.disabled
 
+    def test_does_not_disable_end_button_of_active_event_in_the_same_voice_channel(self, env):
+        active, _ = make_created_event(env, started=True)
+        event, _ = make_created_event(env)
+        run(event.start())
+        assert not active.event_buttons.start_end_button.disabled
+
     def test_pushes_back_events_sharing_participants_in_other_channels(self, env):
         a = env.make_participant("a", [TimeBlock(at(0, 0), at(3, 23))])
         event, _ = make_created_event(env, participants=[a])
@@ -167,11 +173,30 @@ class TestEnd:
 
     def test_reenables_start_buttons_in_the_same_voice_channel(self, env):
         event, _ = make_created_event(env, started=True)
-        waiting = env.make_event([env.make_participant("b")], created=True, start_times=[at(2, 20)])
+        waiting = env.make_event([env.make_participant("b")], created=True,
+                                 start_times=[env.sched.now() + timedelta(minutes=30)])
         waiting.event_buttons = fake_event_buttons()
         waiting.event_buttons.start_end_button.disabled = True
         run(event.end())
         assert not waiting.event_buttons.start_end_button.disabled
+
+    def test_keeps_start_buttons_disabled_while_another_event_is_active(self, env):
+        event, _ = make_created_event(env, started=True)
+        other_active, _ = make_created_event(env, started=True)
+        waiting = env.make_event([env.make_participant("b")], created=True,
+                                 start_times=[env.sched.now() + timedelta(minutes=30)])
+        waiting.event_buttons = fake_event_buttons()
+        waiting.event_buttons.start_end_button.disabled = True
+        run(event.end())
+        assert waiting.event_buttons.start_end_button.disabled
+
+    def test_keeps_start_buttons_disabled_before_start_button_lead(self, env):
+        event, _ = make_created_event(env, started=True)
+        waiting = env.make_event([env.make_participant("b")], created=True, start_times=[at(2, 20)])
+        waiting.event_buttons = fake_event_buttons()
+        waiting.event_buttons.start_end_button.disabled = True
+        run(event.end())
+        assert waiting.event_buttons.start_end_button.disabled
 
     def test_restores_shared_participant_availability_for_last_occurrence(self, env):
         a = env.make_participant("a", [TimeBlock(at(1, 18), at(1, 23))])
@@ -194,6 +219,122 @@ class TestEnd:
         run(event.end())
         # Day 2 is still scheduled, so it should stay out of the other event's availability
         assert not b_view_of_a.is_available_at(at(2, 20), event.duration)
+
+
+class TestEndWhenAttendeesLeave:
+    def make_running_event(self, env, count):
+        participants = [env.make_participant(f"p{i}") for i in range(count)]
+        event, _ = make_created_event(env, participants=participants, started=True)
+        members = [participant.member for participant in participants]
+        env.voice_channel.members[:] = members
+        run(event.end_if_participants_leave_vc())
+        return event, members
+
+    def leave(self, env, *members):
+        for member in members:
+            env.voice_channel.members.remove(member)
+
+    def expire_grace(self, env, event):
+        event.attendees_left_at -= env.sched.ATTENDEES_LEFT_GRACE + timedelta(seconds=1)
+
+    def test_ends_after_half_of_four_attendees_are_gone_past_grace(self, env):
+        event, members = self.make_running_event(env, 4)
+        self.leave(env, *members[:2])
+        run(event.end_if_participants_leave_vc())
+        assert not event.ended
+        assert event.attendees_left_at is not None
+        self.expire_grace(env, event)
+        run(event.end_if_participants_leave_vc())
+        assert event.ended
+
+    def test_stays_running_within_grace(self, env):
+        event, members = self.make_running_event(env, 4)
+        self.leave(env, *members[:2])
+        run(event.end_if_participants_leave_vc())
+        event.attendees_left_at -= env.sched.ATTENDEES_LEFT_GRACE - timedelta(seconds=1)
+        run(event.end_if_participants_leave_vc())
+        assert not event.ended
+
+    def test_returning_resets_grace(self, env):
+        event, members = self.make_running_event(env, 4)
+        self.leave(env, *members[:2])
+        run(event.end_if_participants_leave_vc())
+        env.voice_channel.members.append(members[0])
+        run(event.end_if_participants_leave_vc())
+        assert event.attendees_left_at is None
+
+    def test_less_than_half_leaving_keeps_running(self, env):
+        event, members = self.make_running_event(env, 5)
+        self.leave(env, *members[:2])
+        run(event.end_if_participants_leave_vc())
+        assert event.attendees_left_at is None
+
+    def test_large_group_counts_once_five_remain(self, env):
+        event, members = self.make_running_event(env, 16)
+        # 10 of 16 gone is over half, but 6 remain
+        self.leave(env, *members[:10])
+        run(event.end_if_participants_leave_vc())
+        assert event.attendees_left_at is None
+        self.leave(env, members[10])
+        run(event.end_if_participants_leave_vc())
+        assert event.attendees_left_at is not None
+        self.expire_grace(env, event)
+        run(event.end_if_participants_leave_vc())
+        assert event.ended
+
+    def test_ten_attendees_still_use_half(self, env):
+        event, members = self.make_running_event(env, 10)
+        self.leave(env, *members[:5])
+        run(event.end_if_participants_leave_vc())
+        assert event.attendees_left_at is not None
+
+    def test_eleven_attendees_need_five_remaining(self, env):
+        event, members = self.make_running_event(env, 11)
+        # 5 of 11 gone leaves 6, one more leaves 5
+        self.leave(env, *members[:5])
+        run(event.end_if_participants_leave_vc())
+        assert event.attendees_left_at is None
+        self.leave(env, members[5])
+        run(event.end_if_participants_leave_vc())
+        assert event.attendees_left_at is not None
+
+    def test_grace_survives_restart_downtime(self, env):
+        event, members = self.make_running_event(env, 4)
+        self.leave(env, *members[:2])
+        # Restored from saved data, the attendees left before the bot went down
+        event.attendees_left_at = datetime.now().astimezone() - timedelta(minutes=10)
+        run(event.end_if_participants_leave_vc())
+        assert event.ended
+
+    def test_groups_under_four_only_end_when_everyone_leaves(self, env):
+        event, members = self.make_running_event(env, 3)
+        self.leave(env, *members[:2])
+        run(event.end_if_participants_leave_vc())
+        assert event.attendees_left_at is None
+        assert not event.ended
+
+    def test_participants_who_never_joined_are_not_counted(self, env):
+        event, members = self.make_running_event(env, 6)
+        # Two participants never showed up, and one of the four attendees left
+        env.voice_channel.members[:] = members[:4]
+        event.attendee_ids = {member.id for member in members[:4]}
+        self.leave(env, members[0])
+        run(event.end_if_participants_leave_vc())
+        assert event.attendees_left_at is None
+
+    def test_everyone_leaving_ends_immediately(self, env):
+        event, members = self.make_running_event(env, 4)
+        self.leave(env, *members)
+        run(event.end_if_participants_leave_vc())
+        assert event.ended
+
+    def test_starting_resets_attendees(self, env):
+        event, _ = make_created_event(env)
+        event.attendee_ids = {1, 2, 3, 4}
+        event.attendees_left_at = env.sched.now()
+        run(event.start())
+        assert event.attendee_ids == set()
+        assert event.attendees_left_at is None
 
 
 class TestCancel:
@@ -334,6 +475,48 @@ class TestUpdateWhileCreated:
         run(event.update())
         assert event.started
 
+    def test_guild_event_started_in_discord_ends_active_event_at_location(self, env):
+        active, (active_scheduled_event,) = make_created_event(env, started=True)
+        event, (scheduled_event,) = make_created_event(env)
+        scheduled_event.status = EventStatus.active
+        run(event.update())
+        assert event.started
+        assert active.ended
+        assert active_scheduled_event.deleted
+
+    def test_guild_event_moved_in_discord_moves_event(self, env):
+        event, scheduled_events = make_created_event(env, days=(1, 2))
+        new_voice_channel = SimpleNamespace(id=99, members=[], mention="<#99>")
+        scheduled_events[0].kwargs["channel"] = new_voice_channel
+        run(event.update())
+        assert event.voice_channel is new_voice_channel
+        assert scheduled_events[1].edits == [{"entity_type": EntityType.voice, "channel": new_voice_channel}]
+
+    def test_guild_event_moved_to_external_location_in_discord(self, env):
+        event, (scheduled_event,) = make_created_event(env)
+        scheduled_event.kwargs.update(entity_type=EntityType.external, location="Park")
+        run(event.update())
+        assert event.location == "Park"
+        assert event.voice_channel is None
+
+    def test_unsubscribed_participant_joining_voice_channel_is_resubscribed(self, env):
+        a = env.make_participant("a")
+        b = env.make_participant("b")
+        b.subscribed = False
+        event, _ = make_created_event(env, participants=[a, b], started=True)
+        env.voice_channel.members[:] = [a.member, b.member]
+        run(event.update())
+        assert b.subscribed
+
+    def test_unsubscribed_participant_outside_voice_channel_stays_unsubscribed(self, env):
+        a = env.make_participant("a")
+        b = env.make_participant("b")
+        b.subscribed = False
+        event, _ = make_created_event(env, participants=[a, b], started=True)
+        env.voice_channel.members[:] = [a.member]
+        run(event.update())
+        assert not b.subscribed
+
     def test_guild_event_ended_in_discord_ends_event(self, env):
         event, (scheduled_event,) = make_created_event(env)
         scheduled_event.status = EventStatus.ended
@@ -430,6 +613,92 @@ class TestCancelIfMissed:
         event.start_times[0] = self.missed_start(env, event)
         assert not run(event.cancel_if_missed())
         assert not event.cancelled
+
+
+class TestStartButtonLead:
+    def test_disabled_before_start_button_lead(self, env):
+        event, _ = make_created_event(env)
+        event.start_times[0] = env.sched.now() + env.sched.START_BUTTON_LEAD + timedelta(minutes=1)
+        assert env.sched.EventButtons(event).start_end_button.disabled
+
+    def test_enabled_within_start_button_lead(self, env):
+        event, _ = make_created_event(env)
+        event.start_times[0] = env.sched.now() + env.sched.START_BUTTON_LEAD
+        assert not env.sched.EventButtons(event).start_end_button.disabled
+
+    def test_update_enables_button_once_within_start_button_lead(self, env):
+        event, _ = make_created_event(env)
+        event.event_buttons.start_end_button.disabled = True
+        event.start_times[0] = env.sched.now() + env.sched.START_BUTTON_LEAD - timedelta(minutes=1)
+        run(event.sync_start_button())
+        assert not event.event_buttons.start_end_button.disabled
+
+    def test_update_disables_button_when_rescheduled_later(self, env):
+        event, _ = make_created_event(env)
+        event.start_times[0] = env.sched.now() + timedelta(hours=2)
+        run(event.sync_start_button())
+        assert event.event_buttons.start_end_button.disabled
+
+    def test_start_callback_refuses_too_early(self, env, monkeypatch):
+        event, _ = make_created_event(env)
+        event.start_times[0] = env.sched.now() + timedelta(hours=2)
+        starts = []
+
+        async def fake_start(self, reason=None):
+            starts.append(reason)
+
+        monkeypatch.setattr(env.sched.Event, "start", fake_start)
+
+        async def press():
+            buttons = env.sched.EventButtons(event)
+            interaction = FakeInteraction(event.participants[0].member)
+            await buttons.start_callback(interaction)
+            return interaction
+
+        interaction = run(press())
+        assert starts == []
+        assert "can't be started until" in interaction.followups[0]["content"]
+
+    def test_start_callback_refuses_while_location_is_active(self, env, monkeypatch):
+        active, _ = make_created_event(env, started=True)
+        active.event_buttons_message = SimpleNamespace(jump_url="https://discord.com/channels/5/6/7")
+        event, _ = make_created_event(env)
+        event.start_times[0] = env.sched.now() + timedelta(minutes=10)
+        starts = []
+
+        async def fake_start(self, reason=None):
+            starts.append(reason)
+
+        monkeypatch.setattr(env.sched.Event, "start", fake_start)
+
+        async def press():
+            buttons = env.sched.EventButtons(event)
+            interaction = FakeInteraction(event.participants[0].member)
+            await buttons.start_callback(interaction)
+            return interaction
+
+        interaction = run(press())
+        assert starts == []
+        assert interaction.followups[0]["content"] == (f"{active} is currently happening in {env.voice_channel.mention}\n"
+                                                       "https://discord.com/channels/5/6/7")
+
+    def test_simultaneous_starts_at_the_same_location_start_one_event(self, env):
+        first, (first_scheduled_event,) = make_created_event(env)
+        second, (second_scheduled_event,) = make_created_event(env)
+        for scheduled_event in (first_scheduled_event, second_scheduled_event):
+            async def slow_start(reason=None, scheduled_event=scheduled_event):
+                # Yield like a real HTTP call so the other start can run in between
+                await asyncio.sleep(0)
+                scheduled_event.status = EventStatus.active
+            scheduled_event.start = slow_start
+
+        async def start_both():
+            return await asyncio.gather(first.start(), second.start())
+
+        assert run(start_both()) == [True, False]
+        assert first.started
+        assert not second.started
+        assert second_scheduled_event.status == EventStatus.scheduled
 
 
 class TestAutoCancelWhenAllUnsubscribed:
@@ -726,3 +995,18 @@ class TestScheduleAgain:
         monkeypatch.setattr(env.sched.client, "loaded_json", False)
         run(env.sched.client.retrieve_events())
         assert env.sched.client.schedule_again_events == []
+
+    def test_retrieve_events_loads_started_events_first(self, env, monkeypatch):
+        env.sched.persist.write({"events": [{"name": "waiting", "started": False},
+                                            {"name": "active", "started": True},
+                                            {"name": "legacy"}]})
+        monkeypatch.setattr(env.sched.client, "loaded_json", False)
+        monkeypatch.setattr(env.sched.asyncio, "sleep", noop)
+        loaded = []
+
+        async def fake_from_dict(data):
+            loaded.append(data["name"])
+
+        monkeypatch.setattr(env.sched.Event, "from_dict", fake_from_dict)
+        run(env.sched.client.retrieve_events())
+        assert loaded == ["active", "waiting", "legacy"]

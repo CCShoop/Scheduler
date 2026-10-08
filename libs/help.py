@@ -83,7 +83,8 @@ instructions.add_field(name="Use Existing Button",
                        inline=False)
 instructions.add_field(name="Unsubscribe / Resubscribe Button",
                        value="Unsubscribe from the event, or resubscribe if you already unsubscribed."
-                       "\nWhile unsubscribed, you will still be a participant, but you will not be mentioned.",
+                       "\nWhile unsubscribed, you will still be a participant, but you will not be mentioned."
+                       "\nJoining the voice channel while the event is running resubscribes you.",
                        inline=False)
 instructions.add_field(name="Cancel Button",
                        value="Cancel scheduling of the event.",
@@ -98,7 +99,9 @@ other_buttons = Embed(title="Other Buttons",
                       color=Color.magenta())
 other_buttons.add_field(name="Start End Button",
                         value="Starts an event and converts itself to an End button to end the event."
-                        "\nEvents will start and end automatically when all participants join or leave the voice channel.",
+                        "\nIt can be pressed from 30 minutes before the start time."
+                        "\nEvents will start and end automatically when all participants join or leave the voice channel."
+                        "\nEvents with 4 or more attendees also end once at least half of them, or all but 5 of more than 10, have been gone for over 5 minutes.",
                         inline=False)
 other_buttons.add_field(name="Schedule Again",
                         value="Allows you to reuse data from an ended or cancelled event."

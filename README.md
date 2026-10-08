@@ -115,7 +115,7 @@ The location changes how the event starts and ends:
 | | Voice channel | Other location |
 |---|---|---|
 | **Starts** | When every participant is in the voice channel, from 15 minutes before the start time | At the start time |
-| **Ends** | When everyone has left the voice channel | When its duration has passed |
+| **Ends** | When everyone has left the voice channel, or when at least half of 4 or more attendees (or all but 5 of more than 10) have been gone for over 5 minutes | When its duration has passed |
 | **Start Event button** | You must be in the voice channel | Any participant can press it |
 
 Either way, events at the same location can't overlap. For typed locations, "the same location" means the same text, ignoring capitalization.
@@ -190,9 +190,9 @@ After the event is created, the bot posts a message with these buttons:
 
 | Button | What it does |
 |--------|--------------|
-| **Start Event / End Event** | Starts the event manually, then changes to an End button. Events also start automatically when every participant joins the voice channel, and end when everyone leaves. Events at a [typed location](#locations) start at their start time and end when their duration has passed. |
+| **Start Event / End Event** | Starts the event manually, then changes to an End button. It can be pressed from 30 minutes before the start time. Events also start automatically when every participant joins the voice channel, and end when everyone leaves, or when at least half of 4 or more attendees (or all but 5 of more than 10) have been gone for over 5 minutes. Events at a [typed location](#locations) start at their start time and end when their duration has passed. |
 | **End and Forget** | Ends the event, and the bot stops tracking it. |
-| **Unsubscribe / Resubscribe** | Stops the bot from mentioning you about this event. Press it again to resubscribe. |
+| **Unsubscribe / Resubscribe** | Stops the bot from mentioning you about this event. Press it again to resubscribe. Joining the voice channel while the event is running also resubscribes you. |
 | **Reschedule Event** | Restarts availability collection with the same participants. |
 | **Cancel Event** | Cancels the event. |
 

@@ -91,6 +91,18 @@ RESEND_INTERVAL: timedelta = timedelta(hours=RESEND_INTERVAL_HOURS)
 # Time after an occurrence's end time to cancel it if it was never started
 MISSED_OCCURRENCE_GRACE: timedelta = timedelta(hours=1)
 
+# A running voice event ends once at least ATTENDEES_LEFT_FRACTION of its attendees have been out of
+# the voice channel for longer than ATTENDEES_LEFT_GRACE, if it had at least ATTENDEES_LEFT_MIN_GROUP attendees.
+# Larger groups only need to be down to ATTENDEES_REMAINING_CAP attendees.
+ATTENDEES_LEFT_MIN_GROUP: int = 4
+ATTENDEES_LEFT_FRACTION: float = 0.5
+ATTENDEES_REMAINING_CAP: int = 5
+ATTENDEES_LEFT_GRACE: timedelta = timedelta(minutes=5)
+
+# Time before an occurrence's start time that its start button becomes enabled.
+# At least START_TIME_DELAY, so events scheduled to start "immediately" can be started right away.
+START_BUTTON_LEAD: timedelta = timedelta(minutes=max(REMINDER_TIME_MINUTES, START_TIME_DELAY))
+
 
 def now() -> datetime:
     return datetime.now().astimezone().replace(second=0, microsecond=0)
@@ -304,6 +316,15 @@ def get_location_key(voice_channel: Optional[VoiceChannel], location: Optional[s
     return ("voice", voice_channel.id if voice_channel is not None else None)
 
 
+# Held while starting an event, so two events at the same location can't start at once
+location_start_locks: dict[tuple, asyncio.Lock] = {}
+
+
+def get_location_start_lock(location_key: tuple) -> asyncio.Lock:
+    """Gets the lock held while starting an event at the location with the provided key."""
+    return location_start_locks.setdefault(location_key, asyncio.Lock())
+
+
 def get_guild_event_location(guild_event: ScheduledEvent) -> tuple[Optional[VoiceChannel], Optional[str]]:
     """Gets the (voice_channel, location) of a guild event, like :func:`resolve_location`."""
     if guild_event.entity_type == EntityType.external:
@@ -478,7 +499,9 @@ class SchedulerClient(Client):
                 except Exception as e:
                     logger.error(f"Could not load Full Availability cutoffs: {e}")
                 prune_user_cutoffs()
-                for idx, event_data in enumerate(events_data['events']):
+                # Load started events first so the start buttons of events waiting on their location
+                # are built disabled, instead of enabled then disabled by the first update
+                for idx, event_data in enumerate(sorted(events_data['events'], key=lambda data: not data.get('started', False))):
                     if idx != 0:
                         # Prevent rate limiting when loading data
                         await asyncio.sleep(3)
@@ -645,6 +668,10 @@ class Event:
         Indicator of whether or not the first in line guild event has been started.
     ended: :class:`Optional[bool]`
         Indicator of whether or not the first in line guild event has been ended.
+    attendee_ids: :class:`set[int]`
+        Member ids of participants who have been in the voice channel during the current occurrence.
+    attendees_left_at: :class:`Optional[datetime]`
+        When enough attendees were first out of the voice channel to end the event, None if they aren't.
     cancelled: :class:`bool`
         Indicator of whether or not the event has been cancelled entirely, rather than just one occurrence.
     scheduled_events: :class:`Optional[list]`
@@ -698,6 +725,8 @@ class Event:
                  location: Optional[str] = None,
                  voice_channel_deleted: Optional[bool] = False,
                  availability_input_timer: Optional[datetime] = None,
+                 attendee_ids: Optional[set[int]] = None,
+                 attendees_left_at: Optional[datetime] = None,
                  unresolved_participants: Optional[list[dict]] = None,
                  unresolved_scheduler_id: Optional[int] = 0,
                  unresolved_rescheduler_id: Optional[int] = 0) -> None:
@@ -736,6 +765,8 @@ class Event:
         self.created: bool = created
         self.started: bool = started
         self.ended: bool = False
+        self.attendee_ids: set[int] = attendee_ids if attendee_ids is not None else set()
+        self.attendees_left_at: Optional[datetime] = attendees_left_at
         self.cancelled: bool = False
         self.scheduled_events: list[ScheduledEvent] = scheduled_events if scheduled_events is not None else []
         self.reminder_flag: bool = reminder_flag
@@ -823,9 +854,11 @@ class Event:
                 logger.warning(f"[{self}] No guild events or start times remain, removing")
                 self.remove()
                 return
+            await self.sync_location_from_guild_event()
             if not self.started:
                 if await self.cancel_if_missed():
                     return
+                await self.sync_start_button()
                 # Recreate the event if it was manually cancelled
                 if self.scheduled_events[0].status == EventStatus.cancelled:
                     # make_scheduled_events only creates trailing missing guild events,
@@ -843,7 +876,7 @@ class Event:
                     # either way the reminder and start checks below no longer apply
                     return
                 elif self.scheduled_events[0].status == EventStatus.active:
-                    await self.start()
+                    await self.start(end_active_event=True)
                 elif self.scheduled_events[0].status == EventStatus.ended:
                     await self.start()
                     await self.end()
@@ -861,6 +894,7 @@ class Event:
                 elif self.scheduled_events[0].status == EventStatus.ended:
                     await self.end(reason="Event ended manually.")
                 else:
+                    await self.resubscribe_participants_in_voice_channel()
                     await self.end_if_participants_leave_vc()
                 return
 
@@ -1128,31 +1162,54 @@ class Event:
             await self.reminder_message.delete()
             self.reminder_message = None
 
-    async def start(self, reason: Optional[str] = None) -> None:
+    async def start(self, reason: Optional[str] = None, end_active_event: Optional[bool] = False) -> bool:
         """
-        Starts the event.
+        Starts the event, unless a different event is active at its location.
 
         Arguments
         ---------
         reason: :class:`Optional[str]`
             Reason to provide for guild event start in audit log.
+        end_active_event: :class:`Optional[bool]`
+            Whether to end a different event active at the location instead of not starting.
+
+        Returns
+        -------
+        started: :class:`bool`
+            True if the event was started, or had already been started.
         """
         if reason is None:
             reason = f"Event started by {client.user}."
-        logger.info(f"[{self}] Starting, reason: {reason}")
+        async with get_location_start_lock(self.location_key):
+            if self.started:
+                return True
+            active_event = self.active_event_at_location
+            if active_event is not None:
+                if not end_active_event:
+                    logger.info(f"[{self}] Not starting, {active_event} is active at its location")
+                    return False
+                await active_event.end(reason=f"Event ended by {client.user} because {self} was started at its location.")
+            logger.info(f"[{self}] Starting, reason: {reason}")
+            return await self._start(reason)
+
+    async def _start(self, reason: str) -> bool:
+        """Starts the event, while holding its location's start lock."""
         await self.delete_reminder_message()
         try:
-            if not await self.open_stage(reason):
+            # Already active if it was started in Discord
+            if self.scheduled_events[0].status == EventStatus.scheduled and not await self.open_stage(reason):
                 await self.scheduled_events[0].start(reason=reason)
         except Exception as e:
             logger.error(f"[{self}] Failed to start: {e}")
-            return
+            return False
         try:
             self.start_times[0] = now()
         except Exception as e:
             logger.warning(f"[{self}] Error getting start time: {e}")
             self.start_times.append(now())
         self.started = True
+        self.attendee_ids = set()
+        self.attendees_left_at = None
         self.event_buttons.convert()
         await self.update_event_buttons_message()
         # Push back start times of all other events that share
@@ -1171,11 +1228,9 @@ class Event:
             await event.update_event_buttons_message()
         # Disable start buttons of events scheduled for the same location
         for event in client.events:
-            if event == self or not event.created or not event.same_location(self):
-                continue
-            if event.event_buttons is not None:
-                event.event_buttons.start_end_button.disabled = True
-            await event.update_event_buttons_message()
+            if event is not self and event.created and event.same_location(self):
+                await event.sync_start_button()
+        return True
 
     async def open_stage(self, reason: str) -> bool:
         """
@@ -1272,14 +1327,12 @@ class Event:
             except Exception as e:
                 logger.error(f"[{self}] Error in event control end button callback while editing event buttons message: {e}")
             self.event_buttons_message = None
-        # Re-enable start buttons of appropriate events
-        for event in client.events:
-            if event == self or not event.created or not event.same_location(self):
-                continue
-            if event.event_buttons is not None:
-                event.event_buttons.start_end_button.disabled = False
-            logger.info(f'[{self}] Re-enabled start button for event with same location: {event}')
+        # Clears started or removes this event, so it no longer blocks its location
         await self.prep_next_scheduled_event()
+        # Re-enable start buttons of events scheduled for the same location
+        for event in client.events:
+            if event is not self and event.created and event.same_location(self):
+                await event.sync_start_button()
         # Restore availability taken by this event, then take it again for any remaining occurrences
         for event in client.events:
             if event is not self:
@@ -1289,16 +1342,52 @@ class Event:
             if event is not self:
                 await event.update_messages()
 
+    async def resubscribe_participants_in_voice_channel(self) -> None:
+        """Resubscribes unsubscribed participants who joined the voice channel during the event, since they participated."""
+        if self.is_external:
+            return
+        joined = [participant for participant in self.unsubscribed_participants
+                  if participant.member in self.voice_channel.members]
+        if not joined:
+            return
+        for participant in joined:
+            participant.subscribed = True
+            logger.info(f"[{self}] {participant.member.name} resubscribed by joining the voice channel")
+        await self.update_event_buttons_message()
+
     async def end_if_participants_leave_vc(self) -> None:
         """
-        Ends the event if all of the participants have left the voice channel.
+        Ends the event if all of the participants have left the voice channel, or if ATTENDEES_LEFT_FRACTION of a group
+        of at least ATTENDEES_LEFT_MIN_GROUP attendees, or all but ATTENDEES_REMAINING_CAP of a larger group,
+        have been gone for longer than ATTENDEES_LEFT_GRACE.
         Events at an external location end once their duration has passed instead.
         """
         if self.is_external:
             if now() >= self.start_times[0] + self.scheduled_duration:
                 await self.end(f'Event ended by {client.user} because its duration passed.')
-        elif not any(participant.member in self.voice_channel.members for participant in self.participants):
+            return
+        in_channel_ids = {participant.member.id for participant in self.participants
+                          if participant.member in self.voice_channel.members}
+        if not in_channel_ids:
             await self.end(f'Event ended by {client.user} because no users were in the voice channel.')
+            return
+        # Only count attendees who are still participants
+        participant_ids = {participant.member.id for participant in self.participants}
+        self.attendee_ids = (self.attendee_ids | in_channel_ids) & participant_ids
+        left_count = len(self.attendee_ids - in_channel_ids)
+        remaining_count = len(self.attendee_ids) - left_count
+        max_remaining = min(len(self.attendee_ids) * (1 - ATTENDEES_LEFT_FRACTION), ATTENDEES_REMAINING_CAP)
+        if len(self.attendee_ids) < ATTENDEES_LEFT_MIN_GROUP or remaining_count > max_remaining:
+            self.attendees_left_at = None
+            return
+        # Not truncated to the minute like now(), so the grace period is exact
+        current_time = datetime.now().astimezone()
+        if self.attendees_left_at is None:
+            self.attendees_left_at = current_time
+            logger.info(f"[{self}] {left_count} of {len(self.attendee_ids)} attendees left the voice channel")
+        elif current_time - self.attendees_left_at > ATTENDEES_LEFT_GRACE:
+            await self.end(f'Event ended by {client.user} because {left_count} of {len(self.attendee_ids)} attendees '
+                           'left the voice channel.')
 
     async def prep_next_scheduled_event(self) -> None:
         """Preps the next guild scheduled event and update the event control buttons message."""
@@ -2514,23 +2603,72 @@ class Event:
         return responded
 
     @property
-    def location_has_active_event(self) -> bool:
+    def too_early_to_start(self) -> bool:
+        """Indicates if the current occurrence is more than START_BUTTON_LEAD before its start time."""
+        return now() < self.start_times[0] - START_BUTTON_LEAD
+
+    @property
+    def start_button_disabled(self) -> bool:
+        """Indicates if the start button should be disabled."""
+        return self.too_early_to_start or self.location_has_active_event
+
+    async def sync_start_button(self) -> None:
+        """Enables or disables the start button as its start time approaches or is rescheduled."""
+        if self.event_buttons is None or self.started:
+            return
+        disabled = self.start_button_disabled
+        if self.event_buttons.start_end_button.disabled != disabled:
+            self.event_buttons.start_end_button.disabled = disabled
+            await self.update_event_buttons_message()
+
+    @property
+    def active_event_at_location(self):
         """
-        Indicates if the event's location has a different active event in it.
+        The different event active at the event's location.
 
         Returns
         -------
-        True
-            If the location has an active event.
-        False
-            If the location does not have an active event.
+        event: :class:`Optional[Event]`
+            The active event, or None if the location has no active event.
         """
         for event in client.events:
             if event is self or not event.started:
                 continue
             if event.same_location(self):
-                return True
-        return False
+                return event
+        return None
+
+    @property
+    def location_has_active_event(self) -> bool:
+        """Indicates if the event's location has a different active event in it."""
+        return self.active_event_at_location is not None
+
+    @property
+    def happening_message(self) -> str:
+        """Says where the event is happening, with a link to its event buttons message."""
+        content = f"{self} is currently happening in {self.location_string}"
+        if self.event_buttons_message is not None:
+            content += f"\n{self.event_buttons_message.jump_url}"
+        return content
+
+    async def sync_location_from_guild_event(self) -> None:
+        """Applies a location change made to the current guild event in Discord to the event and its other guild events."""
+        voice_channel, location = get_guild_event_location(self.scheduled_events[0])
+        # The new voice channel isn't cached
+        if voice_channel is None and not location:
+            return
+        if get_location_key(voice_channel, location) == self.location_key:
+            return
+        old_location = self.location_string
+        self.location = location or None
+        self.voice_channel = voice_channel if self.location is None else None
+        logger.info(f"[{self}] Location changed in Discord from {old_location} to {self.location_string}")
+        for scheduled_event, start_time in zip(self.scheduled_events[1:], self.start_times[1:]):
+            try:
+                await scheduled_event.edit(entity_type=self.entity_type, **self.get_location_kwargs(start_time))
+            except Exception as e:
+                logger.error(f"[{self}] Error moving guild event to the new location: {e}")
+        await self.update_messages()
 
     @property
     def is_external(self) -> bool:
@@ -2808,6 +2946,17 @@ class Event:
             logger.warning(f'Failed to read availability input timer data: {e}')
             event_availability_input_timer = None
 
+        # Attendees of the current occurrence, missing from data saved before they were tracked
+        try:
+            event_attendee_ids = set(data.get("attendee_ids", []))
+            event_attendees_left_at = data.get("attendees_left_at")
+            if event_attendees_left_at is not None:
+                event_attendees_left_at = datetime.fromisoformat(event_attendees_left_at)
+        except Exception as e:
+            logger.warning(f'Failed to read attendee data: {e}')
+            event_attendee_ids = set()
+            event_attendees_left_at = None
+
         # Voice channel prompt message
         event_voice_channel_prompt_message = None
         if event_voice_channel_deleted and data.get("voice_channel_prompt_message_id"):
@@ -2841,6 +2990,8 @@ class Event:
             availability_resent_at=event_availability_resent_at,
             voice_channel_deleted=event_voice_channel_deleted,
             availability_input_timer=event_availability_input_timer,
+            attendee_ids=event_attendee_ids,
+            attendees_left_at=event_attendees_left_at,
             unresolved_participants=event_unresolved_participants,
             unresolved_scheduler_id=data["scheduler_id"],
             unresolved_rescheduler_id=data["rescheduler_id"]
@@ -2943,6 +3094,8 @@ class Event:
             'timeout_at': self.timeout_at.isoformat(),
             'availability_resent_at': self.availability_resent_at.isoformat(),
             'availability_input_timer': self.availability_input_timer.isoformat() if self.availability_input_timer is not None else None,
+            'attendee_ids': sorted(self.attendee_ids),
+            'attendees_left_at': self.attendees_left_at.isoformat() if self.attendees_left_at is not None else None,
             'voice_channel_prompt_message_id': voice_channel_prompt_message_id
         }
 
@@ -3507,6 +3660,15 @@ class EventButtons(View):
                 await interaction.followup.send(content=f"{self.event}'s voice channel was deleted, choose a new one before starting it.",
                                                 ephemeral=True)
                 return
+            active_event = self.event.active_event_at_location
+            if active_event is not None:
+                await interaction.followup.send(content=active_event.happening_message, ephemeral=True)
+                return
+            if self.event.too_early_to_start:
+                start_button_time = int((self.event.start_times[0] - START_BUTTON_LEAD).timestamp())
+                await interaction.followup.send(content=f"{self.event} can't be started until <t:{start_button_time}:R>.",
+                                                ephemeral=True)
+                return
             self.event.add_user_as_participant(interaction.user)
             if not self.event.is_external and interaction.user.id not in [member.id for member in self.event.voice_channel.members]:
                 logger.info(f"[{self.event}] {interaction.user} tried to press start button while not in the event's voice channel")
@@ -3516,12 +3678,16 @@ class EventButtons(View):
                 await interaction.followup.send(content=content, ephemeral=True)
                 return
             logger.info(f"[{self.event}] {interaction.user} started by button press")
-            await self.event.start(reason=f"Event started by {interaction.user} pressing start button.")
+            if not await self.event.start(reason=f"Event started by {interaction.user} pressing start button."):
+                # Another event started at the location first
+                active_event = self.event.active_event_at_location
+                if active_event is not None:
+                    await interaction.followup.send(content=active_event.happening_message, ephemeral=True)
         self.start_callback = start_button_callback
 
         if not self.event.started:
             self.start_end_button.callback = start_button_callback
-            self.start_end_button.disabled = self.event.location_has_active_event
+            self.start_end_button.disabled = self.event.start_button_disabled
         else:
             self.start_end_button.label = self.end_label
             self.start_end_button.callback = end_button_callback
