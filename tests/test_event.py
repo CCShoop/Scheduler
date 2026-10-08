@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from discord import EntityType, EventStatus
 
-from libs.participant import TimeBlock
+from libs.participant import Participant, TimeBlock
 from fakes import FakeScheduledEvent, at, noop, run
 
 class TestIntersectTimeBlocks:
@@ -40,6 +40,32 @@ class TestCompareAvailabilities:
         event = env.make_event([a])
         event.compare_availabilities()
         assert event.start_times == [now + timedelta(minutes=env.sched.START_TIME_DELAY)]
+
+    def test_window_too_short_after_the_start_delay_is_skipped(self, env):
+        now = env.sched.now()
+        # 50 minutes fits a 30 minute event now, but not one starting START_TIME_DELAY from now
+        a = env.make_participant("a", [TimeBlock(now, now + timedelta(minutes=50)),
+                                       TimeBlock(at(1, 20), at(1, 22))])
+        event = env.make_event([a], duration=timedelta(minutes=30))
+        event.compare_availabilities()
+        assert event.start_times == [at(1, 20)]
+
+    def test_window_starting_soon_starts_after_the_start_delay(self, env):
+        now = env.sched.now()
+        a = env.make_participant("a", [TimeBlock(now + timedelta(minutes=10), now + timedelta(hours=3))])
+        b = env.make_participant("b", [TimeBlock(now - timedelta(hours=1), now + timedelta(hours=3))])
+        event = env.make_event([a, b], duration=timedelta(minutes=30))
+        event.compare_availabilities()
+        assert event.start_times == [now + timedelta(minutes=env.sched.START_TIME_DELAY)]
+
+    def test_created_event_fits_availability_without_being_moved(self, env, caplog):
+        now = env.sched.now()
+        a = env.make_participant("a", [TimeBlock(now, now + timedelta(minutes=50)),
+                                       TimeBlock(at(1, 20), at(1, 22))])
+        event = env.make_event([a], duration=timedelta(minutes=30))
+        run(event.create_if_possible())
+        assert [se.start_time for se in env.guild.created] == [at(1, 20)]
+        assert not any("in the past" in record.message for record in caplog.records)
 
     def test_multi_event_picks_one_start_per_day(self, env):
         a = env.make_participant("a", [TimeBlock(at(1, 8), at(1, 10)), TimeBlock(at(1, 20), at(1, 22)),
@@ -544,3 +570,27 @@ class TestPersistence:
         event = env.make_event([env.make_participant("a")])
         with pytest.raises(Exception, match="already in use"):
             self.load(env, monkeypatch, event.to_dict())
+
+
+class TestOtherUnansweredEventsEmbed:
+    def test_lists_events_still_collecting_availability(self, env):
+        a = env.make_participant("a")
+        event = env.make_event([a])
+        other = env.make_event([Participant(member=a.member)])
+        embed = env.sched.get_participants_other_unanswered_events_embed(event, a)
+        assert [field.name for field in embed.fields] == [other.get_limited_name(25)]
+
+    def test_skips_created_events(self, env):
+        # /create adds participants without asking for their availability
+        a = env.make_participant("a")
+        event = env.make_event([a])
+        env.make_event([Participant(member=a.member)], created=True, start_times=[at(1, 20)])
+        assert env.sched.get_participants_other_unanswered_events_embed(event, a) is None
+
+    def test_skips_answered_events(self, env):
+        a = env.make_participant("a")
+        event = env.make_event([a])
+        answered = Participant(member=a.member)
+        answered.answered = True
+        env.make_event([answered])
+        assert env.sched.get_participants_other_unanswered_events_embed(event, a) is None

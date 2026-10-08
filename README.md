@@ -92,7 +92,7 @@ Run all commands in a server text channel. The bot posts event messages in the c
 
 ### `/schedule`: find a time that works for everyone
 
-This is the main command. The bot posts an availability message in the channel and mentions every participant. Each participant enters when they're free. Within about a minute of the last person answering, the bot creates the event at the earliest time when everyone is available. If no time works, it cancels scheduling.
+This is the main command. The bot posts an availability message in the channel and mentions every participant. Each participant enters when they're free. Within about a minute of the last person answering, the bot creates the event at the earliest time when everyone is available, starting no sooner than 30 minutes from then so people have time to show up. If no time works, it cancels scheduling.
 
 | Option            | Required | Description |
 |-------------------|----------|-------------|

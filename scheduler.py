@@ -1101,8 +1101,13 @@ class Event:
                 remaining_blocks = new_blocks
             filtered_timeblocks.extend(remaining_blocks)
 
-        # Find valid start times
+        # Find valid start times, no sooner than an immediate start. Earlier ones would have to be pushed back
+        # when the event is created, which doesn't recheck availability or the location.
         for timeblock in filtered_timeblocks:
+            if timeblock.end_time <= current_time:
+                continue
+            if timeblock.start_time < current_time:
+                timeblock = TimeBlock(start_time=current_time, end_time=timeblock.end_time)
             date_scheduled = False
             tb_date = timeblock.start_time.date()
             for date in dates_scheduled:
@@ -5393,12 +5398,15 @@ def get_participants_other_events(event: Event, participant: Participant) -> lis
     return events
 
 
-def get_participants_other_unanswered_events_embed(event: Event, participant: Participant) -> list[Embed]:
+def get_participants_other_unanswered_events_embed(event: Event, participant: Participant) -> Optional[Embed]:
     valid = False
     embed = Embed(title="Your Other Events",
                   description="Other events that you are in that require your availability.",
                   color=Color.yellow())
     for other_event in get_participants_other_events(event, participant):
+        # Created events, e.g. from /create, no longer collect availability
+        if other_event.created or other_event.cancelled:
+            continue
         for other_participant in other_event.participants:
             if other_participant.member.id == participant.member.id:
                 if not other_participant.answered:
