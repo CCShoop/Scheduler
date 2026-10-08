@@ -1,8 +1,10 @@
 '''Voice announcements of events starting and ending, read out with a text-to-speech engine.'''
 
 import os
+import sys
 import json
 import shutil
+import importlib.util
 import asyncio
 import logging
 import tempfile
@@ -57,6 +59,19 @@ def set_engine(guild_id: int, engine: str) -> None:
 def get_piper_model(engine: str) -> Optional[str]:
     """The path to the piper slot's voice model (.onnx) from its environment variable."""
     return os.getenv(PIPER_MODEL_VARIABLES[engine])
+
+
+def get_piper_command() -> Optional[list[str]]:
+    """
+    Gets the command that runs piper: the piper-tts module of the Python running the bot, or else a piper program on PATH.
+    None if neither is installed.
+    """
+    # pip can put the piper program in a folder that isn't on the bot's PATH, such as ~/.local/bin
+    if importlib.util.find_spec("piper") is not None:
+        return [sys.executable, "-m", "piper"]
+    if shutil.which("piper") is not None:
+        return ["piper"]
+    return None
 
 
 def get_language(engine: str) -> Optional[dict]:
@@ -236,8 +251,8 @@ def missing_requirements(engine: str) -> list[str]:
     if engine == ESPEAK_NG and shutil.which("espeak-ng") is None:
         missing.append("espeak-ng")
     if engine in PIPER_MODEL_VARIABLES:
-        if shutil.which("piper") is None:
-            missing.append("piper (install piper-tts)")
+        if get_piper_command() is None:
+            missing.append(f"piper (install piper-tts with {sys.executable} -m pip install piper-tts)")
         model = get_piper_model(engine)
         if not model or not os.path.isfile(model):
             missing.append(f"a piper voice model (set {PIPER_MODEL_VARIABLES[engine]} to its .onnx file)")
@@ -250,7 +265,7 @@ async def synthesize(engine: str, text: str, path: str) -> None:
     if engine == ESPEAK_NG:
         args = ["espeak-ng", "--stdin", "-w", path]
     elif engine in PIPER_MODEL_VARIABLES:
-        args = ["piper", "--model", get_piper_model(engine), "--output_file", path]
+        args = get_piper_command() + ["--model", get_piper_model(engine), "--output_file", path]
     else:
         raise ValueError(f"Unknown text-to-speech engine: {engine}")
     await run_process(engine, args, text)

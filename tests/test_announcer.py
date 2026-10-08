@@ -172,6 +172,22 @@ class TestMissingRequirements:
         monkeypatch.setenv("PIPER_MODEL_EN", str(model))
         assert not any("PIPER_MODEL_EN" in item for item in announcer_lib.missing_requirements(PIPER_EN))
 
+    def test_piper_runs_with_the_bots_python_when_installed_there(self, monkeypatch):
+        monkeypatch.setattr(announcer_lib.importlib.util, "find_spec", lambda name: object())
+        monkeypatch.setattr(announcer_lib.shutil, "which", lambda name: None)
+        assert announcer_lib.get_piper_command() == [announcer_lib.sys.executable, "-m", "piper"]
+
+    def test_piper_falls_back_to_program_on_path(self, monkeypatch):
+        monkeypatch.setattr(announcer_lib.importlib.util, "find_spec", lambda name: None)
+        monkeypatch.setattr(announcer_lib.shutil, "which", lambda name: f"/usr/local/bin/{name}")
+        assert announcer_lib.get_piper_command() == ["piper"]
+
+    def test_missing_piper_names_the_bots_python(self, monkeypatch):
+        monkeypatch.setattr(announcer_lib.importlib.util, "find_spec", lambda name: None)
+        monkeypatch.setattr(announcer_lib.shutil, "which", lambda name: None)
+        missing = announcer_lib.missing_requirements(PIPER_EN)
+        assert f"piper (install piper-tts with {announcer_lib.sys.executable} -m pip install piper-tts)" in missing
+
     def test_reports_missing_programs(self, monkeypatch):
         monkeypatch.setattr(announcer_lib.shutil, "which", lambda name: None)
         missing = announcer_lib.missing_requirements(ESPEAK_NG)

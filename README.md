@@ -47,10 +47,12 @@ pip install -r requirements.txt
 
 ```bash
 sudo apt install ffmpeg libopus0 espeak-ng   # espeak-ng
-pip install piper-tts                        # piper, which also needs a voice model in PIPER_MODEL_EN or PIPER_MODEL_JP
+python3 -m pip install piper-tts             # piper, which also needs a voice model in PIPER_MODEL_EN or PIPER_MODEL_JP
 sudo apt install python3-dev cmake build-essential   # needed to build pyopenjtalk
-pip install pyopenjtalk                      # Japanese piper voices
+python3 -m pip install pyopenjtalk           # Japanese piper voices
 ```
+
+Install piper-tts and pyopenjtalk with the same Python that runs the bot, which is why these use `python3 -m pip`. The bot runs piper through that Python, so the `piper` command doesn't need to be on `PATH`. If `/tts` says piper is missing, it names the Python the bot is running, and you can install piper-tts with that one.
 
 `pip install pyopenjtalk` compiles it from source, which needs Python's development headers, `cmake`, and a C++ compiler. `python3-dev` matches the system's default Python. If the bot runs on a different Python version, install that version's headers instead, such as `python3.12-dev`.
 
