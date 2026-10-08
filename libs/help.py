@@ -50,6 +50,11 @@ commands.add_field(name="cutoff",
                    value="Set how many hours past midnight your Full Availability extends to (-6 to 23, default 0). Negative ends it before midnight, e.g. -2 is 10 PM."
                    "\nLeave it blank to go back to the default.",
                    inline=False)
+commands.add_field(name="tts",
+                   value="Choose the voice that announces events starting and ending in their voice channels: espeak-ng, piper-en, piper-jp, or none to turn announcements off."
+                   "\nThe setting is for the whole server, and anyone can change it."
+                   "\nWith both an English and a Japanese voice, event names are read by the voice for their characters.",
+                   inline=False)
 commands.add_field(name="help",
                    value="Shows this help message.",
                    inline=False)

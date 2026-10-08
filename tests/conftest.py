@@ -55,10 +55,12 @@ def sched():
     scheduler.client.events.clear()
     scheduler.client.schedule_again_events.clear()
     scheduler.participant_lib.user_cutoffs.clear()
+    scheduler.announcer_lib.guild_engines.clear()
     yield scheduler
     scheduler.client.events.clear()
     scheduler.client.schedule_again_events.clear()
     scheduler.participant_lib.user_cutoffs.clear()
+    scheduler.announcer_lib.guild_engines.clear()
 
 
 @pytest.fixture

@@ -32,6 +32,7 @@ A Discord bot that finds a time that works for everyone and turns it into a Disc
    - Embed Links
    - Read Message History
    - Create Events and Manage Events
+   - Connect and Speak, for [voice announcements](#voice-announcements)
 5. Open the generated URL and add the bot to your server.
 
 ### 2. Install the dependencies
@@ -41,6 +42,17 @@ git clone <this repository>
 cd Scheduler
 pip install -r requirements.txt
 ```
+
+[Voice announcements](#voice-announcements) also need `ffmpeg` and `libopus` on the host, plus the text-to-speech engines you want to offer:
+
+```bash
+sudo apt install ffmpeg libopus0 espeak-ng   # espeak-ng
+pip install piper-tts                        # piper, which also needs a voice model in PIPER_MODEL_EN or PIPER_MODEL_JP
+sudo apt install python3-dev cmake build-essential   # needed to build pyopenjtalk
+pip install pyopenjtalk                      # Japanese piper voices
+```
+
+`pip install pyopenjtalk` compiles it from source, which needs Python's development headers, `cmake`, and a C++ compiler. `python3-dev` matches the system's default Python. If the bot runs on a different Python version, install that version's headers instead, such as `python3.12-dev`.
 
 ### 3. Configure `.env`
 
@@ -58,6 +70,7 @@ PORT=5000
 | `DISCORD_TOKEN` | The bot token from the Developer Portal. |
 | `OWNER_ID`      | Your Discord user ID. This user can run the [owner-only commands](#owner-only-commands). To copy your ID, enable Developer Mode under *Settings → Advanced*, then right-click your name and choose **Copy User ID**. |
 | `HOST`, `PORT`  | Where the bot listens for [scheduling requests from other programs](#scheduling-from-another-program). Use `127.0.0.1` to accept connections from the same machine only. All four variables are required. |
+| `PIPER_MODEL_EN`, `PIPER_MODEL_JP` | Optional. The full paths to the `.onnx` files of the piper voice models for the `piper-en` (English) and `piper-jp` (Japanese) [voice announcements](#voice-announcements). Download one with `python3 -m piper.download_voices en_US-lessac-medium` (or `ja_JP-hi_fi_captain-medium`), keeping its `.onnx.json` file next to it. Samples of every voice are at [rhasspy.github.io/piper-samples](https://rhasspy.github.io/piper-samples/). |
 
 ### 4. Run the bot
 
@@ -139,7 +152,20 @@ Use this command when you already know the time. It takes the same options as `/
 | `/listevents`   | List every event the bot is managing in this server. |
 | `/listmyevents` | List every event you're a participant in. |
 | `/cutoff`       | Set how many hours past midnight your **Full Availability** extends to, from -6 to 23. Negative numbers end it before midnight to match an earlier bedtime, so `-2` means 10 PM. The default is 0, which means midnight. Leave the number blank to go back to the default. The setting is yours alone and applies in every server. It's deleted if you no longer share a server with the bot. |
+| `/tts`          | Choose the text-to-speech engine for this server's [voice announcements](#voice-announcements): `espeak-ng`, `piper-en`, `piper-jp`, or `none` to turn them off. The piper options show their voice's language. Anyone can change it, and the bot posts who changed it in the channel. |
 | `/help`         | Show the built-in help. |
+
+### Voice announcements
+
+When `/tts` is set to an engine, the bot joins an event's voice or stage channel and says "The event *name* is starting now." when the event starts, and "The event *name* is ending now." when it ends. Then it leaves. Announcements are off until someone in the server turns them on.
+
+- The bot can only be in one voice channel per server, so announcements in a server are read out one at a time.
+- Nothing is read out to an empty channel, so there is no ending announcement when everyone has left.
+- Events at a [typed location](#locations) have no voice channel and aren't announced.
+- Japanese piper voices say 「イベント「*name*」が今から始まります。」 and 「イベント「*name*」が終わります。」 instead. Voices in other languages use the English sentences.
+- With an English and a Japanese piper voice set up, each part of an announcement is read by the voice for its characters, whichever voice is selected. An English event name in the Japanese sentence is read by the English voice, and a Japanese event name in the English sentence (or with `espeak-ng`) is read by the Japanese voice. This takes about a second longer to prepare, before the bot joins the channel.
+- With only one voice set up, it reads everything. The Japanese voice spells out English words it doesn't know letter by letter, and English voices read Japanese characters as "Japanese letter".
+- If the host is missing something the engine needs, `/tts` says what it is instead of switching to it. Announcements that fail are skipped, and the event starts or ends as usual.
 
 ### Adding an image later
 

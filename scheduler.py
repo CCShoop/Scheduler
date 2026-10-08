@@ -18,6 +18,8 @@ from discord.ext import tasks
 
 from libs.persistence import Persistence
 import libs.participant as participant_lib
+import libs.announcer as announcer_lib
+from libs.announcer import Announcer
 from libs.participant import Participant, TimeBlock, print_date_time, print_time_until
 from libs.help import HELP_EMBEDS
 from server import Server
@@ -43,6 +45,9 @@ logger.addHandler(console_handler)
 
 # Persistence
 persist = Persistence('data.json')
+
+# Reads out events starting and ending in their voice channels
+announcer = Announcer()
 
 # Literals
 INCLUDE = 'INCLUDE'
@@ -499,6 +504,13 @@ class SchedulerClient(Client):
                 except Exception as e:
                     logger.error(f"Could not load Full Availability cutoffs: {e}")
                 prune_user_cutoffs()
+                # Data saved before announcements has no entry
+                try:
+                    announcer_lib.guild_engines.update({int(guild_id): engine
+                                                        for guild_id, engine in events_data.get('tts_engines', {}).items()
+                                                        if engine in announcer_lib.ENGINES})
+                except Exception as e:
+                    logger.error(f"Could not load text-to-speech engines: {e}")
                 # Load started events first so the start buttons of events waiting on their location
                 # are built disabled, instead of enabled then disabled by the first update
                 for idx, event_data in enumerate(sorted(events_data['events'], key=lambda data: not data.get('started', False))):
@@ -546,6 +558,7 @@ class SchedulerClient(Client):
         events_data['schedule_again_events'] = [after_buttons.to_dict() for after_buttons in self.schedule_again_events]
         # JSON keys are strings
         events_data['user_cutoffs'] = {str(user_id): cutoff for user_id, cutoff in participant_lib.user_cutoffs.items()}
+        events_data['tts_engines'] = {str(guild_id): engine for guild_id, engine in announcer_lib.guild_engines.items()}
         return events_data
 
     async def setup_hook(self):
@@ -1210,6 +1223,7 @@ class Event:
         self.started = True
         self.attendee_ids = set()
         self.attendees_left_at = None
+        self.announce("starting")
         self.event_buttons.convert()
         await self.update_event_buttons_message()
         # Push back start times of all other events that share
@@ -1305,6 +1319,7 @@ class Event:
             reason = f"Event ended by {client.user}."
         logger.info(f"[{self}] Ending, reason: {reason}")
         self.ended = True
+        self.announce("ending")
         await self.close_stage(reason)
         # Delete scheduled event
         try:
@@ -1341,6 +1356,12 @@ class Event:
         for event in client.events:
             if event is not self:
                 await event.update_messages()
+
+    def announce(self, action: str) -> None:
+        """Reads out that the event is starting or ending now in its voice channel, if its guild has announcements on."""
+        if self.is_external or self.voice_channel is None:
+            return
+        announcer.announce(self.guild, self.voice_channel, self.name, action)
 
     async def resubscribe_participants_in_voice_channel(self) -> None:
         """Resubscribes unsubscribed participants who joined the voice channel during the event, since they participated."""
@@ -3672,10 +3693,8 @@ class EventButtons(View):
             self.event.add_user_as_participant(interaction.user)
             if not self.event.is_external and interaction.user.id not in [member.id for member in self.event.voice_channel.members]:
                 logger.info(f"[{self.event}] {interaction.user} tried to press start button while not in the event's voice channel")
-                content = f"You must be in {self.event.voice_channel.mention} to start {self.event}!\nMembers:\n"
-                for member in self.event.voice_channel.members:
-                    content += f"{member}\n"
-                await interaction.followup.send(content=content, ephemeral=True)
+                await interaction.followup.send(content=f"You must be in {self.event.voice_channel.mention} to start {self.event}!",
+                                                ephemeral=True)
                 return
             logger.info(f"[{self.event}] {interaction.user} started by button press")
             if not await self.event.start(reason=f"Event started by {interaction.user} pressing start button."):
@@ -4476,6 +4495,7 @@ async def on_guild_remove(guild: Guild):
             client.schedule_again_events.remove(after_buttons)
             logger.info(f"[{after_buttons.event}] Forgot schedule again buttons of removed guild")
     prune_user_cutoffs()
+    announcer_lib.set_engine(guild.id, announcer_lib.NONE)
 
 
 @client.event
@@ -5256,6 +5276,29 @@ async def cutoff_command(interaction: Interaction,
         participant_lib.user_cutoffs[interaction.user.id] = hours
     logger.info(f"{interaction.user.name} set their Full Availability cutoff to {hours}")
     await interaction.response.send_message(content=f"Your Full Availability now extends to {participant_lib.format_cutoff(hours)}.", ephemeral=True)
+
+
+@client.tree.command(name='tts', description='Set the voice that announces events starting and ending in this server.')
+@app_commands.describe(engine='The text-to-speech engine to read out announcements with, or none to turn them off.')
+# Labeled with each piper slot's language, read when the bot starts
+@app_commands.choices(engine=[app_commands.Choice(name=announcer_lib.get_engine_label(engine), value=engine)
+                              for engine in announcer_lib.ENGINES])
+async def tts_command(interaction: Interaction, engine: str):
+    if interaction.guild is None:
+        await interaction.response.send_message(content="Announcements can only be set in a server.", ephemeral=True)
+        return
+    missing = announcer_lib.missing_requirements(engine)
+    if missing:
+        await interaction.response.send_message(content=f"{engine} can't be used, the bot's host is missing {', '.join(missing)}.",
+                                                ephemeral=True)
+        return
+    announcer_lib.set_engine(interaction.guild.id, engine)
+    logger.info(f"[{interaction.guild.name}] {interaction.user.name} set the text-to-speech engine to {engine}")
+    if engine == announcer_lib.NONE:
+        content = f"**{interaction.user.display_name}** turned off voice announcements of events starting and ending."
+    else:
+        content = f"**{interaction.user.display_name}** set voice announcements of events starting and ending to **{announcer_lib.get_engine_label(engine)}**."
+    await interaction.response.send_message(content=content)
 
 
 @client.tree.command(name='help', description='Show helpful information.')
