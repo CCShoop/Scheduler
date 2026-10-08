@@ -89,7 +89,7 @@ instructions.add_field(name="Use Existing Button",
 instructions.add_field(name="Unsubscribe / Resubscribe Button",
                        value="Unsubscribe from the event, or resubscribe if you already unsubscribed."
                        "\nWhile unsubscribed, you will still be a participant, but you will not be mentioned."
-                       "\nJoining the voice channel while the event is running resubscribes you.",
+                       "\nJoining the voice channel while the event is running resubscribes you, so you can't unsubscribe while you're in it.",
                        inline=False)
 instructions.add_field(name="Cancel Button",
                        value="Cancel scheduling of the event.",

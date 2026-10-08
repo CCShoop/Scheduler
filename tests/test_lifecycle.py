@@ -517,6 +517,48 @@ class TestUpdateWhileCreated:
         run(event.update())
         assert not b.subscribed
 
+    def press_unsubscribe(self, env, event, member):
+        async def click():
+            buttons = env.sched.EventButtons(event)
+            interaction = FakeInteraction(member)
+            await buttons.unsubscribe_button.callback(interaction)
+            return interaction
+        return run(click())
+
+    def test_unsubscribe_refused_while_in_voice_channel_during_event(self, env):
+        a = env.make_participant("a")
+        b = env.make_participant("b")
+        event, _ = make_created_event(env, participants=[a, b], started=True)
+        env.voice_channel.members[:] = [a.member, b.member]
+        interaction = self.press_unsubscribe(env, event, b.member)
+        assert b.subscribed
+        assert "you'd be resubscribed right away" in interaction.followups[0]["content"]
+
+    def test_unsubscribe_allowed_outside_voice_channel_during_event(self, env):
+        a = env.make_participant("a")
+        b = env.make_participant("b")
+        event, _ = make_created_event(env, participants=[a, b], started=True)
+        env.voice_channel.members[:] = [a.member]
+        self.press_unsubscribe(env, event, b.member)
+        assert not b.subscribed
+
+    def test_resubscribe_allowed_while_in_voice_channel_during_event(self, env):
+        a = env.make_participant("a")
+        b = env.make_participant("b")
+        b.subscribed = False
+        event, _ = make_created_event(env, participants=[a, b], started=True)
+        env.voice_channel.members[:] = [a.member, b.member]
+        self.press_unsubscribe(env, event, b.member)
+        assert b.subscribed
+
+    def test_unsubscribe_allowed_in_voice_channel_before_event_starts(self, env):
+        a = env.make_participant("a")
+        b = env.make_participant("b")
+        event, _ = make_created_event(env, participants=[a, b])
+        env.voice_channel.members[:] = [a.member, b.member]
+        self.press_unsubscribe(env, event, b.member)
+        assert not b.subscribed
+
     def test_guild_event_ended_in_discord_ends_event(self, env):
         event, (scheduled_event,) = make_created_event(env)
         scheduled_event.status = EventStatus.ended

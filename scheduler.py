@@ -1399,12 +1399,15 @@ class Event:
             return
         announcer.announce(self.guild, self.voice_channel, self.name, action)
 
+    def in_voice_channel_during_event(self, participant: Participant) -> bool:
+        """Indicates whether the participant is in the voice channel while the event is running, which resubscribes them."""
+        return (self.started and not self.is_external and self.voice_channel is not None
+                and participant.member in self.voice_channel.members)
+
     async def resubscribe_participants_in_voice_channel(self) -> None:
         """Resubscribes unsubscribed participants who joined the voice channel during the event, since they participated."""
-        if self.is_external:
-            return
         joined = [participant for participant in self.unsubscribed_participants
-                  if participant.member in self.voice_channel.members]
+                  if self.in_voice_channel_during_event(participant)]
         if not joined:
             return
         for participant in joined:
@@ -3793,6 +3796,12 @@ class EventButtons(View):
                 return
             participant = self.event.get_participant(interaction.user.name)
             if participant.subscribed:
+                if self.event.in_voice_channel_during_event(participant):
+                    logger.info(f"[{self.event}] {interaction.user.name} tried to unsubscribe while in the event's voice channel")
+                    await interaction.followup.send(content=f"You're in {self.event.voice_channel.mention}, so you'd be resubscribed right away. "
+                                                            f"Leave it to unsubscribe from {self.event}.",
+                                                    ephemeral=True)
+                    return
                 logger.info(f'[{self.event}] {interaction.user.name} unsubscribed')
                 participant.subscribed = False
                 if await self.event.cancel_if_everyone_unsubscribed():

@@ -218,7 +218,7 @@ After the event is created, the bot posts a message with these buttons:
 |--------|--------------|
 | **Start Event / End Event** | Starts the event manually, then changes to an End button. It can be pressed from 30 minutes before the start time. Events also start automatically when every participant joins the voice channel, and end when everyone leaves, or when at least half of 4 or more attendees (or all but 5 of more than 10) have been gone for over 5 minutes. Events at a [typed location](#locations) start at their start time and end when their duration has passed. |
 | **End and Forget** | Ends the event, and the bot stops tracking it. |
-| **Unsubscribe / Resubscribe** | Stops the bot from mentioning you about this event. Press it again to resubscribe. Joining the voice channel while the event is running also resubscribes you. |
+| **Unsubscribe / Resubscribe** | Stops the bot from mentioning you about this event. Press it again to resubscribe. Joining the voice channel while the event is running also resubscribes you, so you can't unsubscribe while you're in it. |
 | **Reschedule Event** | Restarts availability collection with the same participants. |
 | **Cancel Event** | Cancels the event. |
 
