@@ -48,6 +48,7 @@ commands.add_field(name="availability",
                    inline=False)
 commands.add_field(name="cutoff",
                    value="Set how many hours past midnight your Full Availability extends to (-6 to 23, default 0). Negative ends it before midnight, e.g. -2 is 10 PM."
+                   "\nMidnight is in Eastern Time, since Discord doesn't tell bots your timezone. Outside Eastern Time, add your offset so it ends at your midnight: 1 for Central, 2 for Mountain, 3 for Pacific, -1 for Atlantic."
                    "\nLeave it blank to go back to the default.",
                    inline=False)
 commands.add_field(name="tts",

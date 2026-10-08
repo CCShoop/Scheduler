@@ -52,6 +52,17 @@ sudo apt install python3-dev cmake build-essential   # needed to build pyopenjta
 python3 -m pip install pyopenjtalk           # Japanese piper voices
 ```
 
+Each piper voice needs all of these:
+
+1. **piper-tts**, installed for the Python that runs the bot.
+2. **Both of the voice's files in the same folder:** the model (`en_US-lessac-medium.onnx`) and its config (`en_US-lessac-medium.onnx.json`). `python3 -m piper.download_voices` downloads both. If you download from Hugging Face, get the `.onnx.json` file too.
+3. **`PIPER_MODEL_EN` or `PIPER_MODEL_JP` in `.env`**, set to the `.onnx` file. A full path is safest. A relative path such as `piper/en_US-lessac-medium.onnx` is read from the folder the bot is started in. A `piper/` folder in the project is ignored by git.
+4. **For Japanese voices, pyopenjtalk**, installed for the same Python.
+5. **ffmpeg, libopus, and voice support** (`discord.py[voice]`, from `requirements.txt`), which every engine needs.
+6. **Connect and Speak permissions** for the bot in the event channels.
+
+`/tts` checks 1 to 5 before switching, and says what's missing. Missing permissions only show up as errors in the log when an announcement fails. So does a missing pyopenjtalk, if piper runs from a separate install on `PATH` instead of the bot's Python.
+
 Install piper-tts and pyopenjtalk with the same Python that runs the bot, which is why these use `python3 -m pip`. The bot runs piper through that Python, so the `piper` command doesn't need to be on `PATH`. If `/tts` says piper is missing, it names the Python the bot is running, and you can install piper-tts with that one.
 
 `pip install pyopenjtalk` compiles it from source, which needs Python's development headers, `cmake`, and a C++ compiler. `python3-dev` matches the system's default Python. If the bot runs on a different Python version, install that version's headers instead, such as `python3.12-dev`.
@@ -84,7 +95,7 @@ When the bot's status changes to *Watching for event scheduling commands*, it's 
 
 To stop the bot, press `Ctrl+C` or send it `SIGTERM`. Before it exits, it saves every event and disables the buttons on its messages. On the next start, it reloads the saved events and continues where it left off.
 
-> **Timezone:** Typed times are read as Eastern Time, and the bot uses the host machine's clock. Run the bot on a machine set to Eastern Time so the times line up.
+> **Timezone:** Typed times are read as Eastern Time, and the bot uses the host machine's clock. Run the bot on a machine set to Eastern Time so the times line up. Discord doesn't tell bots what timezone a user is in, so Full Availability ends at midnight Eastern Time for everyone unless they change it with [`/cutoff`](#other-commands).
 
 ---
 
@@ -153,7 +164,7 @@ Use this command when you already know the time. It takes the same options as `/
 | `/availability` | Show everyone's availability for an event in the current channel. |
 | `/listevents`   | List every event the bot is managing in this server. |
 | `/listmyevents` | List every event you're a participant in. |
-| `/cutoff`       | Set how many hours past midnight your **Full Availability** extends to, from -6 to 23. Negative numbers end it before midnight to match an earlier bedtime, so `-2` means 10 PM. The default is 0, which means midnight. Leave the number blank to go back to the default. The setting is yours alone and applies in every server. It's deleted if you no longer share a server with the bot. |
+| `/cutoff`       | Set how many hours past midnight your **Full Availability** extends to, from -6 to 23. Negative numbers end it before midnight to match an earlier bedtime, so `-2` means 10 PM. The default is 0, which means midnight. Hours are counted from midnight Eastern Time, the bot's timezone, because Discord doesn't tell bots what timezone you're in. If you live somewhere else, add your offset from Eastern Time so it ends at your midnight: `1` for Central, `2` for Mountain, `3` for Pacific, or `-1` for Atlantic. Leave the number blank to go back to the default. The setting is yours alone and applies in every server. It's deleted if you no longer share a server with the bot. |
 | `/tts`          | Choose the text-to-speech engine for this server's [voice announcements](#voice-announcements): `espeak-ng`, `piper-en`, `piper-jp`, or `none` to turn them off. The piper options show their voice's language. Anyone can change it, and the bot posts who changed it in the channel. |
 | `/help`         | Show the built-in help. |
 
@@ -182,7 +193,7 @@ The availability message has these buttons:
 | Button | What it does |
 |--------|--------------|
 | **Respond** | Opens a form for entering when you're free. |
-| **Full Availability (Today)** | Marks you as available from now until midnight, or the time you set with `/cutoff`. If that time has already passed today, the bot tells you instead. If someone else enters availability later than that, yours is extended to match. |
+| **Full Availability (Today)** | Marks you as available from now until midnight Eastern Time, or the time you set with `/cutoff`. Discord shows times in your own timezone, so outside Eastern Time this can look like it ends early, e.g. at 11 PM in Central Time. Use `/cutoff` to move it to your midnight. If that time has already passed today, or is too soon to fit the event starting at least 30 minutes from now, the bot tells you instead. If someone else enters availability later than that, yours is extended to match. |
 | **Use Existing Availability** | Copies your availability from another event you're in. If you're in more than one, choose which event to copy from. |
 | **Unsubscribe / Resubscribe** | Stops the bot from mentioning you. You're still a participant. Press it again to resubscribe. Your status shows in the availability message. |
 | **Cancel Scheduling** | Cancels the event, with an optional reason. |
@@ -207,6 +218,8 @@ Time ranges accept several formats:
 | `clear` | Remove your availability for the chosen date |
 | `clear x3` | Remove your availability for the chosen date and the next two days |
 | `none` | Remove all of your availability |
+
+Times that end too soon to fit the event, which starts at least 30 minutes from now, aren't saved. The bot tells you which ones it skipped, and whether you still need to respond.
 
 If you're in several events, time taken up by a created event is automatically removed from your availability in the other events. It's restored if that event is cancelled or ends.
 

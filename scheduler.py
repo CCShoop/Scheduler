@@ -20,7 +20,7 @@ from libs.persistence import Persistence
 import libs.participant as participant_lib
 import libs.announcer as announcer_lib
 from libs.announcer import Announcer
-from libs.participant import Participant, TimeBlock, print_date_time, print_time_until
+from libs.participant import Participant, TimeBlock, print_date_time, print_time, print_time_until
 from libs.help import HELP_EMBEDS
 from server import Server
 
@@ -1403,6 +1403,20 @@ class Event:
         if self.is_external or self.voice_channel is None:
             return
         announcer.announce(self.guild, self.voice_channel, self.name, action)
+
+    @property
+    def earliest_usable_end(self) -> datetime:
+        """
+        The earliest a participant's availability can end and still fit the event,
+        which starts at least START_TIME_DELAY from now.
+        """
+        return now() + timedelta(minutes=START_TIME_DELAY) + self.scheduled_duration
+
+    def get_too_soon_message(self, ends: str) -> str:
+        """Explains that availability ending as described is too soon to fit the event."""
+        duration = get_time_str_from_minutes(int(self.scheduled_duration.total_seconds() // 60))
+        return (f"{ends}. That's too soon for {self}, which lasts {duration} "
+                f"and starts at least {START_TIME_DELAY} minutes from now.")
 
     def in_voice_channel_during_event(self, participant: Participant) -> bool:
         """Indicates whether the participant is in the voice channel while the event is running, which resubscribes them."""
@@ -3339,7 +3353,7 @@ class CancelModal(Modal):
         description = "Adds Schedule Again and Forget buttons to the cancel message"
         if self.occurrences is not None:
             description += " when every occurrence is cancelled"
-        self.add_item(Label(text="Offer Schedule Again", description=description, component=self.schedule_again))
+        self.add_item(Label(text="Schedule Again", description=description, component=self.schedule_again))
 
     async def on_submit(self, interaction: Interaction) -> None:
         if await respond_if_cancelled(self.event, interaction):
@@ -3399,12 +3413,21 @@ class AvailabilityModal(Modal):
             return
         await interaction.response.defer(ephemeral=True)
         embed = None
+        content = None
         # Participant availability
         avail_string = f'{self.timeslot.value} {self.timezone.value}'
         try:
             logger.info(f'[{self.event}] Received availability from {interaction.user.name}')
             self.participant.note = self.note.value
             self.participant.set_specific_availability(avail_string, self.date.value)
+            # Times too soon for the event would be dropped without the participant knowing
+            too_soon = self.participant.remove_availability_ending_before(self.event.earliest_usable_end)
+            if too_soon:
+                logger.info(f"[{self.event}] Dropped {len(too_soon)} timeblock(s) from {interaction.user.name} that end too soon for the event")
+                ends = ", ".join(f"{print_time(timeblock.start_time)}-{print_time(timeblock.end_time)}" for timeblock in too_soon)
+                content = self.event.get_too_soon_message(f"These times weren't saved because they end too soon: {ends}")
+                if not self.participant.availability:
+                    content += " You have no other availability for it, so you still need to respond."
             self.participant.confirm_answered(duration=self.event.duration)
             embed = get_participants_other_unanswered_events_embed(self.event, self.participant)
             remove_times_from_availabilities_for_events()
@@ -3414,9 +3437,11 @@ class AvailabilityModal(Modal):
                           color=Color.red(),
                           description=e.__str__())
             logger.info(f"[{self.event}] Failure setting specific availability: {e}")
-        if embed is not None:
-            await interaction.followup.send(embed=embed,
-                                            ephemeral=True)
+        if content is not None or embed is not None:
+            kwargs = {"content": content} if content is not None else {}
+            if embed is not None:
+                kwargs["embed"] = embed
+            await interaction.followup.send(**kwargs, ephemeral=True)
 
     async def on_error(self, interaction: Interaction, error: Exception) -> None:
         await interaction.response.send_message(f"Error getting availability: {error}", ephemeral=True)
@@ -3523,6 +3548,16 @@ class AvailabilityButtons(View):
             participant.subscribed = True
             # Participant has full availability
             if not participant.full_availability_flag:
+                # Too short a window would be dropped by the next update without the participant knowing
+                end_time = participant.get_full_availability_end()
+                if now() < end_time < self.event.earliest_usable_end:
+                    logger.info(f"[{self.event}] {participant} selected full availability, but it's too short for the event")
+                    minutes_left = int((end_time - now()).total_seconds() // 60)
+                    cutoff = participant_lib.format_cutoff(participant_lib.get_cutoff(participant.member.id))
+                    content = self.event.get_too_soon_message(f"Your Full Availability today ends at {cutoff}, {minutes_left} minutes from now")
+                    content += " Extend your Full Availability past midnight with /cutoff, or enter later times with Respond."
+                    await interaction.followup.send(content=content, ephemeral=True)
+                    return
                 logger.info(f'[{self.event}] {participant} selected full availability')
                 try:
                     participant.set_full_availability()
@@ -4051,7 +4086,7 @@ class AfterButtons(View):
         return button
 
     async def remove(self):
-        logger.info(f"[{self.event}] forgotten")
+        logger.info(f"[{self.event}] schedule again buttons forgotten")
         client.schedule_again_events.remove(self)
         self.schedule_again_button.disabled = True
         self.forget_button.disabled = True

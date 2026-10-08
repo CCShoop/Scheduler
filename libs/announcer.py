@@ -256,6 +256,13 @@ def missing_requirements(engine: str) -> list[str]:
         model = get_piper_model(engine)
         if not model or not os.path.isfile(model):
             missing.append(f"a piper voice model (set {PIPER_MODEL_VARIABLES[engine]} to its .onnx file)")
+        # piper reads the voice's settings from the config downloaded with it
+        elif not os.path.isfile(f"{model}.json"):
+            missing.append(f"the voice's config file ({os.path.basename(model)}.json, which goes in the same folder as the .onnx file)")
+        # Japanese voices need pyopenjtalk, which can only be checked when piper runs with the bot's Python
+        elif (get_language_family(engine) == "ja" and get_piper_command() == [sys.executable, "-m", "piper"]
+              and importlib.util.find_spec("pyopenjtalk") is None):
+            missing.append(f"pyopenjtalk for Japanese voices (install it with {sys.executable} -m pip install pyopenjtalk)")
     return missing
 
 

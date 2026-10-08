@@ -171,6 +171,23 @@ class TestMissingRequirements:
         model.write_bytes(b"")
         monkeypatch.setenv("PIPER_MODEL_EN", str(model))
         assert not any("PIPER_MODEL_EN" in item for item in announcer_lib.missing_requirements(PIPER_EN))
+        # Without the config next to it
+        assert any("voice.onnx.json" in item for item in announcer_lib.missing_requirements(PIPER_EN))
+        (tmp_path / "voice.onnx.json").write_text("{}", encoding="utf-8")
+        assert not any("voice.onnx.json" in item for item in announcer_lib.missing_requirements(PIPER_EN))
+
+    def test_japanese_voice_needs_pyopenjtalk(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("PIPER_MODEL_JP", str(write_voice(tmp_path, "japanese", "ja", "Japanese")))
+        installed = {"piper"}
+        monkeypatch.setattr(announcer_lib.importlib.util, "find_spec", lambda name: object() if name in installed else None)
+        assert any("pyopenjtalk" in item for item in announcer_lib.missing_requirements(PIPER_JP))
+        installed.add("pyopenjtalk")
+        assert not any("pyopenjtalk" in item for item in announcer_lib.missing_requirements(PIPER_JP))
+
+    def test_english_voice_does_not_need_pyopenjtalk(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("PIPER_MODEL_EN", str(write_voice(tmp_path, "english", "en", "English")))
+        monkeypatch.setattr(announcer_lib.importlib.util, "find_spec", lambda name: object() if name == "piper" else None)
+        assert not any("pyopenjtalk" in item for item in announcer_lib.missing_requirements(PIPER_EN))
 
     def test_piper_runs_with_the_bots_python_when_installed_there(self, monkeypatch):
         monkeypatch.setattr(announcer_lib.importlib.util, "find_spec", lambda name: object())

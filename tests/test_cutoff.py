@@ -1,9 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 
-from libs.participant import DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF
+from libs.participant import DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF, TimeBlock
 from fakes import FakeGuild, at, make_member, run
 from test_lifecycle import FakeInteraction
 
@@ -221,9 +221,99 @@ class TestNegativeCutoff:
         assert a.availability == []
 
 
+class TestFullAvailabilityTooShort:
+    def press(self, env, event, member):
+        async def click():
+            buttons = env.sched.AvailabilityButtons(event)
+            interaction = FakeInteraction(member)
+            await buttons.full_button.callback(interaction)
+            return interaction
+        return run(click())
+
+    def ends_in(self, env, monkeypatch, participant, minutes):
+        end_time = env.sched.now() + timedelta(minutes=minutes)
+        monkeypatch.setattr(participant, "get_full_availability_end", lambda date=None: end_time)
+
+    def test_refuses_window_too_short_for_the_event(self, env, monkeypatch):
+        a = env.make_participant("a")
+        # Pressed at 11:48 PM with a midnight cutoff
+        self.ends_in(env, monkeypatch, a, 12)
+        event = env.make_event([a], duration=timedelta(minutes=30))
+        interaction = self.press(env, event, a.member)
+        content = interaction.followups[0]["content"]
+        assert "ends at midnight, 12 minutes from now" in content and "/cutoff" in content
+        assert a.availability == []
+        assert not a.full_availability_flag and not a.answered
+
+    def test_counts_the_start_delay(self, env, monkeypatch):
+        a = env.make_participant("a")
+        # Long enough for the 30 minute event now, but not one starting START_TIME_DELAY from now
+        self.ends_in(env, monkeypatch, a, env.sched.START_TIME_DELAY + 29)
+        event = env.make_event([a], duration=timedelta(minutes=30))
+        interaction = self.press(env, event, a.member)
+        assert "too soon" in interaction.followups[0]["content"]
+
+    def test_accepts_window_long_enough(self, env, monkeypatch):
+        a = env.make_participant("a")
+        self.ends_in(env, monkeypatch, a, env.sched.START_TIME_DELAY + 30)
+        event = env.make_event([a, env.make_participant("b")], duration=timedelta(minutes=30))
+        self.press(env, event, a.member)
+        assert a.full_availability_flag and a.answered
+
+
 def test_every_command_and_option_description_fits_discord(sched):
     # Discord rejects the whole command sync if any description is over 100 characters
     for command in sched.client.tree.get_commands():
         assert len(command.description) <= 100, command.name
         for parameter in command.parameters:
             assert len(parameter.description) <= 100, f"{command.name} {parameter.name}"
+
+
+class TestRespondTooSoon:
+    """The Respond form reports times that end too soon to fit the event, instead of dropping them silently."""
+
+    def submit(self, env, monkeypatch, event, participant, blocks):
+        def fake_set_specific_availability(avail_string, date_string):
+            participant.availability.extend(blocks)
+            participant.answered = True
+
+        monkeypatch.setattr(participant, "set_specific_availability", fake_set_specific_availability)
+
+        async def go():
+            modal = env.sched.AvailabilityModal(event, participant, title="Respond")
+            interaction = FakeInteraction(participant.member)
+            await modal.on_submit(interaction)
+            return interaction
+        return run(go())
+
+    def test_reports_and_drops_times_ending_too_soon(self, env, monkeypatch):
+        now = env.sched.now()
+        a = env.make_participant("a")
+        event = env.make_event([a, env.make_participant("b")], duration=timedelta(minutes=30))
+        too_soon = TimeBlock(now, now + timedelta(minutes=45))
+        later = TimeBlock(at(1, 20), at(1, 22))
+        interaction = self.submit(env, monkeypatch, event, a, [too_soon, later])
+        content = interaction.followups[0]["content"]
+        assert "weren't saved because they end too soon" in content
+        assert f"<t:{int(too_soon.end_time.timestamp())}:t>" in content
+        assert "still need to respond" not in content
+        assert [(tb.start_time, tb.end_time) for tb in a.availability] == [(at(1, 20), at(1, 22))]
+        assert a.answered
+
+    def test_says_when_nothing_usable_is_left(self, env, monkeypatch):
+        now = env.sched.now()
+        a = env.make_participant("a")
+        event = env.make_event([a, env.make_participant("b")], duration=timedelta(minutes=30))
+        interaction = self.submit(env, monkeypatch, event, a, [TimeBlock(now, now + timedelta(minutes=45))])
+        assert "still need to respond" in interaction.followups[0]["content"]
+        assert a.availability == []
+        assert not a.answered
+
+    def test_times_that_fit_are_saved_without_a_message(self, env, monkeypatch):
+        now = env.sched.now()
+        a = env.make_participant("a")
+        event = env.make_event([a, env.make_participant("b")], duration=timedelta(minutes=30))
+        fits = TimeBlock(now, now + timedelta(minutes=env.sched.START_TIME_DELAY + 30))
+        interaction = self.submit(env, monkeypatch, event, a, [fits])
+        assert interaction.followups == []
+        assert a.answered

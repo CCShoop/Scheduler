@@ -274,6 +274,21 @@ class Participant:
                 return True
         return False
 
+    def get_full_availability_end(self, date: datetime = None) -> datetime:
+        """
+        Gets when Full Availability on the date ends, at the user's cutoff past that day's midnight.
+
+        Arguments
+        ----------
+        date: :class:`datetime`
+            Optional. The date of the Full Availability.
+            Default: Today
+        """
+        cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
+        day = date or cur_time
+        midnight = cur_time.replace(day=day.day, month=day.month, year=day.year, hour=0, minute=0)
+        return midnight + timedelta(days=1, hours=get_cutoff(self.member.id))
+
     def set_full_availability(self, date: datetime = None, end_time: datetime = None) -> None:
         """
         Sets the participant to have full availability.
@@ -299,15 +314,10 @@ class Participant:
             if start_time.date() != cur_time.date():
                 start_time = start_time.replace(hour=0, minute=0)
             if not end_time:
-                cutoff = get_cutoff(self.member.id)
                 # Midnight at the end of the day, shifted by the cutoff
-                end_time = cur_time.replace(day=day,
-                                            month=month,
-                                            year=year,
-                                            hour=0,
-                                            minute=0)
-                end_time += timedelta(days=1, hours=cutoff)
+                end_time = self.get_full_availability_end(start_time)
                 if end_time <= start_time:
+                    cutoff = get_cutoff(self.member.id)
                     raise Exception(f"Your Full Availability ends at {format_cutoff(cutoff)} (set with /cutoff), which has already passed.")
             self.add_to_availability(TimeBlock(start_time, end_time))
             self.answered = True
@@ -315,6 +325,19 @@ class Participant:
             self.clean_availability()
         except Exception as e:
             raise e
+
+    def remove_availability_ending_before(self, time: datetime) -> list[TimeBlock]:
+        """
+        Removes the participant's availability that ends before the time.
+
+        Returns
+        -------
+        removed: :class:`list[TimeBlock]`
+            The removed timeblocks.
+        """
+        removed = [timeblock for timeblock in self.availability if timeblock.end_time < time]
+        self.availability = [timeblock for timeblock in self.availability if timeblock.end_time >= time]
+        return removed
 
     def set_no_availability(self, date: date = None) -> None:
         """
