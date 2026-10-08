@@ -378,7 +378,7 @@ class SchedulerClient(Client):
         self.loaded_json = False
         self.server_is_running = False
         self.server = Server()
-        self.server.callback = self.schedule_from_dict
+        self.server.callback = self.handle_packet
         self.events = []
         self.schedule_again_events = []
         self.cur_presence_index = -1
@@ -389,6 +389,47 @@ class SchedulerClient(Client):
         """
         self.server_is_running = True
         asyncio.create_task(self.server.start_server())
+
+    async def handle_packet(self, data: dict) -> None:
+        """
+        The server callback: routes a json packet by its "type".
+
+        "schedule" (the default when "type" is missing) collects availability like /schedule;
+        "create" makes the event at a given start time like /create.
+        """
+        packet_type = data.get("type", "schedule")
+        if packet_type == "schedule":
+            await self.schedule_from_dict(data)
+        elif packet_type == "create":
+            await self.create_from_dict(data)
+        else:
+            raise Exception(f"unknown packet type \"{packet_type}\"")
+
+    async def create_from_dict(self, data: dict) -> None:
+        """
+        The callback to process an event creation json packet.
+
+        Arguments
+        ---------
+        data: :class:`dict`
+            The json packet with the information necessary for creating an event at a set time.
+        """
+        logger.info(f"[{data['name']}] Create from dict triggered")
+        guild = self.get_guild(data["guild_id"])
+        text_channel = guild.get_channel(data["text_channel_id"])
+        voice_channel = guild.get_channel(data["voice_channel_id"]) if data.get("voice_channel_id") else None
+        await create(event_name=data["name"],
+                     guild=guild,
+                     text_channel=text_channel,
+                     voice_channel=voice_channel,
+                     location=data.get("location"),
+                     start_time=data["start_time"],
+                     scheduler_id=data["scheduler_id"],
+                     image_url=data["image_url"],
+                     include_exclude=data["include_exclude"],
+                     usernames=data["usernames"],
+                     roles=data["roles"],
+                     duration=data["duration"])
 
     async def schedule_from_dict(self, data: dict) -> None:
         """

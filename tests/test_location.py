@@ -1,3 +1,4 @@
+import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -240,6 +241,30 @@ class TestCreateAndSchedule:
         }))
         (event,) = env.sched.client.events
         assert event.location == "123 Main St"
+
+    def test_create_packet_makes_event_at_start_time(self, env, monkeypatch):
+        a = env.make_participant("a")
+        monkeypatch.setattr(env.sched.client, "get_guild", lambda guild_id: env.guild)
+        start = at(1, 19)
+        run(env.sched.client.handle_packet({
+            "type": "create", "name": "Range", "guild_id": env.guild.id, "text_channel_id": env.text_channel.id,
+            "location": "123 Main St", "scheduler_id": a.member.id, "start_time": start.isoformat(),
+            "image_url": None, "include_exclude": "INCLUDE", "usernames": [a], "roles": None, "duration": 60,
+        }))
+        (event,) = env.sched.client.events
+        assert event.start_times == [start] and event.location == "123 Main St"
+
+    @pytest.mark.parametrize("packet_type", ["schedule", None])
+    def test_schedule_packet_and_untyped_packet_start_scheduling(self, env, monkeypatch, packet_type):
+        called = []
+        monkeypatch.setattr(env.sched.client, "schedule_from_dict", lambda data: called.append(data) or asyncio.sleep(0))
+        data = {"name": "Game Night"} if packet_type is None else {"type": packet_type, "name": "Game Night"}
+        run(env.sched.client.handle_packet(data))
+        assert called == [data]
+
+    def test_unknown_packet_type_is_rejected(self, env):
+        with pytest.raises(Exception, match="unknown packet type"):
+            run(env.sched.client.handle_packet({"type": "delete", "name": "x"}))
 
 
 class TestPersistence:

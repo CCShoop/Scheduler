@@ -222,10 +222,15 @@ Only the user set as `OWNER_ID` can run these. Send them to the bot as direct me
 
 ## Scheduling from another program
 
-The bot listens for TCP connections on `HOST:PORT` from `.env`. Send a JSON object to start scheduling an event, just as `/schedule` would:
+The bot listens for TCP connections on `HOST:PORT` from `.env`. Send a JSON object whose `type` says what to do.
+
+### `"type": "schedule"`: find a time that works for everyone
+
+Starts scheduling an event, just as `/schedule` would:
 
 ```json
 {
+  "type": "schedule",
   "name": "Game Night",
   "guild_id": 123456789012345678,
   "text_channel_id": 123456789012345678,
@@ -241,7 +246,35 @@ The bot listens for TCP connections on `HOST:PORT` from `.env`. Send a JSON obje
 }
 ```
 
-Every field is required except `location` and `voice_channel_id`. Set `location` to a string, such as an address, to hold the event there instead of in a voice channel. Without either one, the event uses the server's first voice channel. The bot replies `valid` if the request was accepted, `invalid JSON` if the message couldn't be parsed, or `error: <message>` if scheduling failed.
+A packet without a `type` is treated as `schedule`.
+
+### `"type": "create"`: create an event at a time you choose
+
+Creates the event right away, just as `/create` would:
+
+```json
+{
+  "type": "create",
+  "name": "Range Night",
+  "guild_id": 123456789012345678,
+  "text_channel_id": 123456789012345678,
+  "voice_channel_id": null,
+  "location": "123 Main St",
+  "scheduler_id": 123456789012345678,
+  "start_time": "2026-10-11T19:00:00-04:00",
+  "image_url": null,
+  "include_exclude": "INCLUDE",
+  "usernames": "123456789012345678, 234567890123456789",
+  "roles": null,
+  "duration": 60
+}
+```
+
+`start_time` takes the same formats as `/create`: a full ISO date and time (an offset such as `-04:00` is recommended), or a time such as `2200`.
+
+### Both types
+
+Every field is required except `location` and `voice_channel_id`. Set `location` to a string, such as an address, to hold the event there instead of in a voice channel. Without either one, the event uses the server's first voice channel. The bot replies `valid` if the request was accepted, `invalid JSON` if the message couldn't be parsed, or `error: <message>` if scheduling failed or the `type` is unknown.
 
 Example in Python:
 
