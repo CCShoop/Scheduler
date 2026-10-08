@@ -396,6 +396,42 @@ class TestUpdateWhileCreated:
         assert not event.started
 
 
+class TestCancelIfMissed:
+    def missed_start(self, env, event, extra=timedelta(minutes=1)):
+        return env.sched.now() - event.scheduled_duration - env.sched.MISSED_OCCURRENCE_GRACE - extra
+
+    def test_keeps_occurrence_within_grace_period(self, env):
+        event, _ = make_created_event(env)
+        event.start_times[0] = self.missed_start(env, event, extra=-timedelta(minutes=1))
+        assert not run(event.cancel_if_missed())
+        assert event in env.sched.client.events
+
+    def test_cancels_only_occurrence(self, env):
+        event, (scheduled_event,) = make_created_event(env)
+        event.start_times[0] = self.missed_start(env, event)
+        run(event.update())
+        assert event.cancelled
+        assert scheduled_event.deleted
+        assert event not in env.sched.client.events
+        assert env.text_channel.sent[-1]["embed"].title == "Event Cancelled"
+
+    def test_cancels_only_current_occurrence_of_multi_event(self, env):
+        event, scheduled_events = make_created_event(env, days=(1, 2))
+        event.start_times[0] = self.missed_start(env, event)
+        run(event.update())
+        assert not event.cancelled
+        assert scheduled_events[0].deleted
+        assert event.scheduled_events == [scheduled_events[1]]
+        assert event.start_times == [at(2, 20)]
+        assert env.text_channel.sent[-1]["embed"].title == "Occurrence Cancelled"
+
+    def test_started_occurrence_is_not_cancelled(self, env):
+        event, _ = make_created_event(env, started=True)
+        event.start_times[0] = self.missed_start(env, event)
+        assert not run(event.cancel_if_missed())
+        assert not event.cancelled
+
+
 class TestAutoCancelWhenAllUnsubscribed:
     """Regression: auto cancelling after everyone unsubscribes must not send another availability message."""
 

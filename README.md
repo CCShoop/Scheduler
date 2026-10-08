@@ -198,6 +198,8 @@ After the event is created, the bot posts a message with these buttons:
 
 The bot mentions participants 15 minutes before the event starts.
 
+If an event hasn't started by an hour after its scheduled end time, the bot cancels it. For a multi-event, only that occurrence is cancelled and the rest stay scheduled.
+
 ### Schedule Again
 
 When an event ends or is cancelled, the bot shows a **Schedule Again** button for about a week. It reuses the location and participants, and lets you change the name, duration, image URL, and start time:

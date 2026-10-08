@@ -88,6 +88,9 @@ SCHEDULE_AGAIN_TIMEOUT: timedelta = timedelta(days=SCHEDULE_AGAIN_TIMEOUT_DAYS)
 RESEND_INTERVAL_HOURS: int = 23
 RESEND_INTERVAL: timedelta = timedelta(hours=RESEND_INTERVAL_HOURS)
 
+# Time after an occurrence's end time to cancel it if it was never started
+MISSED_OCCURRENCE_GRACE: timedelta = timedelta(hours=1)
+
 
 def now() -> datetime:
     return datetime.now().astimezone().replace(second=0, microsecond=0)
@@ -821,6 +824,8 @@ class Event:
                 self.remove()
                 return
             if not self.started:
+                if await self.cancel_if_missed():
+                    return
                 # Recreate the event if it was manually cancelled
                 if self.scheduled_events[0].status == EventStatus.cancelled:
                     # make_scheduled_events only creates trailing missing guild events,
@@ -2112,6 +2117,28 @@ class Event:
             await self.cancel(reason=reason, canceller="Event Scheduler")
         return True
 
+    async def cancel_if_missed(self) -> bool:
+        """
+        Cancels the current occurrence if it was never started by MISSED_OCCURRENCE_GRACE after its end time.
+        Cancels the whole event if it is the only remaining occurrence.
+
+        Returns
+        -------
+        cancelled: :class:`bool`
+            True if the occurrence was cancelled.
+        """
+        if self.cancelled or self.started or not self.scheduled_events:
+            return False
+        if now() < self.start_times[0] + self.scheduled_duration + MISSED_OCCURRENCE_GRACE:
+            return False
+        reason = "It was never started."
+        logger.info(f"[{self}] Cancelling occurrence starting {self.start_times[0]}, it was never started")
+        if self.on_last_occurrence:
+            await self.cancel(reason=reason, canceller="Event Scheduler", schedule_again=True)
+        else:
+            await self.cancel_occurrences([self.scheduled_events[0]], reason=reason, canceller="Event Scheduler")
+        return True
+
     async def cancel_occurrences(self, occurrences: list[ScheduledEvent], reason: Optional[str] = "", canceller: Optional[str] = "",
                                  schedule_again: Optional[bool] = False) -> None:
         """
@@ -2352,7 +2379,7 @@ class Event:
     def get_limited_name(self, length: int) -> str:
         if length < 3:
             raise Exception("Invalid name length; must be at least 3.")
-        return self.name if len(self.name) <= length else f"{self.name[:length-3]}..."
+        return self.name if len(self.name) <= length else f"{self.name[:length - 3]}..."
 
     @property
     def subscribed_participants(self) -> list[Participant]:
