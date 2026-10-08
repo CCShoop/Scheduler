@@ -324,6 +324,7 @@ The server has no authentication. Keep `HOST` set to `127.0.0.1`, or put it behi
 |------|----------|
 | `data.json` | Saved events, rewritten every second. The bot reads it on startup to resume events. To start fresh, delete it while the bot is stopped. |
 | `scheduler.log` | The full log. The same output is printed to the console. |
+| `<event name>.png` | Each event's downloaded image, used for its Discord event. Every 10 minutes, the bot deletes `.png` files in its folder that no event or [Schedule Again](#schedule-again) button uses, if they're more than 10 minutes old. Don't keep other `.png` files in the bot's folder. |
 
 ## Running the tests
 

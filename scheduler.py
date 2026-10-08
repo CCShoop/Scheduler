@@ -109,8 +109,44 @@ ATTENDEES_LEFT_GRACE: timedelta = timedelta(minutes=5)
 START_BUTTON_LEAD: timedelta = timedelta(minutes=max(REMINDER_TIME_MINUTES, START_TIME_DELAY))
 
 
+# Time between cleanups of image files left behind by events the bot no longer has
+IMAGE_CLEANUP_INTERVAL: timedelta = timedelta(minutes=10)
+# Image files newer than this are kept, since /create downloads an event's image before adding the event
+IMAGE_CLEANUP_MIN_AGE: timedelta = timedelta(minutes=10)
+
+
 def now() -> datetime:
     return datetime.now().astimezone().replace(second=0, microsecond=0)
+
+
+# When images were last cleaned up, None until the first cleanup
+images_cleaned_up_at: Optional[datetime] = None
+
+
+def clean_up_images() -> None:
+    """
+    Deletes image files every IMAGE_CLEANUP_INTERVAL that don't belong to an event or schedule again event,
+    and are older than IMAGE_CLEANUP_MIN_AGE.
+    """
+    global images_cleaned_up_at
+    current_time = datetime.now().astimezone()
+    if images_cleaned_up_at is not None and current_time - images_cleaned_up_at < IMAGE_CLEANUP_INTERVAL:
+        return
+    images_cleaned_up_at = current_time
+    events = client.events + [after_buttons.event for after_buttons in client.schedule_again_events]
+    # Compared by path rather than name, since an event keeps its image path when renamed
+    kept_paths = {os.path.abspath(event.image_path) for event in events}
+    for file_name in os.listdir('.'):
+        if not file_name.lower().endswith('.png') or os.path.abspath(file_name) in kept_paths:
+            continue
+        try:
+            modified_at = datetime.fromtimestamp(os.path.getmtime(file_name)).astimezone()
+            if current_time - modified_at < IMAGE_CLEANUP_MIN_AGE:
+                continue
+            os.remove(file_name)
+            logger.info(f"Deleted image file {file_name}, which no event uses")
+        except Exception as e:
+            logger.error(f"Error deleting unused image file {file_name}: {e}")
 
 
 def save() -> None:
@@ -1608,8 +1644,10 @@ class Event:
                 async with session.get(self.image_url) as response:
                     logger.info(f"[{self}] Retrieving image from {self.image_url}")
                     if response.status == 200:
+                        # Downloaded before opening the file, so a partly written image is never on disk
+                        image = await response.read()
                         with open(self.image_path, 'wb') as file:
-                            file.write(await response.read())
+                            file.write(image)
                         logger.info(f"[{self}] Saved image")
                     else:
                         logger.error(f"[{self}] Request returned: {response.status}")
@@ -5399,6 +5437,10 @@ async def update():
                 await schedule_again_event.update()
             except Exception as e:
                 logger.exception(f"[{schedule_again_event.event}] Error during schedule again update: {e}")
+    try:
+        clean_up_images()
+    except Exception as e:
+        logger.exception(f"Error cleaning up images: {e}")
     try:
         save()
     except Exception as e:
