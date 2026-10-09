@@ -1168,8 +1168,9 @@ class Event:
         return self.get_names_string(subscribed_only=True, mention=True, not_in_voice_channel_only=True)
 
     def get_reminder_message_embed(self) -> Embed:
+        start_timestamp = int(self.start_times[0].timestamp())
         embed = Embed(title="Event Reminder!",
-                      description=f"{self} is scheduled to start in {get_time_str_from_minutes(self.mins_until_start)}.",
+                      description=f"{self} is scheduled to start <t:{start_timestamp}:R>.",
                       color=Color.orange())
         embed.timestamp = self.start_times[0]
         if self.image_url:
@@ -1214,8 +1215,9 @@ class Event:
     async def update_reminder_message(self) -> None:
         if self.reminder_message is not None:
             content = self.get_reminder_message_content()
+            embed = self.get_reminder_message_embed()
             try:
-                await self.reminder_message.edit(content=content)
+                await self.reminder_message.edit(content=content, embed=embed)
             except DiscordServerError as e:
                 logger.error(f"[{self}] Discord server error while editing reminder message: {e}")
             except Exception as e:

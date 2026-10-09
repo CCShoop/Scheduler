@@ -920,7 +920,10 @@ class TestUpdateWhileCreated:
         run(event.update())
         assert event.reminder_flag
         assert event.reminder_message is not None
-        assert env.text_channel.sent[-1]["embed"].title == "Event Reminder!"
+        embed = env.text_channel.sent[-1]["embed"]
+        assert embed.title == "Event Reminder!"
+        start_timestamp = int(event.start_times[0].timestamp())
+        assert f"<t:{start_timestamp}:R>" in embed.description
 
     def test_no_reminder_when_everyone_is_already_in_voice_channel(self, env):
         event, _ = make_created_event(env)
