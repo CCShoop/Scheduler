@@ -2,6 +2,7 @@
 
 import os
 import json
+import codecs
 import asyncio
 from dotenv import load_dotenv
 
@@ -45,11 +46,20 @@ class Server:
 
     async def handle_client(self, reader, writer):
         buffer = ""
+        # Keeps a character split across reads until the rest of it arrives
+        decoder = codecs.getincrementaldecoder("utf-8")()
         while True:
             data = await reader.read(99999)
             if not data:
                 break
-            buffer += data.decode()
+            try:
+                buffer += decoder.decode(data)
+            except UnicodeDecodeError:
+                buffer = ""
+                decoder.reset()
+                writer.write("invalid JSON".encode())
+                await writer.drain()
+                continue
 
             # A message split across reads; wait for the rest
             if buffer.strip() == "" or json_incomplete(buffer):

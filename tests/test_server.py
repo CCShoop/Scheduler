@@ -7,7 +7,7 @@ from server import Server, json_incomplete
 from fakes import run
 
 
-async def exchange(server: Server, *chunks: str) -> str:
+async def exchange(server: Server, *chunks: "str | bytes") -> str:
     """
     Sends chunks to the server's client handler over a real local socket and returns everything it replied.
     Responses aren't delimited, so several of them arrive concatenated.
@@ -16,7 +16,7 @@ async def exchange(server: Server, *chunks: str) -> str:
     port = listener.sockets[0].getsockname()[1]
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
     for chunk in chunks:
-        writer.write(chunk.encode())
+        writer.write(chunk if isinstance(chunk, bytes) else chunk.encode())
         await writer.drain()
         # Give the server a chance to read each chunk on its own
         await asyncio.sleep(0.05)
@@ -108,6 +108,26 @@ def test_message_split_anywhere_is_reassembled(message, cut_after):
     server.callback = received.append
     assert run(exchange(server, cut_after, message[len(cut_after):])) == "valid"
     assert received == [json.loads(message)]
+
+
+@pytest.mark.parametrize("text", ["café", "🎮 night", "日本"])
+def test_message_split_inside_a_character_is_reassembled(text):
+    received = []
+    server = Server(host="127.0.0.1", port=0)
+    server.callback = received.append
+    message = json.dumps({"name": text}, ensure_ascii=False).encode()
+    # Cut after the first byte of the first multi-byte character
+    cut = next(i for i, byte in enumerate(message) if byte >= 0x80) + 1
+    assert run(exchange(server, message[:cut], message[cut:])) == "valid"
+    assert received == [{"name": text}]
+
+
+def test_invalid_utf8_is_rejected_and_buffer_reset():
+    received = []
+    server = Server(host="127.0.0.1", port=0)
+    server.callback = received.append
+    assert run(exchange(server, b'{"name": "\xff"}', json.dumps({"name": "after"}))) == "invalid JSONvalid"
+    assert received == [{"name": "after"}]
 
 
 @pytest.mark.parametrize("buffer, expected", [
