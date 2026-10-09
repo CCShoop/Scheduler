@@ -166,7 +166,7 @@ class TestPruning:
 
 
 class FixedNow:
-    """Pins datetime.now() in libs.participant to a time of day today."""
+    """Pins datetime.now() in libs.participant, and the scheduler's now(), to a time of day today."""
 
     @staticmethod
     def install(monkeypatch, sched, hour, minute=0):
@@ -178,6 +178,7 @@ class FixedNow:
                 return fixed
 
         monkeypatch.setattr(sched.participant_lib, "datetime", FixedDatetime)
+        monkeypatch.setattr(sched, "now", lambda: fixed)
         return fixed
 
 

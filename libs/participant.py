@@ -512,7 +512,9 @@ class Participant:
             start_time, part, end_time = timeblock.partition('-')
 
             # Start/end time keywords
-            if 'now' in start_time or 'cur' in start_time or 'curr' in start_time or 'current' in start_time:
+            # The current time is already in the bot's timezone, so the entered timezone doesn't shift it
+            start_is_now = 'now' in start_time or 'cur' in start_time or 'curr' in start_time or 'current' in start_time
+            if start_is_now:
                 start_time = datetime.now().astimezone().replace(second=0, microsecond=0).strftime("%H%M")
             if 'now' in end_time or 'cur' in end_time or 'curr' in end_time or 'current' in end_time:
                 raise Exception("Invalid end time provided by user: cannot use current time as end time")
@@ -535,7 +537,8 @@ class Participant:
                 start_hr = int(start_time_string[:2])
                 start_min = int(start_time_string[2:])
                 start_time = datetime(year, month, day, start_hr, start_min)
-                start_time += timedelta(hours=timezone_offset)
+                if not start_is_now:
+                    start_time += timedelta(hours=timezone_offset)
             # End time is midnight
             if end_time_string == '':
                 end_time = datetime(year, month, day) + timedelta(days=1)

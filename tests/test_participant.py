@@ -255,6 +255,15 @@ class TestSetSpecificAvailability:
         participant.set_specific_availability(f"8-11 {zone}", date_string(1))
         assert blocks(participant) == [(at(1, 8 + offset), at(1, 11 + offset))]
 
+    @pytest.mark.parametrize("zone", ["et", "pt", "at"])
+    @pytest.mark.parametrize("keyword", ["now", "current"])
+    def test_now_start_is_not_shifted_by_timezone(self, zone, keyword):
+        participant = make_participant()
+        before = datetime.now().astimezone().replace(second=0, microsecond=0)
+        participant.set_specific_availability(f"{keyword}- {zone}", date_string(0))
+        after = datetime.now().astimezone().replace(second=0, microsecond=0)
+        assert before <= participant.availability[0].start_time <= after
+
     def test_date_without_year(self):
         participant = make_participant()
         participant.set_specific_availability("8-11", date_string(1, with_year=False))
