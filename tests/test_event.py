@@ -87,6 +87,14 @@ class TestCompareAvailabilities:
         event.compare_availabilities()
         assert event.start_times == [occupying.start_times[0] + occupying.duration]
 
+    def test_avoids_later_occurrences_of_a_multi_event_in_the_same_voice_channel(self, env):
+        a = env.make_participant("a", [TimeBlock(at(2, 18), at(2, 23))])
+        occupying = env.make_event([env.make_participant("b")], multi_event=True, created=True,
+                                   start_times=[at(1, 18), at(2, 18)])
+        event = env.make_event([a])
+        event.compare_availabilities()
+        assert event.start_times == [at(2, 18) + occupying.duration]
+
     def test_does_nothing_once_created(self, env):
         a = env.make_participant("a", [TimeBlock(at(1, 18), at(1, 23))])
         event = env.make_event([a], created=True, start_times=[at(1, 20)])

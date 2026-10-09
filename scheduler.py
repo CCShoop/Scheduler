@@ -1048,11 +1048,12 @@ class Event:
 
         current_time = now() + timedelta(minutes=START_TIME_DELAY)
 
-        # Get events in the same location and then their timeblocks
+        # Get events in the same location and then their timeblocks, including every occurrence of a multi event
         conflicting_events = [event for event in client.events if event.same_location(self) and event.created]
         occupied_timeblocks = [
-            TimeBlock(start_time=event.start_times[0], end_time=event.start_times[0] + (event.duration if event.duration_minutes != 0 else timedelta(minutes=DEFAULT_EVENT_DURATION)))
+            TimeBlock(start_time=start_time, end_time=start_time + event.scheduled_duration)
             for event in conflicting_events
+            for start_time in event.start_times
         ]
 
         # Check if the voice channel is available in [START_TIME_DELAY] minutes
