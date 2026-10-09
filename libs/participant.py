@@ -449,11 +449,11 @@ class Participant:
         if 'clear' in avail_string:
             extend = 1
             if 'x' in avail_string:
-                clear, part, extend = avail_string.partition('x')
-                try:
-                    extend = int(extend)
-                except Exception as e:
-                    raise Exception(f"Invalid extension provided by user: {e}")
+                # The timezone follows the extension, e.g. "clear x3 et"
+                match = re.search(r"x\s*(\d+)", avail_string)
+                if match is None:
+                    raise Exception(f"Invalid extension provided by user: {avail_string}")
+                extend = int(match.group(1))
             extend_date = entered_date
             while extend > 0:
                 self.set_no_availability(extend_date)

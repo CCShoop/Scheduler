@@ -287,11 +287,19 @@ class TestSetSpecificAvailability:
         participant.set_specific_availability("clear", date_string(1))
         assert blocks(participant) == [(at(2, 8), at(2, 10))]
 
-    def test_clear_keyword_extension_clears_following_days(self):
+    # The availability modal appends the timezone field, which defaults to ET
+    @pytest.mark.parametrize("entered", ["clear x2", "clear x2 et", "clearx2 et", "clear x 2 pt"])
+    def test_clear_keyword_extension_clears_following_days(self, entered):
         participant = make_participant(availability=[TimeBlock(at(1, 8), at(1, 10)), TimeBlock(at(2, 8), at(2, 10)),
                                                      TimeBlock(at(3, 8), at(3, 10))])
-        participant.set_specific_availability("clear x2", date_string(1))
+        participant.set_specific_availability(entered, date_string(1))
         assert blocks(participant) == [(at(3, 8), at(3, 10))]
+
+    def test_clear_keyword_invalid_extension(self):
+        participant = make_participant(availability=[TimeBlock(at(1, 8), at(1, 10))])
+        with pytest.raises(Exception, match="Invalid extension"):
+            participant.set_specific_availability("clear xx et", date_string(1))
+        assert len(participant.availability) == 1
 
     def test_none_keyword_clears_everything(self):
         participant = make_participant(availability=[TimeBlock(at(1, 8), at(1, 10)), TimeBlock(at(2, 8), at(2, 10))])
