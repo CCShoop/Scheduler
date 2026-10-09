@@ -567,6 +567,48 @@ class TestJoinPrompt:
         assert "already a participant" in interaction.responses[0][1]["content"]
 
 
+class TestReuseAvailability:
+    def setup_events(self, env, monkeypatch, sources: int):
+        """A target event and `sources` other events that the same member answered."""
+        target_participant = env.make_participant("a")
+        member = target_participant.member
+        target = env.make_event([target_participant])
+        source_events = []
+        for index in range(sources):
+            answered = Participant(member=member, availability=[TimeBlock(at(1, 8 + index), at(1, 12))], answered=True)
+            source_events.append(env.make_event([answered]))
+        inputs = []
+
+        async def record_input(self, exclude=None):
+            inputs.append(self)
+
+        monkeypatch.setattr(env.sched.Event, "handle_input_received", record_input)
+        return target, target_participant, source_events, inputs
+
+    def test_single_existing_availability_updates_the_target_event(self, env, monkeypatch):
+        target, participant, (source,), inputs = self.setup_events(env, monkeypatch, sources=1)
+        press(availability_buttons(env, target).reuse_button.callback, participant.member)
+        assert blocks_of(participant) == [(at(1, 8), at(1, 12))]
+        assert inputs == [target]
+
+    def test_chosen_existing_availability_updates_the_target_event(self, env, monkeypatch):
+        target, participant, (first, second), inputs = self.setup_events(env, monkeypatch, sources=2)
+        interaction = press(availability_buttons(env, target).reuse_button.callback, participant.member)
+        view = interaction.followups[0]["view"]
+        assert isinstance(view, env.sched.ExistingAvailabilitiesSelectView)
+        (select,) = view.children
+        select._values = [second.get_limited_name(99)]
+        press(select.callback, participant.member)
+        assert blocks_of(participant) == [(at(1, 9), at(1, 12))]
+        assert participant.answered and participant.subscribed
+        # The event the availability was copied from didn't change, so only the target handles the input
+        assert inputs == [target]
+
+
+def blocks_of(participant):
+    return [(tb.start_time, tb.end_time) for tb in participant.availability]
+
+
 class TestCancelBlock:
     BLOCKED = "You're blocked from interacting with"
 

@@ -3691,7 +3691,7 @@ class AvailabilityButtons(View):
                 await self.event.handle_input_received(exclude=[participant])
             else:
                 await interaction.followup.send(content="Select another event from which to grab your availability.",
-                                                view=ExistingAvailabilitiesSelectView(found_availabilities, participant),
+                                                view=ExistingAvailabilitiesSelectView(self.event, found_availabilities, participant),
                                                 ephemeral=True)
             embed = get_participants_other_unanswered_events_embed(self.event, participant)
             if embed:
@@ -4381,7 +4381,9 @@ class ExistingAvailabilitiesSelect(Select):
     Represents a dropdown to allow a user to selection an existing availability from another event.
     """
 
-    def __init__(self, event_avails: list, participant: Participant):
+    def __init__(self, event: Event, event_avails: list, participant: Participant):
+        # The event the availability is being reused for, while event_avails hold the events it comes from
+        self.event = event
         self.event_avails = event_avails
         self.participant = participant
         options = []
@@ -4405,7 +4407,7 @@ class ExistingAvailabilitiesSelect(Select):
                                                            silent=True,
                                                            ephemeral=True)
                 await followup.delete(delay=3)
-                await event_avail.event.handle_input_received(exclude=[self.participant])
+                await self.event.handle_input_received(exclude=[self.participant])
                 return
         await interaction.followup.send(content="**Failed to get your availability.**",
                                         ephemeral=True)
@@ -4416,9 +4418,9 @@ class ExistingAvailabilitiesSelectView(View):
     Represents a view to house the existing availability dropdown.
     """
 
-    def __init__(self, event_avails: list, participant: Participant):
+    def __init__(self, event: Event, event_avails: list, participant: Participant):
         super().__init__()
-        self.add_item(ExistingAvailabilitiesSelect(event_avails, participant))
+        self.add_item(ExistingAvailabilitiesSelect(event, event_avails, participant))
 
 
 def get_participants_from_interaction(event_name: str,
