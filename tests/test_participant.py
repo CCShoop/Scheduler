@@ -360,6 +360,15 @@ class TestAvailabilityString:
         assert lines[3].startswith("[Busy] [busy]")
         assert lines[4].startswith("[Free]")
 
+    def test_several_removed_times_before_a_free_block_stay_in_order(self):
+        participant = make_participant(availability=[TimeBlock(at(1, 12), at(1, 13))])
+        participant.removed_times = [RemovedTime("second", TimeBlock(at(1, 10), at(1, 11)), None),
+                                     RemovedTime("first", TimeBlock(at(1, 8), at(1, 9)), None),
+                                     RemovedTime("third", TimeBlock(at(1, 14), at(1, 15)), None)]
+        lines = participant.availability_string.strip().split("\n")
+        assert [line.split("]")[0] + "]" for line in lines] == ["[Busy]", "[Busy]", "[Free]", "[Busy]"]
+        assert "[first]" in lines[0] and "[second]" in lines[1] and "[third]" in lines[3]
+
 
 class TestAvailabilityAcrossDstChange:
     """Times on a date past a DST change keep the entered time of day, rather than shifting by an hour."""

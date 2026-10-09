@@ -1284,12 +1284,14 @@ class Event:
         buffered_end = self.start_times[0] + self.duration + buffer_time
         affected_events = []
         for event in client.events:
-            if event == self or not event.created:
+            # A running event has already started, so it can't be pushed back
+            if event == self or not event.created or event.started:
                 continue
             if event.same_location(self) or event.shares_participants(self):
                 affected_events.append(event)
         for event in sorted(affected_events, key=lambda e: min(e.start_times)):
-            event.start_times[0] = max(event.start_times[0], buffered_end)
+            if event.start_times[0] < buffered_end:
+                await event.move_first_start_time(buffered_end)
             buffered_end = event.start_times[0] + event.duration + buffer_time
             await event.update_event_buttons_message()
         # Disable start buttons of events scheduled for the same location
@@ -1502,6 +1504,24 @@ class Event:
         else:
             logger.info(f"[{self}] Last event ended")
             self.remove()
+
+    async def move_first_start_time(self, start_time: datetime) -> None:
+        """
+        Moves the first occurrence to the start time, along with its guild event so that Discord shows it
+        and it's kept after a restart, which loads start times from guild events.
+        """
+        logger.info(f"[{self}] Pushing back start to {start_time.strftime('%A, %m/%d/%Y: %H:%M %Z')}")
+        self.start_times[0] = start_time
+        if not self.scheduled_events:
+            return
+        kwargs = {"start_time": start_time}
+        # External guild events have an end time, which has to stay after the start
+        if self.is_external:
+            kwargs["end_time"] = start_time + self.scheduled_duration
+        try:
+            await self.scheduled_events[0].edit(**kwargs)
+        except Exception as e:
+            logger.error(f"[{self}] Error pushing back guild event start: {e}")
 
     async def make_scheduled_events(self) -> None:
         """

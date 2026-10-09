@@ -739,11 +739,10 @@ class Participant:
         if self.availability:
             # Print availability and removed times within availability
             for timeblock in self.availability:
-                if removed_index < len(self.removed_times):
-                    removed_time = self.removed_times[removed_index]
-                    if removed_time.event_timeblock.start_time < timeblock.start_time:
-                        response += f"{removed_time}\n"
-                        removed_index += 1
+                while removed_index < len(self.removed_times) and \
+                        self.removed_times[removed_index].event_timeblock.start_time < timeblock.start_time:
+                    response += f"{self.removed_times[removed_index]}\n"
+                    removed_index += 1
                 response += f"{timeblock.string}\n"
             # Print removed times after end of availability
             while removed_index < len(self.removed_times):

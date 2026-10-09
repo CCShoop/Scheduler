@@ -117,6 +117,54 @@ class TestStart:
         assert soon.event_buttons.start_end_button.disabled
         assert later.event_buttons.start_end_button.disabled
 
+    def test_pushing_back_moves_the_guild_event(self, env):
+        event, _ = make_created_event(env)
+        now = env.sched.now()
+        soon_start = now + timedelta(minutes=30)
+        soon_guild_event = FakeScheduledEvent(soon_start)
+        soon = env.make_event([env.make_participant("b")], created=True, start_times=[soon_start],
+                              scheduled_events=[soon_guild_event], duration=timedelta(hours=1))
+        soon.event_buttons = fake_event_buttons()
+        run(event.start())
+        assert soon_guild_event.edits == [{"start_time": soon.start_times[0]}]
+        assert soon.start_times[0] > soon_start
+
+    def test_pushing_back_an_external_event_moves_its_end_time(self, env):
+        event, _ = make_created_event(env, location="The Park")
+        now = env.sched.now()
+        soon_start = now + timedelta(minutes=30)
+        soon_guild_event = FakeScheduledEvent(soon_start)
+        soon = env.make_event([env.make_participant("b")], created=True, start_times=[soon_start],
+                              scheduled_events=[soon_guild_event], duration=timedelta(hours=1),
+                              voice_channel=None, location="the park")
+        soon.event_buttons = fake_event_buttons()
+        run(event.start())
+        new_start = soon.start_times[0]
+        assert soon_guild_event.edits == [{"start_time": new_start, "end_time": new_start + timedelta(hours=1)}]
+
+    def test_does_not_push_back_events_that_are_not_overlapping(self, env):
+        event, _ = make_created_event(env)
+        later_guild_event = FakeScheduledEvent(at(5, 20))
+        later = env.make_event([env.make_participant("b")], created=True, start_times=[at(5, 20)],
+                               scheduled_events=[later_guild_event])
+        later.event_buttons = fake_event_buttons()
+        run(event.start())
+        assert later.start_times == [at(5, 20)]
+        assert later_guild_event.edits == []
+
+    def test_does_not_push_back_a_running_event_that_shares_a_participant(self, env):
+        a = env.make_participant("a", [TimeBlock(at(1, 18), at(2, 23))])
+        running_start = env.sched.now() - timedelta(minutes=10)
+        running_guild_event = FakeScheduledEvent(running_start, status=EventStatus.active)
+        running = env.make_event([Participant(member=a.member, answered=True)], created=True, started=True,
+                                 start_times=[running_start], scheduled_events=[running_guild_event],
+                                 voice_channel=None, location="Elsewhere")
+        running.event_buttons = fake_event_buttons()
+        event, _ = make_created_event(env, participants=[a])
+        run(event.start())
+        assert running.start_times == [running_start]
+        assert running_guild_event.edits == []
+
     def test_does_not_disable_end_button_of_active_event_in_the_same_voice_channel(self, env):
         active, _ = make_created_event(env, started=True)
         event, _ = make_created_event(env)
