@@ -55,6 +55,20 @@ def parse_time_string(time_string: str, label: str) -> str:
     return f"{hour:02d}{minute:02d}"
 
 
+def to_local(time: datetime) -> datetime:
+    """
+    Gives a local wall-clock time the UTC offset in effect on its own date.
+    datetime.now().astimezone() has a fixed offset, so replacing its date or adding days to it
+    keeps today's offset, which is an hour off past a DST change.
+    """
+    return time.replace(tzinfo=None).astimezone()
+
+
+def add_local_days(time: datetime, days: int) -> datetime:
+    """Moves a time by whole days on the local wall clock, keeping its time of day across DST changes."""
+    return to_local(time.astimezone() + timedelta(days=days))
+
+
 def print_time_until(time: datetime) -> str:
     return f"<t:{int(time.timestamp())}:R>"
 
@@ -289,10 +303,9 @@ class Participant:
             Optional. The date of the Full Availability.
             Default: Today
         """
-        cur_time = datetime.now().astimezone().replace(second=0, microsecond=0)
-        day = date or cur_time
-        midnight = cur_time.replace(day=day.day, month=day.month, year=day.year, hour=0, minute=0)
-        return midnight + timedelta(days=1, hours=get_cutoff(self.member.id))
+        day = date or datetime.now().astimezone()
+        midnight = datetime(day.year, day.month, day.day)
+        return to_local(midnight + timedelta(days=1, hours=get_cutoff(self.member.id)))
 
     def set_full_availability(self, date: datetime = None, end_time: datetime = None) -> None:
         """
@@ -317,7 +330,7 @@ class Participant:
                                           year=year)
             # Full availability on a future day starts at midnight
             if start_time.date() != cur_time.date():
-                start_time = start_time.replace(hour=0, minute=0)
+                start_time = to_local(datetime(year, month, day))
             if not end_time:
                 # Midnight at the end of the day, shifted by the cutoff
                 end_time = self.get_full_availability_end(start_time)
@@ -507,44 +520,44 @@ class Participant:
             start_time = parse_time_string(start_time, 'start')
             end_time = parse_time_string(end_time, 'end')
 
-            # Convert to datetime objects
+            # Convert to datetime objects, as naive local wall-clock times until they're stored
+            # so that adding days past a DST change keeps the entered time of day
             start_time_string = start_time
             end_time_string = end_time
             # Start time is now if today, midnight if not today
             if start_time_string == '':
                 if date_is_today:
-                    start_time = datetime.now().astimezone().replace(second=0, microsecond=0)
+                    start_time = datetime.now().replace(second=0, microsecond=0)
                 else:
-                    start_time = datetime.now().astimezone().replace(year=year, month=month, day=day, hour=0, minute=0, second=0, microsecond=0)
+                    start_time = datetime(year, month, day)
             # Start time is defined
             else:
                 start_hr = int(start_time_string[:2])
                 start_min = int(start_time_string[2:])
-                start_time = datetime.now().astimezone().replace(year=year, month=month, day=day, hour=start_hr, minute=start_min, second=0, microsecond=0)
+                start_time = datetime(year, month, day, start_hr, start_min)
                 start_time += timedelta(hours=timezone_offset)
             # End time is midnight
             if end_time_string == '':
-                end_time = datetime.now().astimezone().replace(year=year, month=month, day=day, hour=0, minute=0, second=0, microsecond=0)
-                end_time += timedelta(days=1)
+                end_time = datetime(year, month, day) + timedelta(days=1)
             # End time is defined
             else:
                 end_hr = int(end_time_string[:2])
                 end_min = int(end_time_string[2:])
-                end_time = datetime.now().astimezone().replace(year=year, month=month, day=day, hour=end_hr, minute=end_min, second=0, microsecond=0)
+                end_time = datetime(year, month, day, end_hr, end_min)
                 end_time += timedelta(hours=timezone_offset)
                 while end_time < start_time:
                     end_time += timedelta(days=1)
 
             # Currency check
-            while end_time < datetime.now().astimezone():
+            while to_local(end_time) < datetime.now().astimezone():
                 start_time += timedelta(days=1)
                 end_time += timedelta(days=1)
 
-            self.add_to_availability(TimeBlock(start_time, end_time))
+            self.add_to_availability(TimeBlock(to_local(start_time), to_local(end_time)))
             while extend > 1:
                 start_time += timedelta(days=1)
                 end_time += timedelta(days=1)
-                self.add_to_availability(TimeBlock(start_time, end_time))
+                self.add_to_availability(TimeBlock(to_local(start_time), to_local(end_time)))
                 extend -= 1
 
     def clean_availability(self) -> None:

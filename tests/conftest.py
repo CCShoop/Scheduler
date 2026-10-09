@@ -3,12 +3,13 @@
 import os
 import sys
 import signal
+import time
 import tempfile
 import importlib
 
 import discord
 import pytest
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -105,3 +106,20 @@ def env(sched, monkeypatch):
     return SimpleNamespace(sched=sched, guild=guild, text_channel=text_channel, voice_channel=voice_channel,
                            make_participant=make_participant, make_event=make_event,
                            update_messages_calls=update_messages_calls)
+
+
+@pytest.fixture
+def dst_timezone(monkeypatch):
+    """
+    Runs the test in a timezone with DST and returns the first date after its next DST change.
+    Times built from now()'s fixed UTC offset are an hour off on that date.
+    """
+    monkeypatch.setenv("TZ", "America/Chicago")
+    time.tzset()
+    today = date.today()
+    offset = datetime.now().astimezone().utcoffset()
+    day = next(today + timedelta(days=days) for days in range(1, 367)
+               if datetime.combine(today + timedelta(days=days), datetime.min.time()).astimezone().utcoffset() != offset)
+    yield day
+    monkeypatch.undo()
+    time.tzset()

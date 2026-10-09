@@ -342,3 +342,37 @@ class TestAvailabilityString:
         assert lines[2].startswith("[Free]")
         assert lines[3].startswith("[Busy] [busy]")
         assert lines[4].startswith("[Free]")
+
+
+class TestAvailabilityAcrossDstChange:
+    """Times on a date past a DST change keep the entered time of day, rather than shifting by an hour."""
+
+    @staticmethod
+    def local_times(participant: Participant) -> list[tuple]:
+        return [(tb.start_time.astimezone().strftime("%m-%d %H:%M"), tb.end_time.astimezone().strftime("%m-%d %H:%M"))
+                for tb in participant.availability]
+
+    def test_specific_range(self, dst_timezone):
+        participant = make_participant()
+        participant.set_specific_availability("7pm-9pm", dst_timezone.strftime("%Y-%m-%d"))
+        day = dst_timezone.strftime("%m-%d")
+        assert self.local_times(participant) == [(f"{day} 19:00", f"{day} 21:00")]
+
+    def test_missing_end_is_that_days_midnight(self, dst_timezone):
+        participant = make_participant()
+        participant.set_specific_availability("20-", dst_timezone.strftime("%Y-%m-%d"))
+        next_day = (dst_timezone + timedelta(days=1)).strftime("%m-%d")
+        assert self.local_times(participant)[0][1] == f"{next_day} 00:00"
+
+    def test_extension_crossing_the_change(self, dst_timezone):
+        participant = make_participant()
+        day_before = dst_timezone - timedelta(days=2)
+        participant.set_specific_availability("19-21x3", day_before.strftime("%Y-%m-%d"))
+        assert [start[6:] for start, _ in self.local_times(participant)] == ["19:00"] * 3
+
+    def test_full_availability(self, dst_timezone):
+        participant = make_participant()
+        participant.set_specific_availability("full", dst_timezone.strftime("%Y-%m-%d"))
+        day = dst_timezone.strftime("%m-%d")
+        next_day = (dst_timezone + timedelta(days=1)).strftime("%m-%d")
+        assert self.local_times(participant) == [(f"{day} 00:00", f"{next_day} 00:00")]

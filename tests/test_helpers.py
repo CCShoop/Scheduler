@@ -60,6 +60,16 @@ class TestParseStartTime:
         assert result > sched.now()
         assert result - past == timedelta(days=3)
 
+    def test_iso_without_offset_is_local_time(self, sched):
+        future = (sched.now() + timedelta(days=3)).replace(tzinfo=None)
+        result = sched.parse_start_time(future.isoformat())
+        assert result.tzinfo is not None
+        assert result.replace(tzinfo=None) == future
+
+    def test_iso_without_offset_past_dst_change(self, sched, dst_timezone):
+        result = sched.parse_start_time(f"{dst_timezone.isoformat()}T19:00")
+        assert result.astimezone().hour == 19
+
     @pytest.mark.parametrize("entered", ["abc", "12345", "", "25:00"])
     def test_invalid(self, sched, entered):
         with pytest.raises(Exception):

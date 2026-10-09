@@ -20,7 +20,7 @@ from libs.persistence import Persistence
 import libs.participant as participant_lib
 import libs.announcer as announcer_lib
 from libs.announcer import Announcer
-from libs.participant import Participant, TimeBlock, print_date_time, print_time, print_time_until
+from libs.participant import Participant, TimeBlock, add_local_days, print_date_time, print_time, print_time_until, to_local
 from libs.help import HELP_EMBEDS
 from server import Server
 
@@ -222,6 +222,9 @@ def double_digit_string(digit_string: str) -> str:
 def parse_start_time(start_time: str) -> datetime:
     try:
         start_time_obj = datetime.fromisoformat(start_time)
+        # An ISO time without a UTC offset is local time
+        if start_time_obj.tzinfo is None:
+            start_time_obj = to_local(start_time_obj)
     except Exception as e:
         try:
             start_time = start_time.strip()
@@ -235,12 +238,12 @@ def parse_start_time(start_time: str) -> datetime:
                 raise Exception("Invalid start time format. Examples: \"1630\" or \"00:30\"")
             hour = int(start_time[:2])
             minute = int(start_time[2:])
-            start_time_obj = now().replace(hour=hour, minute=minute)
+            start_time_obj = to_local(now().replace(hour=hour, minute=minute))
         except Exception:
             logger.info(f"Start time was not in iso format: {e}")
             raise Exception("Invalid start time format. Examples: \"1630\" or \"00:30\"")
     while start_time_obj <= now():
-        start_time_obj += timedelta(days=1)
+        start_time_obj = add_local_days(start_time_obj, 1)
     return start_time_obj
 
 
