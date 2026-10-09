@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-from discord import ButtonStyle, EntityType, EventStatus
+from discord import ButtonStyle, DiscordServerError, EntityType, EventStatus
 
 from libs.participant import Participant, TimeBlock
 from fakes import FakeScheduledEvent, at, noop, run
@@ -948,6 +948,31 @@ class TestUpdateWhileCreated:
         env.voice_channel.members.append(event.participants[0].member)
         run(event.update())
         assert not event.started
+
+    def test_updates_existing_reminder_message_while_waiting_to_start(self, env):
+        event, _ = make_created_event(env, reminder_flag=True)
+        event.start_times[0] = env.sched.now() + timedelta(minutes=5)
+        reminder = FakeMessage()
+        event.reminder_message = reminder
+        run(event.update())
+        assert not event.started
+        assert len(reminder.edits) == 1
+        edit = reminder.edits[0]
+        assert edit["content"] == event.get_reminder_message_content()
+        start_timestamp = int(event.start_times[0].timestamp())
+        assert f"<t:{start_timestamp}:R>" in edit["embed"].description
+
+    @pytest.mark.parametrize("error", [DiscordServerError.__new__(DiscordServerError), RuntimeError("boom")])
+    def test_reminder_message_edit_errors_are_logged(self, env, error):
+        event, _ = make_created_event(env)
+
+        class FailingMessage(FakeMessage):
+            async def edit(self, **kwargs):
+                raise error
+
+        event.reminder_message = FailingMessage()
+        run(event.update_reminder_message())
+        assert event.reminder_message is not None
 
 
 class TestCancelIfMissed:

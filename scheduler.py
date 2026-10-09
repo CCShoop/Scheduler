@@ -4500,18 +4500,23 @@ def get_participants_from_channel(event_name: str,
     participants = []
     # Add the scheduler/creator as a participant
     if user is not None:
-        member = guild.get_member(user.id)
+        # The user may be missing from the member cache
+        member = guild.get_member(user.id) or user
         if not member.bot:
             participants.append(Participant(member=member))
 
     # Add users meeting role criteria
     if roles and roles != '':
         try:
-            roles = roles.split(',')
-            roles = [role.strip() for role in roles]
-            roles = [utils.find(lambda r: r.name.lower() == role.lower(), guild.roles) for role in roles]
+            role_names = [role.strip() for role in roles.split(',') if role.strip()]
+            roles = [utils.find(lambda r: r.name.lower() == role_name.lower(), guild.roles) for role_name in role_names]
         except Exception as e:
             raise Exception(f'[{event_name}] Failed to parse role(s): {e}')
+        if not role_names:
+            raise Exception(f'[{event_name}] No role names were given')
+        missing_role_names = [role_name for role_name, role in zip(role_names, roles) if role is None]
+        if missing_role_names:
+            raise Exception(f'[{event_name}] Role(s) not found: {", ".join(missing_role_names)}')
         for member in channel.members:
             if member.bot:
                 continue
@@ -4613,36 +4618,47 @@ async def edit_event(event: Event,
     # Image URL
     if image_url is not None:
         old_image_url = event.image_url
-        event.delete_image_file()
-        event.image_url = image_url
-        if event.image_url:
-            if old_image_url == event.image_url:
-                embed.add_field(name="Image (Unchanged)",
-                                value=f"image is already {event.image_url}",
-                                inline=False)
-            else:
-                if event.created:
-                    await event.save_image_to_file()
-                    if event.has_image_saved:
-                        for scheduled_event in event.scheduled_events:
-                            await scheduled_event.edit(image=event.get_image())
+        if image_url == old_image_url:
+            embed.add_field(name="Image (Unchanged)",
+                            value=f"image is already {event.image_url}",
+                            inline=False)
+        else:
+            event.delete_image_file()
+            event.image_url = image_url
+            if event.created:
+                # Clears image_url if the image can't be downloaded
+                await event.save_image_to_file()
+            if event.image_url:
+                if event.has_image_saved:
+                    for scheduled_event in event.scheduled_events:
+                        await scheduled_event.edit(image=event.get_image())
                 embed.add_field(name="Image",
                                 value=f"{old_image_url} -> {event.image_url}",
                                 inline=False)
-        else:
-            event.image_url = old_image_url
-            embed.add_field(name="Image (Unchanged)",
-                            value="The new image could not be downloaded",
-                            inline=False)
+            else:
+                event.image_url = old_image_url
+                embed.add_field(name="Image (Unchanged)",
+                                value="The new image could not be downloaded",
+                                inline=False)
     # Duration
     if duration is not None:
         old_duration = event.duration
-        event.duration = timedelta(minutes=duration)
-        if old_duration.total_seconds() == event.duration.total_seconds():
+        new_duration = timedelta(minutes=duration)
+        # An automatic duration has no set end, so it extends the event too
+        extends = duration == 0 or new_duration > event.scheduled_duration
+        if old_duration == new_duration:
             embed.add_field(name="Duration (Unchanged)",
                             value="The new duration is the same as the old duration",
                             inline=False)
+        elif event.created and extends:
+            embed.add_field(name="Duration (Unchanged)",
+                            value="The duration of a created event cannot be extended",
+                            inline=False)
         else:
+            event.duration = new_duration
+            if event.created and event.is_external:
+                for scheduled_event, start_time in zip(event.scheduled_events, event.start_times):
+                    await scheduled_event.edit(end_time=start_time + event.scheduled_duration)
             remove_times_from_availabilities_for_events()
             embed.add_field(name="Duration",
                             value=f"{get_time_str_from_minutes(old_duration.total_seconds() // 60)}"
@@ -4653,6 +4669,10 @@ async def edit_event(event: Event,
         if event.started:
             embed.add_field(name="Multi Event (Unchanged)",
                             value="Multi Event cannot be changed after starting the event",
+                            inline=False)
+        elif event.created and event.multi_event and not multi_event:
+            embed.add_field(name="Multi Event (Unchanged)",
+                            value="Multi Event cannot be turned off after creating the event",
                             inline=False)
         else:
             old_multi_event = event.multi_event
@@ -4954,7 +4974,7 @@ async def create(event_name: str,
                                                          channel=text_channel,
                                                          user=scheduler_user,
                                                          include_exclude=include_exclude,
-                                                         usernames=", ".join(usernames),
+                                                         usernames=", ".join(str(username) for username in usernames),
                                                          roles=roles)
         except Exception as e:
             logger.error(f"[{event_name}] Error getting participants: {e}")
@@ -5194,7 +5214,7 @@ async def schedule(event_name: str,
                                                          channel=text_channel,
                                                          user=scheduler_user,
                                                          include_exclude=include_exclude,
-                                                         usernames=", ".join(usernames),
+                                                         usernames=", ".join(str(username) for username in usernames),
                                                          roles=roles)
         except Exception as e:
             logger.error(f"[{event_name}] Error getting participants: {e}")

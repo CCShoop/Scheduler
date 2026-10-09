@@ -41,7 +41,7 @@ class TestTextChannelOrGuildDeleted:
                                 text_channel=other_text_channel, participants=[a])
         env.sched.client.events.append(other)
         a.removed_times = [env.sched.participant_lib.RemovedTime(event.name, TimeBlock(at(1, 20), at(1, 22)),
-                                                                 TimeBlock(at(1, 20), at(1, 22)))]
+                                                                 [TimeBlock(at(1, 20), at(1, 22))])]
         delete_channel(env, env.text_channel)
         assert other in env.sched.client.events
         assert a.removed_times == []

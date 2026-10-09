@@ -92,15 +92,27 @@ class TestTimeBlock:
 
 class TestRemovedTime:
     def test_dict_round_trip(self):
-        removed = RemovedTime("event", TimeBlock(at(1, 8), at(1, 10)), TimeBlock(at(1, 9), at(1, 10)))
+        removed = RemovedTime("event", TimeBlock(at(1, 8), at(1, 12)),
+                              [TimeBlock(at(1, 8), at(1, 9)), TimeBlock(at(1, 10), at(1, 11))])
         restored = RemovedTime.from_dict(removed.to_dict())
         assert restored.event_name == "event"
-        assert (restored.start_time, restored.end_time) == (at(1, 8), at(1, 10))
-        assert restored.removed_timeblock.start_time == at(1, 9)
+        assert (restored.start_time, restored.end_time) == (at(1, 8), at(1, 12))
+        assert [(tb.start_time, tb.end_time) for tb in restored.removed_timeblocks] == \
+            [(at(1, 8), at(1, 9)), (at(1, 10), at(1, 11))]
 
-    def test_dict_round_trip_without_removed_timeblock(self):
+    def test_dict_round_trip_without_removed_timeblocks(self):
         removed = RemovedTime("event", TimeBlock(at(1, 8), at(1, 10)), None)
-        assert RemovedTime.from_dict(removed.to_dict()).removed_timeblock is None
+        assert RemovedTime.from_dict(removed.to_dict()).removed_timeblocks == []
+
+    def test_loads_single_removed_timeblock_saved_by_older_versions(self):
+        data = {"event_name": "event", "timeblock": TimeBlock(at(1, 8), at(1, 10)).to_dict(),
+                "removed_timeblock": TimeBlock(at(1, 9), at(1, 10)).to_dict()}
+        restored = RemovedTime.from_dict(data)
+        assert [(tb.start_time, tb.end_time) for tb in restored.removed_timeblocks] == [(at(1, 9), at(1, 10))]
+
+    def test_loads_missing_removed_timeblock_saved_by_older_versions(self):
+        data = {"event_name": "event", "timeblock": TimeBlock(at(1, 8), at(1, 10)).to_dict(), "removed_timeblock": None}
+        assert RemovedTime.from_dict(data).removed_timeblocks == []
 
 
 class TestAvailabilityEditing:
@@ -130,11 +142,18 @@ class TestAvailabilityEditing:
         participant.remove_from_availability(TimeBlock(at(1, 9), at(1, 10)))
         assert blocks(participant) == [(at(1, 8), at(1, 9)), (at(1, 10), at(1, 12))]
 
-    def test_get_availability_overlap(self):
+    def test_get_availability_overlaps(self):
         participant = make_participant(availability=[TimeBlock(at(1, 8), at(1, 10)), TimeBlock(at(1, 13), at(1, 15))])
-        overlap = participant.get_availability_overlap(TimeBlock(at(1, 14), at(1, 16)))
-        assert (overlap.start_time, overlap.end_time) == (at(1, 14), at(1, 15))
-        assert participant.get_availability_overlap(TimeBlock(at(1, 11), at(1, 12))) is None
+        overlaps = participant.get_availability_overlaps(TimeBlock(at(1, 14), at(1, 16)))
+        assert [(tb.start_time, tb.end_time) for tb in overlaps] == [(at(1, 14), at(1, 15))]
+        assert participant.get_availability_overlaps(TimeBlock(at(1, 11), at(1, 12))) == []
+
+    def test_get_availability_overlaps_across_several_blocks(self):
+        participant = make_participant(availability=[TimeBlock(at(1, 8), at(1, 10)), TimeBlock(at(1, 11), at(1, 12)),
+                                                     TimeBlock(at(1, 13), at(1, 15)), TimeBlock(at(1, 17), at(1, 18))])
+        overlaps = participant.get_availability_overlaps(TimeBlock(at(1, 9), at(1, 14)))
+        assert [(tb.start_time, tb.end_time) for tb in overlaps] == \
+            [(at(1, 9), at(1, 10)), (at(1, 11), at(1, 12)), (at(1, 13), at(1, 14))]
 
     def test_remove_and_restore_availability_for_event(self):
         participant = make_participant(availability=[TimeBlock(at(1, 8), at(1, 12))])
@@ -153,6 +172,65 @@ class TestAvailabilityEditing:
         participant.restore_availability_for_event("first")
         assert blocks(participant) == [(at(1, 8), at(1, 11))]
         assert [rt.event_name for rt in participant.removed_times] == ["second"]
+
+    def test_remove_availability_for_event_without_overlap_still_shows_busy(self):
+        participant = make_participant(availability=[TimeBlock(at(1, 8), at(1, 9))])
+        participant.remove_availability_for_event("other", [TimeBlock(at(1, 11), at(1, 12))])
+        assert blocks(participant) == [(at(1, 8), at(1, 9))]
+        assert [(rt.event_name, rt.removed_timeblocks) for rt in participant.removed_times] == [("other", [])]
+        assert "[Busy] [other]" in participant.availability_string
+
+    def test_remove_availability_for_event_without_availability_still_shows_busy(self):
+        participant = make_participant()
+        participant.remove_availability_for_event("other", [TimeBlock(at(1, 11), at(1, 12)),
+                                                            TimeBlock(at(2, 11), at(2, 12))])
+        assert participant.availability_string.count("[Busy] [other]") == 2
+
+    def test_availability_entered_after_event_is_removed_for_it(self):
+        participant = make_participant()
+        participant.remove_availability_for_event("other", [TimeBlock(at(1, 11), at(1, 12))])
+        participant.add_to_availability(TimeBlock(at(1, 8), at(1, 14)))
+        assert blocks(participant) == [(at(1, 8), at(1, 11)), (at(1, 12), at(1, 14))]
+
+        participant.restore_availability_for_event("other")
+        assert blocks(participant) == [(at(1, 8), at(1, 14))]
+        assert participant.removed_times == []
+
+    def test_event_spanning_several_blocks_removes_all_of_them(self):
+        # Free 6-8:30pm and 9-11pm, busy 8-10pm: neither 8-8:30 nor 9-10 stays free
+        participant = make_participant(availability=[TimeBlock(at(1, 18), at(1, 20, 30)), TimeBlock(at(1, 21), at(1, 23))])
+        participant.remove_availability_for_event("other", [TimeBlock(at(1, 20), at(1, 22))])
+        assert blocks(participant) == [(at(1, 18), at(1, 20)), (at(1, 22), at(1, 23))]
+        assert not participant.is_available_at(at(1, 21), timedelta(minutes=30))
+        assert participant.availability_string.count("[Busy] [other]") == 1
+
+        participant.restore_availability_for_event("other")
+        assert blocks(participant) == [(at(1, 18), at(1, 20, 30)), (at(1, 21), at(1, 23))]
+
+    def test_availability_added_inside_partly_removed_event_is_removed_too(self):
+        participant = make_participant(availability=[TimeBlock(at(1, 18), at(1, 20, 30))])
+        participant.remove_availability_for_event("other", [TimeBlock(at(1, 20), at(1, 22))])
+        participant.add_to_availability(TimeBlock(at(1, 21), at(1, 23)))
+        assert blocks(participant) == [(at(1, 18), at(1, 20)), (at(1, 22), at(1, 23))]
+
+        participant.restore_availability_for_event("other")
+        assert blocks(participant) == [(at(1, 18), at(1, 20, 30)), (at(1, 21), at(1, 23))]
+
+    def test_repeated_updates_do_not_duplicate_removed_blocks(self):
+        participant = make_participant(availability=[TimeBlock(at(1, 18), at(1, 23))])
+        participant.remove_availability_for_event("other", [TimeBlock(at(1, 20), at(1, 22))])
+        participant.availability = [TimeBlock(at(1, 18), at(1, 23))]  # e.g. reused availability
+        participant.update_removed_times()
+        participant.update_removed_times()
+        assert blocks(participant) == [(at(1, 18), at(1, 20)), (at(1, 22), at(1, 23))]
+        assert len(participant.removed_times[0].removed_timeblocks) == 1
+
+    def test_restoring_busy_time_without_overlap(self):
+        participant = make_participant(availability=[TimeBlock(at(1, 8), at(1, 9))])
+        participant.remove_availability_for_event("other", [TimeBlock(at(1, 11), at(1, 12))])
+        participant.restore_availability_for_event("other")
+        assert blocks(participant) == [(at(1, 8), at(1, 9))]
+        assert participant.removed_times == []
 
     def test_remove_availability_for_event_replaces_previous_removal(self):
         participant = make_participant(availability=[TimeBlock(at(1, 8), at(1, 12))])

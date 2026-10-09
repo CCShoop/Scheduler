@@ -185,16 +185,16 @@ class RemovedTime:
         The name of the event being accounted for.
     event_timeblock: :class:`TimeBlock`
         The timeblock representing the event.
-    removed_timeblock: :class:`TimeBlock`
-        The timeblock of removed availability.
+    removed_timeblocks: :class:`list[TimeBlock]`
+        The timeblocks of removed availability, one for each availability timeblock the event overlapped.
     """
 
     def __init__(self, event_name: str,
                  event_timeblock: TimeBlock,
-                 removed_timeblock: TimeBlock):
+                 removed_timeblocks: Optional[list[TimeBlock]] = None):
         self.event_name = event_name
         self.event_timeblock = event_timeblock
-        self.removed_timeblock = removed_timeblock
+        self.removed_timeblocks = removed_timeblocks or []
 
     @property
     def start_time(self) -> datetime:
@@ -206,21 +206,23 @@ class RemovedTime:
 
     @classmethod
     def from_dict(cls, data: dict):
+        if 'removed_timeblocks' in data:
+            removed_timeblocks = [TimeBlock.from_dict(timeblock) for timeblock in data['removed_timeblocks']]
+        else:
+            # Saved before an event could remove more than one timeblock
+            removed_timeblock = TimeBlock.from_dict(data.get('removed_timeblock'))
+            removed_timeblocks = [removed_timeblock] if removed_timeblock is not None else []
         return cls(
             event_name=data['event_name'],
             event_timeblock=TimeBlock.from_dict(data['timeblock']),
-            removed_timeblock=TimeBlock.from_dict(data['removed_timeblock'])
+            removed_timeblocks=removed_timeblocks
         )
 
     def to_dict(self) -> dict:
-        timeblock_dict = self.event_timeblock.to_dict()
-        removed_timeblock_dict = None
-        if self.removed_timeblock is not None:
-            removed_timeblock_dict = self.removed_timeblock.to_dict()
         return {
             'event_name': self.event_name,
-            'timeblock': timeblock_dict,
-            'removed_timeblock': removed_timeblock_dict
+            'timeblock': self.event_timeblock.to_dict(),
+            'removed_timeblocks': [timeblock.to_dict() for timeblock in self.removed_timeblocks]
         }
 
     def __repr__(self) -> str:
@@ -584,16 +586,17 @@ class Participant:
             self.answered = True
         self.update_removed_times()
 
-    def get_availability_overlap(self, event_timeblock: TimeBlock) -> TimeBlock:
+    def get_availability_overlaps(self, event_timeblock: TimeBlock) -> list[TimeBlock]:
         """
-        Gets the overlap between an event and the participant's availability.
-        Returns None if there is no overlap.
+        Gets the overlap between an event and each of the participant's availability timeblocks.
+        Returns an empty list if there is no overlap.
 
         Arguments
         ---------
         event_timeblock: :class:`TimeBlock`
             The timeblock with which to get its overlap with availability.
         """
+        overlaps = []
         for timeblock in self.availability:
             # Timeblock ends before or when event starts
             if timeblock.end_time <= event_timeblock.start_time:
@@ -602,9 +605,9 @@ class Participant:
             if event_timeblock.end_time <= timeblock.start_time:
                 break
             # Overlap
-            return TimeBlock(start_time=max(event_timeblock.start_time, timeblock.start_time),
-                             end_time=min(event_timeblock.end_time, timeblock.end_time))
-        return None
+            overlaps.append(TimeBlock(start_time=max(event_timeblock.start_time, timeblock.start_time),
+                                      end_time=min(event_timeblock.end_time, timeblock.end_time)))
+        return overlaps
 
     def add_to_availability(self, timeblock: TimeBlock) -> None:
         if timeblock is not None:
@@ -639,13 +642,15 @@ class Participant:
         """
         self.restore_availability_for_event(event_name=event_name)
         for event_timeblock in event_timeblocks:
-            removed_timeblock = self.get_availability_overlap(event_timeblock)
-            if removed_timeblock:
+            # Saved even without an overlap, so the event shows as busy and
+            # update_removed_times() removes availability entered later
+            removed_timeblocks = self.get_availability_overlaps(event_timeblock)
+            for removed_timeblock in removed_timeblocks:
                 self.remove_from_availability(removed_timeblock)
-                removed_time = RemovedTime(event_name=event_name,
-                                           event_timeblock=event_timeblock,
-                                           removed_timeblock=removed_timeblock)
-                self.removed_times.append(removed_time)
+            removed_time = RemovedTime(event_name=event_name,
+                                       event_timeblock=event_timeblock,
+                                       removed_timeblocks=removed_timeblocks)
+            self.removed_times.append(removed_time)
 
     def restore_availability_for_event(self, event_name: str) -> None:
         """
@@ -660,8 +665,7 @@ class Participant:
         new_removed_times = []
         for removed_time in self.removed_times:
             if removed_time.event_name == event_name:
-                if removed_time.removed_timeblock:
-                    restored_timeblocks.append(removed_time.removed_timeblock)
+                restored_timeblocks.extend(removed_time.removed_timeblocks)
             else:
                 new_removed_times.append(removed_time)
         # Drop the event's removed times before restoring so that
@@ -701,10 +705,12 @@ class Participant:
         for removed_time in self.removed_times:
             if cur_time < removed_time.event_timeblock.end_time:
                 new_removed_times.append(removed_time)
-                if not removed_time.removed_timeblock:
-                    removed_time.removed_timeblock = self.get_availability_overlap(removed_time.event_timeblock)
-                if removed_time.removed_timeblock:
-                    self.remove_from_availability(removed_time.removed_timeblock)
+                # Availability entered or reused since the event was saved may overlap it again
+                saved = {(tb.start_time, tb.end_time) for tb in removed_time.removed_timeblocks}
+                for removed_timeblock in self.get_availability_overlaps(removed_time.event_timeblock):
+                    self.remove_from_availability(removed_timeblock)
+                    if (removed_timeblock.start_time, removed_timeblock.end_time) not in saved:
+                        removed_time.removed_timeblocks.append(removed_timeblock)
         self.removed_times = new_removed_times
 
     @property
