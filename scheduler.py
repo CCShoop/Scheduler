@@ -7,7 +7,7 @@ import asyncio
 import aiohttp
 from typing import Literal
 from dotenv import load_dotenv
-from typing import Optional
+from typing import Callable, Optional
 from datetime import datetime, timedelta
 from discord import (app_commands, Interaction, Intents, Client, Embed, Color, Activity,
                      ButtonStyle, EntityType, TextChannel, ActivityType, Status, EventStatus,
@@ -107,6 +107,9 @@ ATTENDEES_LEFT_GRACE: timedelta = timedelta(minutes=5)
 # Time before an occurrence's start time that its start button becomes enabled.
 # At least START_TIME_DELAY, so events scheduled to start "immediately" can be started right away.
 START_BUTTON_LEAD: timedelta = timedelta(minutes=max(REMINDER_TIME_MINUTES, START_TIME_DELAY))
+
+# How long a non-participant who presses an event's cancel button is blocked from its buttons
+BLOCK_DURATION: timedelta = timedelta(minutes=5)
 
 
 # Time between cleanups of image files left behind by events the bot no longer has
@@ -745,6 +748,8 @@ class Event:
         The scheduler's member id while they are an unresolved participant, otherwise 0.
     unresolved_rescheduler_id: :class:`Optional[int]`
         The rescheduler's member id while they are an unresolved participant, otherwise 0.
+    blocked_users: :class:`Optional[list[Participant]]`
+        Non-participants blocked from the event's buttons, until their blocked_until.
     """
 
     def __init__(self,
@@ -778,7 +783,8 @@ class Event:
                  attendees_left_at: Optional[datetime] = None,
                  unresolved_participants: Optional[list[dict]] = None,
                  unresolved_scheduler_id: Optional[int] = 0,
-                 unresolved_rescheduler_id: Optional[int] = 0) -> None:
+                 unresolved_rescheduler_id: Optional[int] = 0,
+                 blocked_users: Optional[list[Participant]] = None) -> None:
         self.name: str = name
         self.guild: Guild = guild
         self.text_channel: TextChannel = text_channel
@@ -832,6 +838,7 @@ class Event:
         self.unresolved_scheduler_id: int = unresolved_scheduler_id
         self.unresolved_rescheduler_id: int = unresolved_rescheduler_id
         self.participants_resolve_retry_at: datetime = now()
+        self.blocked_users: list[Participant] = blocked_users or []
 
     async def update(self) -> None:
         """
@@ -1777,6 +1784,21 @@ class Event:
             participant = Participant(member=member)
             self.participants.append(participant)
 
+    def is_participant(self, user: User) -> bool:
+        """Indicates whether the user is a participant of the event."""
+        return user.id in [participant.member.id for participant in self.participants]
+
+    def is_blocked(self, user: User) -> bool:
+        """Indicates whether the user is blocked from the event's buttons, forgetting blocks that have ended."""
+        self.blocked_users = [blocked for blocked in self.blocked_users if blocked.blocked_until > now()]
+        return user.id in [blocked.member.id for blocked in self.blocked_users]
+
+    def block(self, user: User) -> None:
+        """Blocks the user from the event's buttons for BLOCK_DURATION."""
+        self.blocked_users = [blocked for blocked in self.blocked_users if blocked.member.id != user.id]
+        member = self.guild.get_member(user.id) or user
+        self.blocked_users.append(Participant(member=member, blocked_until=now() + BLOCK_DURATION))
+
     def get_participant(self, username_or_id) -> Participant:
         """
         Gets a participant with their nickname, username, or id.
@@ -1793,10 +1815,12 @@ class Event:
         None:
             If no participant is found matching the provided data.
         """
+        # Ids and usernames are unique, but anyone can set a nickname matching another member's username
+        for participant in self.participants:
+            if participant.member.id == username_or_id or participant.member.name == username_or_id:
+                return participant
         for participant in self.participants:
             if participant.member.nick and participant.member.nick == username_or_id:
-                return participant
-            if participant.member.name == username_or_id or participant.member.id == username_or_id:
                 return participant
         if type(username_or_id) is str:
             member = self.guild.get_member_named(username_or_id)
@@ -3038,6 +3062,11 @@ class Event:
             event_attendee_ids = set()
             event_attendees_left_at = None
 
+        # Blocked users, dropped when their member can't be found since blocks are short
+        event_blocked_users = [Participant.from_dict(event_guild, blocked_data) for blocked_data in data.get("blocked_users", [])]
+        event_blocked_users = [blocked for blocked in event_blocked_users
+                               if blocked.member is not None and blocked.blocked_until is not None and blocked.blocked_until > now()]
+
         # Voice channel prompt message
         event_voice_channel_prompt_message = None
         if event_voice_channel_deleted and data.get("voice_channel_prompt_message_id"):
@@ -3075,7 +3104,8 @@ class Event:
             attendees_left_at=event_attendees_left_at,
             unresolved_participants=event_unresolved_participants,
             unresolved_scheduler_id=data["scheduler_id"],
-            unresolved_rescheduler_id=data["rescheduler_id"]
+            unresolved_rescheduler_id=data["rescheduler_id"],
+            blocked_users=event_blocked_users
         )
         # Participants added from the text channel when none were saved
         for participant in event.participants:
@@ -3177,7 +3207,8 @@ class Event:
             'availability_input_timer': self.availability_input_timer.isoformat() if self.availability_input_timer is not None else None,
             'attendee_ids': sorted(self.attendee_ids),
             'attendees_left_at': self.attendees_left_at.isoformat() if self.attendees_left_at is not None else None,
-            'voice_channel_prompt_message_id': voice_channel_prompt_message_id
+            'voice_channel_prompt_message_id': voice_channel_prompt_message_id,
+            'blocked_users': [blocked.to_dict() for blocked in self.blocked_users if self.is_blocked(blocked.member)]
         }
 
     def __repr__(self) -> str:
@@ -3314,6 +3345,48 @@ async def respond_if_cancelled(event: Event, interaction: Interaction) -> bool:
     if not event.cancelled:
         return False
     await interaction.response.send_message(content=f"{event} has been cancelled.", ephemeral=True)
+    return True
+
+
+async def respond_if_refused(event: Event,
+                             interaction: Interaction,
+                             button_label: Optional[str] = None,
+                             still_usable: Optional[Callable[[], bool]] = None) -> bool:
+    """
+    Refuses an event button press if the event was cancelled, the user is blocked, or the user isn't a participant.
+    Non-participants are offered to join the event, unless button_label is None, which blocks them instead.
+
+    Arguments
+    ---------
+    event: :class:`Event`
+        The event the interaction is for.
+    interaction: :class:`Interaction`
+        The interaction to respond to.
+    button_label: :class:`Optional[str]`
+        The label of the pressed button, to tell non-participants to press it again after joining.
+        None blocks non-participants for BLOCK_DURATION instead.
+    still_usable: :class:`Optional[Callable[[], bool]]`
+        Whether the pressed button is still usable when the user joins.
+
+    Returns
+    -------
+    refused: :class:`bool`
+        True if the press was refused and the interaction has been responded to.
+    """
+    if await respond_if_cancelled(event, interaction):
+        return True
+    if not event.is_blocked(interaction.user):
+        if event.is_participant(interaction.user):
+            return False
+        if button_label is not None:
+            await interaction.response.send_message(content=f"You aren't a participant of {event}. Join it, then press {button_label} again.",
+                                                    view=JoinEventView(event, button_label, still_usable),
+                                                    ephemeral=True)
+            return True
+        logger.info(f"[{event}] {interaction.user} blocked for pressing cancel as a non-participant")
+        event.block(interaction.user)
+    await interaction.response.send_message(content=f"You're blocked from interacting with {event}. Try again later.",
+                                            ephemeral=True)
     return True
 
 
@@ -3504,14 +3577,14 @@ class AvailabilityButtons(View):
         button = Button(label=self.respond_label, style=ButtonStyle.green)
 
         async def respond_button_callback(interaction: Interaction):
-            if await respond_if_cancelled(self.event, interaction):
+            if await respond_if_refused(self.event, interaction, self.respond_label, lambda: not self.event.created):
                 return
             if self.event not in client.events:
                 client.events.append(self.event)
             am_title = f'Availability for {self.event}'
             if len(am_title) >= 45:
                 am_title = f"{am_title[:41]}..."
-            participant = self.event.get_participant(interaction.user.name)
+            participant = self.event.get_participant(interaction.user.id)
             if participant is None:
                 member = self.event.guild.get_member(interaction.user.id)
                 participant = Participant(member=member)
@@ -3535,12 +3608,12 @@ class AvailabilityButtons(View):
         button = Button(label=self.full_label, style=ButtonStyle.green)
 
         async def full_button_callback(interaction: Interaction):
-            if await respond_if_cancelled(self.event, interaction):
+            if await respond_if_refused(self.event, interaction, self.full_label, lambda: not self.event.created):
                 return
             if self.event not in client.events:
                 client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
-            participant = self.event.get_participant(interaction.user.name)
+            participant = self.event.get_participant(interaction.user.id)
             if participant is None:
                 await interaction.followup.send(content="Could not add you as a participant!",
                                                 ephemeral=True)
@@ -3591,12 +3664,12 @@ class AvailabilityButtons(View):
         button = Button(label=self.reuse_label, style=ButtonStyle.blurple)
 
         async def reuse_button_callback(interaction: Interaction):
-            if await respond_if_cancelled(self.event, interaction):
+            if await respond_if_refused(self.event, interaction, self.reuse_label, lambda: not self.event.created):
                 return
             if self.event not in client.events:
                 client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
-            participant = self.event.get_participant(interaction.user.name)
+            participant = self.event.get_participant(interaction.user.id)
             if participant is None:
                 await interaction.followup.send(content="Could not add you as a participant.",
                                                 ephemeral=True)
@@ -3637,16 +3710,12 @@ class AvailabilityButtons(View):
         button = Button(label=self.unsub_label, style=ButtonStyle.gray)
 
         async def unsub_button_callback(interaction: Interaction):
-            if await respond_if_cancelled(self.event, interaction):
+            if await respond_if_refused(self.event, interaction, self.unsub_label, lambda: not self.event.created):
                 return
             if self.event not in client.events:
                 client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
-            if interaction.user.id not in [participant.member.id for participant in self.event.participants]:
-                await interaction.followup.send(content="You are already not part of this event!",
-                                                ephemeral=True)
-                return
-            participant = self.event.get_participant(interaction.user.name)
+            participant = self.event.get_participant(interaction.user.id)
             if participant.subscribed:
                 logger.info(f'[{self.event}] {interaction.user.name} unsubscribed')
                 participant.subscribed = False
@@ -3672,7 +3741,7 @@ class AvailabilityButtons(View):
         button = Button(label=self.cancel_label, style=ButtonStyle.red)
 
         async def cancel_button_callback(interaction: Interaction):
-            if await respond_if_cancelled(self.event, interaction):
+            if await respond_if_refused(self.event, interaction):
                 return
             if self.event not in client.events:
                 client.events.append(self.event)
@@ -3723,10 +3792,10 @@ class EventButtons(View):
         self.cancel_label = "Cancel Event"
         self.start_callback = None
         self.end_callback = None
-        self.start_end_button = Button(label=self.start_label, style=ButtonStyle.blurple)
+        self.start_end_button = Button(label=self.start_label, style=ButtonStyle.green)
         self.end_and_forget_button = Button(label=self.end_and_forget_label, style=ButtonStyle.red)
         self.unsubscribe_button = Button(label=self.unsubscribe_label, style=ButtonStyle.gray)
-        self.reschedule_button = Button(label=self.reschedule_label, style=ButtonStyle.red)
+        self.reschedule_button = Button(label=self.reschedule_label, style=ButtonStyle.blurple)
         self.cancel_button = Button(label=self.cancel_label, style=ButtonStyle.red)
         self.add_start_end_button()
         self.add_end_and_forget_button()
@@ -3737,15 +3806,11 @@ class EventButtons(View):
     def add_start_end_button(self) -> None:
         """Sets up the Start/End button."""
         async def end_button_callback(interaction: Interaction):
-            if await respond_if_cancelled(self.event, interaction):
+            if await respond_if_refused(self.event, interaction, self.end_label, lambda: self.event.started):
                 return
             if self.event not in client.events:
                 client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
-            if interaction.user.id not in [participant.member.id for participant in self.event.participants]:
-                await interaction.followup.send(content="You are not a participant of this event.",
-                                                ephemeral=True)
-                return
             self.remove_item(self.start_end_button)
             self.remove_item(self.end_and_forget_button)
             self.remove_item(self.unsubscribe_button)
@@ -3753,7 +3818,7 @@ class EventButtons(View):
         self.end_callback = end_button_callback
 
         async def start_button_callback(interaction: Interaction):
-            if await respond_if_cancelled(self.event, interaction):
+            if await respond_if_refused(self.event, interaction, self.start_label, lambda: self.event.created and not self.event.started):
                 return
             if self.event not in client.events:
                 client.events.append(self.event)
@@ -3771,7 +3836,6 @@ class EventButtons(View):
                 await interaction.followup.send(content=f"{self.event} can't be started until <t:{start_button_time}:R>.",
                                                 ephemeral=True)
                 return
-            self.event.add_user_as_participant(interaction.user)
             if not self.event.is_external and interaction.user.id not in [member.id for member in self.event.voice_channel.members]:
                 logger.info(f"[{self.event}] {interaction.user} tried to press start button while not in the event's voice channel")
                 await interaction.followup.send(content=f"You must be in {self.event.voice_channel.mention} to start {self.event}!",
@@ -3790,21 +3854,18 @@ class EventButtons(View):
             self.start_end_button.disabled = self.event.start_button_disabled
         else:
             self.start_end_button.label = self.end_label
+            self.start_end_button.style = ButtonStyle.blurple
             self.start_end_button.callback = end_button_callback
         self.add_item(self.start_end_button)
 
     def add_end_and_forget_button(self) -> None:
         """Sets up the End and Forget button."""
         async def end_and_forget_button_callback(interaction: Interaction):
-            if await respond_if_cancelled(self.event, interaction):
+            if await respond_if_refused(self.event, interaction, self.end_and_forget_label, lambda: self.event.started):
                 return
             if self.event not in client.events:
                 client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
-            if interaction.user.id not in [participant.member.id for participant in self.event.participants]:
-                await interaction.followup.send(content="You are not a participant of this event.",
-                                                ephemeral=True)
-                return
             self.remove_item(self.start_end_button)
             self.remove_item(self.end_and_forget_button)
             self.remove_item(self.unsubscribe_button)
@@ -3825,16 +3886,12 @@ class EventButtons(View):
             The Unsubscribe button.
         """
         async def unsubscribe_button_callback(interaction: Interaction):
-            if await respond_if_cancelled(self.event, interaction):
+            if await respond_if_refused(self.event, interaction, self.unsubscribe_label, lambda: self.event.created):
                 return
             if self.event not in client.events:
                 client.events.append(self.event)
             await interaction.response.defer(ephemeral=True)
-            if interaction.user.id not in [participant.member.id for participant in self.event.participants]:
-                await interaction.followup.send(content="You are already not part of this event.",
-                                                ephemeral=True)
-                return
-            participant = self.event.get_participant(interaction.user.name)
+            participant = self.event.get_participant(interaction.user.id)
             if participant.subscribed:
                 if self.event.in_voice_channel_during_event(participant):
                     logger.info(f"[{self.event}] {interaction.user.name} tried to unsubscribe while in the event's voice channel")
@@ -3867,7 +3924,7 @@ class EventButtons(View):
             return
 
         async def reschedule_button_callback(interaction: Interaction):
-            if await respond_if_cancelled(self.event, interaction):
+            if await respond_if_refused(self.event, interaction, self.reschedule_label, lambda: self.event.created and not self.event.started):
                 return
             if self.event not in client.events:
                 client.events.append(self.event)
@@ -3896,14 +3953,10 @@ class EventButtons(View):
             return
 
         async def cancel_button_callback(interaction: Interaction):
-            if await respond_if_cancelled(self.event, interaction):
+            if await respond_if_refused(self.event, interaction):
                 return
             if self.event not in client.events:
                 client.events.append(self.event)
-            if interaction.user.id not in [participant.member.id for participant in self.event.participants]:
-                await interaction.response.send_message(content="You are not a participant of this event!",
-                                                        ephemeral=True)
-                return
             title = f"Cancel {self.event}"
             if len(title) >= 38:
                 title = f"{title[:34]}..."
@@ -3916,12 +3969,65 @@ class EventButtons(View):
 
     def convert(self) -> None:
         self.start_end_button.label = self.end_label
+        self.start_end_button.style = ButtonStyle.blurple
         self.start_end_button.callback = self.end_callback
         self.remove_item(self.unsubscribe_button)
         self.remove_item(self.reschedule_button)
         self.remove_item(self.cancel_button)
         self.add_item(self.end_and_forget_button)
         self.add_item(self.unsubscribe_button)
+
+
+class JoinEventView(View):
+    """
+    Represents the button offered to a non-participant who pressed one of an event's buttons,
+    letting them join the event before pressing it again.
+
+    Attributes
+    ----------
+    event: :class:`Event`
+        The event to join.
+    button_label: :class:`str`
+        The label of the button the user pressed.
+    still_usable: :class:`Optional[Callable[[], bool]]`
+        Whether the pressed button is still usable, the event may have moved on since the prompt was sent.
+    join_button: :class:`Button`
+        The Join Event button.
+    """
+
+    def __init__(self, event: Event, button_label: str, still_usable: Optional[Callable[[], bool]] = None) -> None:
+        super().__init__(timeout=None)
+        self.event = event
+        self.button_label = button_label
+        self.still_usable = still_usable
+        self.join_button = Button(label="Join Event", style=ButtonStyle.green)
+        self.join_button.callback = self.join_button_callback
+        self.add_item(self.join_button)
+
+    async def join_button_callback(self, interaction: Interaction) -> None:
+        if await respond_if_cancelled(self.event, interaction):
+            return
+        # Blocked since the prompt was sent
+        if self.event.is_blocked(interaction.user):
+            await interaction.response.edit_message(content=f"You're blocked from interacting with {self.event}. Try again later.",
+                                                    view=None)
+            return
+        if self.event.is_participant(interaction.user):
+            content = f"You're already a participant of {self.event}."
+        else:
+            logger.info(f'[{self.event}] {interaction.user} joined to press {self.button_label}')
+            self.event.add_user_as_participant(interaction.user)
+            content = f"You joined {self.event}."
+        if self.still_usable is None or self.still_usable():
+            content += f" Press {self.button_label} again."
+        else:
+            content += f" {self.button_label} can't be used anymore."
+        self.stop()
+        await interaction.response.edit_message(content=content, view=None)
+        if self.event.created:
+            await self.event.update_event_buttons_message()
+        else:
+            await self.event.update_availability_message()
 
 
 class AfterButtons(View):
@@ -4149,7 +4255,7 @@ class VoiceChannelPrompt(View):
         await self.event.move_to_voice_channel(voice_channel, mover)
 
     async def cancel_button_callback(self, interaction: Interaction) -> None:
-        if await respond_if_cancelled(self.event, interaction):
+        if await respond_if_refused(self.event, interaction):
             return
         await interaction.response.send_modal(CancelModal(event=self.event,
                                                           title=f"Cancel {self.event.get_limited_name(38)}"))

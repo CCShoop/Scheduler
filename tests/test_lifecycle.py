@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-from discord import EntityType, EventStatus
+from discord import ButtonStyle, EntityType, EventStatus
 
 from libs.participant import Participant, TimeBlock
 from fakes import FakeScheduledEvent, at, noop, run
@@ -39,7 +39,8 @@ class FakeInteraction:
         self.user = member
         self.responses = []
         self.followups = []
-        self.response = SimpleNamespace(defer=self._defer, send_message=self._send_message, send_modal=self._send_modal)
+        self.response = SimpleNamespace(defer=self._defer, send_message=self._send_message, send_modal=self._send_modal,
+                                        edit_message=self._edit_message)
         self.followup = SimpleNamespace(send=self._followup_send)
 
     async def _defer(self, **kwargs):
@@ -50,6 +51,9 @@ class FakeInteraction:
 
     async def _send_modal(self, modal):
         self.responses.append(("send_modal", modal))
+
+    async def _edit_message(self, **kwargs):
+        self.responses.append(("edit_message", kwargs))
 
     async def _followup_send(self, **kwargs):
         self.followups.append(kwargs)
@@ -460,6 +464,238 @@ class TestReschedule:
         run(event.reschedule())
         assert b_view_of_a.removed_times == []
         assert b_view_of_a.is_available_at(at(1, 20), event.duration)
+
+
+class TestRescheduleButton:
+    def test_participant_reschedules(self, env, monkeypatch):
+        event, _ = make_created_event(env)
+        reschedulers = []
+
+        async def fake_reschedule(self, rescheduler=None):
+            reschedulers.append(rescheduler)
+
+        monkeypatch.setattr(env.sched.Event, "reschedule", fake_reschedule)
+
+        async def click():
+            await env.sched.EventButtons(event).reschedule_button.callback(FakeInteraction(event.participants[0].member))
+
+        run(click())
+        assert reschedulers == [event.participants[0]]
+
+
+def event_buttons(env, event):
+    async def build():
+        return env.sched.EventButtons(event)
+    return run(build())
+
+
+def availability_buttons(env, event):
+    async def build():
+        return env.sched.AvailabilityButtons(event)
+    return run(build())
+
+
+def press(callback, member):
+    interaction = FakeInteraction(member)
+    run(callback(interaction))
+    return interaction
+
+
+class TestJoinPrompt:
+    @pytest.fixture
+    def scheduling(self, env):
+        event = env.make_event([env.make_participant("a")])
+        return event, availability_buttons(env, event)
+
+    @pytest.fixture
+    def created(self, env):
+        event, _ = make_created_event(env)
+        return event, event_buttons(env, event)
+
+    @pytest.fixture
+    def started(self, env):
+        event, _ = make_created_event(env, started=True)
+        return event, event_buttons(env, event)
+
+    @pytest.mark.parametrize("fixture, button, label", [
+        ("scheduling", "respond_button", "Respond"),
+        ("scheduling", "full_button", "Full Availability (Today)"),
+        ("scheduling", "reuse_button", "Use Existing Availability"),
+        ("scheduling", "unsub_button", "Unsubscribe / Resubscribe"),
+        ("created", "start_end_button", "Start Event"),
+        ("created", "unsubscribe_button", "Unsubscribe / Resubscribe"),
+        ("created", "reschedule_button", "Reschedule Event"),
+        ("started", "start_end_button", "End Event"),
+        ("started", "end_and_forget_button", "End and Forget"),
+    ])
+    def test_non_participant_is_offered_join(self, env, request, fixture, button, label):
+        event, buttons = request.getfixturevalue(fixture)
+        outsider = env.make_participant("outsider").member
+        participants_before = list(event.participants)
+        interaction = press(getattr(buttons, button).callback, outsider)
+        ((kind, kwargs),) = interaction.responses
+        assert kind == "send_message" and kwargs["ephemeral"]
+        assert isinstance(kwargs["view"], env.sched.JoinEventView)
+        assert f"press {label} again" in kwargs["content"]
+        assert event.participants == participants_before
+        assert not event.ended and not event.cancelled
+
+    def test_join_adds_participant(self, env, created):
+        event, _ = created
+        outsider = env.make_participant("outsider").member
+        interaction = press(env.sched.JoinEventView(event, "Reschedule Event").join_button_callback, outsider)
+        assert event.is_participant(outsider)
+        ((kind, kwargs),) = interaction.responses
+        assert kind == "edit_message" and kwargs["view"] is None
+        assert kwargs["content"].endswith("Press Reschedule Event again.")
+
+    def test_join_after_button_stopped_being_usable(self, env, created):
+        event, _ = created
+        outsider = env.make_participant("outsider").member
+        view = env.sched.JoinEventView(event, "Reschedule Event", lambda: not event.started)
+        event.started = True
+        interaction = press(view.join_button_callback, outsider)
+        assert "Reschedule Event can't be used anymore" in interaction.responses[0][1]["content"]
+
+    def test_join_twice_does_not_duplicate(self, env, created):
+        event, _ = created
+        outsider = env.make_participant("outsider").member
+        view = env.sched.JoinEventView(event, "Start Event")
+        press(view.join_button_callback, outsider)
+        interaction = press(view.join_button_callback, outsider)
+        assert [p.member.id for p in event.participants].count(outsider.id) == 1
+        assert "already a participant" in interaction.responses[0][1]["content"]
+
+
+class TestCancelBlock:
+    BLOCKED = "You're blocked from interacting with"
+
+    def test_non_participant_cancel_is_blocked_without_join(self, env):
+        event, _ = make_created_event(env)
+        outsider = env.make_participant("outsider").member
+        interaction = press(event_buttons(env, event).cancel_button.callback, outsider)
+        ((kind, kwargs),) = interaction.responses
+        assert kind == "send_message" and "view" not in kwargs
+        assert kwargs["content"] == f"{self.BLOCKED} {event}. Try again later."
+        assert event.is_blocked(outsider)
+
+    def test_availability_cancel_blocks_non_participant(self, env):
+        event = env.make_event([env.make_participant("a")])
+        outsider = env.make_participant("outsider").member
+        press(availability_buttons(env, event).cancel_button.callback, outsider)
+        assert event.is_blocked(outsider)
+
+    def test_voice_channel_prompt_cancel_blocks_non_participant(self, env):
+        event = env.make_event([env.make_participant("a")])
+        outsider = env.make_participant("outsider").member
+        press(env.sched.VoiceChannelPrompt(event).cancel_button_callback, outsider)
+        assert event.is_blocked(outsider)
+
+    def test_participant_cancel_opens_modal(self, env):
+        event, _ = make_created_event(env)
+        interaction = press(event_buttons(env, event).cancel_button.callback, event.participants[0].member)
+        assert interaction.responses[0][0] == "send_modal"
+        assert event.blocked_users == []
+
+    def test_blocked_user_gets_no_join_offer(self, env):
+        event, _ = make_created_event(env)
+        outsider = env.make_participant("outsider").member
+        buttons = event_buttons(env, event)
+        press(buttons.cancel_button.callback, outsider)
+        for button in (buttons.reschedule_button, buttons.start_end_button, buttons.unsubscribe_button, buttons.cancel_button):
+            ((_, kwargs),) = press(button.callback, outsider).responses
+            assert kwargs["content"].startswith(self.BLOCKED) and "view" not in kwargs
+        assert not event.is_participant(outsider)
+
+    def test_join_prompt_from_before_block_is_refused(self, env):
+        event, _ = make_created_event(env)
+        outsider = env.make_participant("outsider").member
+        view = env.sched.JoinEventView(event, "Start Event")
+        press(event_buttons(env, event).cancel_button.callback, outsider)
+        interaction = press(view.join_button_callback, outsider)
+        assert interaction.responses[0][1]["content"].startswith(self.BLOCKED)
+        assert not event.is_participant(outsider)
+
+    def test_block_ends_after_five_minutes(self, env, monkeypatch):
+        monkeypatch.setattr(env.sched, "now", lambda: at(0, 12))
+        event, _ = make_created_event(env)
+        outsider = env.make_participant("outsider").member
+        press(event_buttons(env, event).cancel_button.callback, outsider)
+        monkeypatch.setattr(env.sched, "now", lambda: at(0, 12, 4))
+        assert event.is_blocked(outsider)
+        monkeypatch.setattr(env.sched, "now", lambda: at(0, 12, 5))
+        assert not event.is_blocked(outsider)
+        assert event.blocked_users == []
+        interaction = press(event_buttons(env, event).start_end_button.callback, outsider)
+        assert isinstance(interaction.responses[0][1]["view"], env.sched.JoinEventView)
+
+    def test_block_is_saved_and_restored(self, env, monkeypatch):
+        event = env.make_event([env.make_participant("a")])
+        outsider = env.make_participant("outsider").member
+        press(availability_buttons(env, event).cancel_button.callback, outsider)
+        data = event.to_dict()
+        (saved,) = data["blocked_users"]
+        assert saved["member_id"] == outsider.id
+        assert env.sched.datetime.fromisoformat(saved["blocked_until"]) == event.blocked_users[0].blocked_until
+        assert not any(p["member_id"] == outsider.id for p in data["participants"])
+        env.sched.client.events.remove(event)
+        monkeypatch.setattr(env.sched.client, "get_guild", lambda guild_id: env.guild)
+        restored = run(env.sched.Event.from_dict(json.loads(json.dumps(data))))
+        assert restored.is_blocked(outsider)
+        assert not restored.is_participant(outsider)
+
+    def test_expired_block_is_not_saved(self, env, monkeypatch):
+        monkeypatch.setattr(env.sched, "now", lambda: at(0, 12))
+        event, _ = make_created_event(env)
+        outsider = env.make_participant("outsider").member
+        press(event_buttons(env, event).cancel_button.callback, outsider)
+        monkeypatch.setattr(env.sched, "now", lambda: at(0, 13))
+        assert event.to_dict()["blocked_users"] == []
+
+
+class TestButtonStyles:
+    def test_start_is_green_and_reschedule_blurple(self, env):
+        event, _ = make_created_event(env)
+        buttons = env.sched.EventButtons(event)
+        assert buttons.start_end_button.style == ButtonStyle.green
+        assert buttons.reschedule_button.style == ButtonStyle.blurple
+
+    def test_end_is_blurple(self, env):
+        event, _ = make_created_event(env)
+        buttons = env.sched.EventButtons(event)
+        buttons.convert()
+        assert buttons.start_end_button.style == ButtonStyle.blurple
+        started, _ = make_created_event(env, started=True)
+        assert env.sched.EventButtons(started).start_end_button.style == ButtonStyle.blurple
+
+
+class TestNicknameCollision:
+    def test_nickname_matching_username_does_not_steal_lookup(self, env):
+        alice = env.make_participant("alice")
+        bob = env.make_participant("bob")
+        alice.member.nick = "bob"
+        event, _ = make_created_event(env, participants=[alice, bob])
+        assert event.get_participant("bob") is bob
+        assert event.get_participant(bob.member.id) is bob
+
+    def test_nickname_still_finds_participant(self, env):
+        alice = env.make_participant("alice")
+        alice.member.nick = "ally"
+        event, _ = make_created_event(env, participants=[alice])
+        assert event.get_participant("ally") is alice
+
+    def test_unsubscribe_button_uses_clicker_not_nickname_match(self, env):
+        alice = env.make_participant("alice")
+        bob = env.make_participant("bob")
+        alice.member.nick = "bob"
+        event, _ = make_created_event(env, participants=[alice, bob, env.make_participant("c")])
+
+        async def click():
+            await env.sched.EventButtons(event).unsubscribe_button.callback(FakeInteraction(bob.member))
+
+        run(click())
+        assert alice.subscribed
+        assert not bob.subscribed
 
 
 class TestUpdateWhileCreated:

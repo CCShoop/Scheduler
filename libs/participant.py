@@ -3,6 +3,7 @@ from discord import Guild, Member
 from asyncio import Lock
 from datetime import date, datetime, timedelta
 from calendar import monthrange
+from typing import Optional
 
 
 DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF = 0
@@ -230,6 +231,8 @@ class Participant:
         The list of removed times for other events.
     full_availability_flag: :class:`bool`
         The full availability flag for the participant.
+    blocked_until: :class:`Optional[datetime]`
+        When the member's block from interacting with the event ends, None if they aren't blocked.
     """
 
     def __init__(self,
@@ -240,7 +243,8 @@ class Participant:
                  unavailable: bool = False,
                  removed_times: list = None,
                  full_availability_flag: bool = False,
-                 note: str = "") -> None:
+                 note: str = "",
+                 blocked_until: Optional[datetime] = None) -> None:
         self.member = member
         self.availability = availability or []
         self.answered = answered
@@ -249,6 +253,7 @@ class Participant:
         self.removed_times = removed_times or []
         self.full_availability_flag = full_availability_flag
         self.note = note
+        self.blocked_until = blocked_until
         self.msg_lock = Lock()
 
     def is_available_at(self, time: datetime, duration: timedelta) -> bool:
@@ -744,7 +749,8 @@ class Participant:
             removed_times=[RemovedTime.from_dict(removed_time) for removed_time in data['removed_time']],
             full_availability_flag=data['full_availability_flag'],
             note=data['note'],
-            availability=[TimeBlock.from_dict(timeblock_data) for timeblock_data in data['availability']]
+            availability=[TimeBlock.from_dict(timeblock_data) for timeblock_data in data['availability']],
+            blocked_until=datetime.fromisoformat(data['blocked_until']) if data.get('blocked_until') else None
         )
 
     def to_dict(self) -> dict:
@@ -757,7 +763,8 @@ class Participant:
             'removed_time': [removed_time.to_dict() for removed_time in self.removed_times],
             'full_availability_flag': self.full_availability_flag,
             'note': self.note,
-            'availability': [timeblock.to_dict() for timeblock in self.availability]
+            'availability': [timeblock.to_dict() for timeblock in self.availability],
+            'blocked_until': self.blocked_until.isoformat() if self.blocked_until else None
         }
 
     def __repr__(self) -> str:

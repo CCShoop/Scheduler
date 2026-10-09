@@ -153,9 +153,10 @@ class TestVoiceChannelDeleted:
         assert interaction.responses[0][0] == "send_message"
 
     def test_cancel_button_opens_cancel_modal(self, env):
-        event = env.make_event([env.make_participant("a")])
+        participant = env.make_participant("a")
+        event = env.make_event([participant])
         delete_channel(env, env.voice_channel)
-        interaction = FakeInteraction(SimpleNamespace(name="a", nick=None))
+        interaction = FakeInteraction(participant.member)
         run(event.voice_channel_prompt.cancel_button_callback(interaction))
         (kind, modal), = interaction.responses
         assert kind == "send_modal" and isinstance(modal, env.sched.CancelModal)
