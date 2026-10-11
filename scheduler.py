@@ -2044,7 +2044,9 @@ class Event:
         embed: :class:`Embed`
             The embed containing each participant's availability.
         """
-        embed = Embed(title='Availabilities', color=Color.blue())
+        embed = Embed(title="Availabilities", color=Color.blue())
+        if self.scheduling_status == "No common availability":
+            embed.description = self.scheduling_status
         for participant in self.participants:
             participantName = f"{participant}"
             availString = participant.availability_string
