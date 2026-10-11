@@ -1635,8 +1635,8 @@ class Event:
                             value="",
                             inline=False)
         if not self.created:
-            embed.add_field(name="Times out in",
-                            value=f"{get_time_str_from_minutes(self.timeout_minutes)}",
+            embed.add_field(name="Times out",
+                            value=print_time_until(self.timeout_at),
                             inline=False)
         else:
             if end_time is None and not self.started:
