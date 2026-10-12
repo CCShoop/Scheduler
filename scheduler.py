@@ -1641,16 +1641,16 @@ class Event:
         else:
             if end_time is None and not self.started:
                 if self.mins_until_start > 0:
-                    embed.add_field(name=f"Starts {print_time_until(self.start_times[0])}",
-                                    value="",
+                    embed.add_field(name="Starts",
+                                    value=print_time_until(self.start_times[0]),
                                     inline=False)
                 elif self.mins_until_start == 0:
                     embed.add_field(name="Starting soon",
                                     value="",
                                     inline=False)
                 else:
-                    embed.add_field(name=f"Start time was {print_time_until(self.start_times[0])}",
-                                    value="",
+                    embed.add_field(name="Start time was",
+                                    value=print_time_until(self.start_times[0]),
                                     inline=False)
             # Event is in progress
             elif end_time is None and self.started:
