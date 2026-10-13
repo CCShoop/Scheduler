@@ -17,6 +17,9 @@ class FakeVoiceClient:
         self.channel = channel
         self.log = log
 
+    def is_connected(self):
+        return True
+
     def play(self, source, after=None):
         self.log.append(("play", self.channel.id, source))
         after(None)
@@ -54,6 +57,7 @@ def voice(monkeypatch):
     guild.voice_client = None
     announcer_lib.set_engine(guild.id, ESPEAK_NG)
     monkeypatch.setattr(announcer_lib, "missing_requirements", lambda engine: [])
+    monkeypatch.setattr(announcer_lib, "SETTLE_SECONDS", 0)
 
     async def fake_synthesize(engine, text, path):
         log.append(("synthesize", engine, text))
@@ -428,3 +432,19 @@ class TestPersistence:
         announcer_lib.set_engine(guild.id, ESPEAK_NG)
         run(sched.on_guild_remove(guild))
         assert guild.id not in announcer_lib.guild_engines
+
+
+class TestIsReady:
+    def make_client(self, connected=True, dave_protocol_version=0, can_encrypt=False):
+        connection = SimpleNamespace(dave_protocol_version=dave_protocol_version, can_encrypt=can_encrypt)
+        return SimpleNamespace(is_connected=lambda: connected, _connection=connection)
+
+    def test_not_connected(self):
+        assert not announcer_lib.is_ready(self.make_client(connected=False))
+
+    def test_connected_without_encryption(self):
+        assert announcer_lib.is_ready(self.make_client())
+
+    def test_waits_for_encryption(self):
+        assert not announcer_lib.is_ready(self.make_client(dave_protocol_version=1))
+        assert announcer_lib.is_ready(self.make_client(dave_protocol_version=1, can_encrypt=True))

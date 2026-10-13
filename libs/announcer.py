@@ -36,9 +36,13 @@ ANNOUNCEMENTS = {
            "ending": "イベント「{name}」が終わります。"},
 }
 
-CONNECT_TIMEOUT_SECONDS: int = 15
+CONNECT_TIMEOUT_SECONDS: int = 30
 SYNTHESIZE_TIMEOUT_SECONDS: int = 30
 PLAY_TIMEOUT_SECONDS: int = 30
+# How long to wait after joining for the voice connection's end-to-end encryption to be ready
+READY_TIMEOUT_SECONDS: int = 10
+# Extra time after joining before playing, so listeners' clients are receiving the bot's audio when it starts
+SETTLE_SECONDS: float = 0.5
 
 # Engine each guild chose, guilds without one don't get announcements
 guild_engines: dict[int, str] = {}
@@ -306,6 +310,29 @@ def get_error_line(stderr: str) -> str:
     return lines[-1][:300] if lines else "no error output"
 
 
+def is_ready(voice_client) -> bool:
+    """
+    Indicates whether the voice client can send audio that listeners will hear: it's connected, and if the call is
+    end-to-end encrypted (DAVE), its encryption session is ready. Audio sent before then is dropped by listeners' clients.
+    """
+    if not voice_client.is_connected():
+        return False
+    # discord.py doesn't expose the DAVE handshake, which finishes after connect() returns
+    connection = getattr(voice_client, "_connection", None)
+    if connection is None or not getattr(connection, "dave_protocol_version", 0):
+        return True
+    return connection.can_encrypt
+
+
+async def wait_until_ready(voice_client) -> None:
+    """Waits until the voice client is ready to send audio, up to READY_TIMEOUT_SECONDS, then for SETTLE_SECONDS."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + READY_TIMEOUT_SECONDS
+    while not is_ready(voice_client) and loop.time() < deadline:
+        await asyncio.sleep(0.05)
+    await asyncio.sleep(SETTLE_SECONDS)
+
+
 def has_listeners(channel: Union[VoiceChannel, StageChannel]) -> bool:
     """Indicates whether anyone other than bots is in the channel to hear an announcement."""
     return any(not getattr(member, "bot", False) for member in channel.members)
@@ -380,6 +407,7 @@ class Announcer:
             # Synthesized before joining so the bot doesn't sit silently in the channel
             path = await synthesize_announcement(engine, text, directory)
             voice_client = guild.voice_client
+            joined = voice_client is None or voice_client.channel != channel
             if voice_client is None:
                 voice_client = await channel.connect(timeout=CONNECT_TIMEOUT_SECONDS, self_deaf=True)
             elif voice_client.channel != channel:
@@ -387,6 +415,9 @@ class Announcer:
             if isinstance(channel, StageChannel):
                 # Bots join stages in the audience
                 await guild.me.edit(suppress=False)
+            if joined:
+                # Playing right after joining cuts off the start of the announcement
+                await wait_until_ready(voice_client)
             finished = asyncio.Event()
             loop = asyncio.get_running_loop()
 
