@@ -1035,6 +1035,17 @@ class Event:
                     intersected_time_blocks.append(TimeBlock(start_time, end_time))
         return intersected_time_blocks
 
+    def get_occupied_timeblocks(self) -> list[TimeBlock]:
+        """
+        Gets the time blocks taken by created events in the same location, including every occurrence of a multi event.
+        """
+        conflicting_events = [event for event in client.events if event.same_location(self) and event.created]
+        return [
+            TimeBlock(start_time=start_time, end_time=start_time + event.scheduled_duration)
+            for event in conflicting_events
+            for start_time in event.start_times
+        ]
+
     def compare_availabilities(self) -> None:
         """
         Compares availabilites of all subscribed participants to select (a) start time(s) for the event.
@@ -1048,13 +1059,7 @@ class Event:
 
         current_time = now() + timedelta(minutes=START_TIME_DELAY)
 
-        # Get events in the same location and then their timeblocks, including every occurrence of a multi event
-        conflicting_events = [event for event in client.events if event.same_location(self) and event.created]
-        occupied_timeblocks = [
-            TimeBlock(start_time=start_time, end_time=start_time + event.scheduled_duration)
-            for event in conflicting_events
-            for start_time in event.start_times
-        ]
+        occupied_timeblocks = self.get_occupied_timeblocks()
 
         # Check if the voice channel is available in [START_TIME_DELAY] minutes
         all_participants_and_vc_available = True
