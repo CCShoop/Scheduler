@@ -453,6 +453,13 @@ class TestTimeout:
         assert event not in env.sched.client.events
         assert env.text_channel.sent[-1]["embed"].title == "Event Cancelled"
 
+    def test_timed_out_event_gets_schedule_again_buttons(self, env):
+        event = env.make_event([env.make_participant("a")])
+        event.timeout_at = env.sched.now() - timedelta(minutes=1)
+        run(event.update_timeout())
+        assert env.text_channel.sent[-1]["view"] is event.after_buttons
+        assert event.after_buttons in env.sched.client.schedule_again_events
+
     def test_resends_availability_message_after_interval(self, env, monkeypatch):
         resends = []
 

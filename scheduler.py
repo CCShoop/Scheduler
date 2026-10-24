@@ -981,7 +981,7 @@ class Event:
             notif_msg = f"{self.get_names_string(subscribed_only=True, mention=True)}\n"
             notif_msg += f"Scheduling for **{self}** has timed out and has been cancelled.\n"
             logger.info(f"[{self}] timed out and is being cancelled")
-            await self.cancel(reason=notif_msg)
+            await self.cancel(reason=notif_msg, canceller="Event Scheduler", schedule_again=True)
             cancelled = True
         return cancelled
 
