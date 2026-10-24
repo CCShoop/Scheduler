@@ -1176,7 +1176,8 @@ class Event:
         start_timestamp = int(self.start_times[0].timestamp())
         embed = Embed(title="Event Reminder!",
                       description=f"{self} is scheduled to start <t:{start_timestamp}:R>.",
-                      color=Color.orange())
+                      color=Color.orange(),
+                      url=self.event_buttons_message.jump_url if self.event_buttons_message else None)
         embed.timestamp = self.start_times[0]
         if self.image_url:
             embed.set_thumbnail(url=self.image_url)
