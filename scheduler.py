@@ -841,6 +841,8 @@ class Event:
         self.unresolved_scheduler_id: int = unresolved_scheduler_id
         self.unresolved_rescheduler_id: int = unresolved_rescheduler_id
         self.participants_resolve_retry_at: datetime = now()
+        # Participants left without availability by expiry or another event, to be told on the next update
+        self.expired_participants: list[Participant] = []
         self.blocked_users: list[Participant] = blocked_users or []
 
     async def update(self) -> None:
@@ -888,6 +890,8 @@ class Event:
             # Timeout check
             if await self.update_timeout():
                 return
+            availability_state = self.availability_state
+            self.confirm_participants()
             if self.input_timer_elapsed:
                 # Multi event availability cooldown finished
                 self.stop_input_timer()
@@ -898,6 +902,11 @@ class Event:
                     await self.update_messages()
             elif not self.input_timer_running:
                 await self.create_if_possible()
+            # Availability can expire or be taken by another event without any input,
+            # e.g. Full Availability passing its cutoff
+            if not self.created and not self.cancelled and self.availability_state != availability_state:
+                await self.update_availability_message()
+            await self.send_expired_availability_messages()
         # Event has been created
         else:
             if await self.cancel_if_everyone_unsubscribed():
@@ -2701,15 +2710,51 @@ class Event:
         False
             If at least one participant has not yet responded.
         """
+        # Confirm everyone, so participants after an unanswered one are shown as unanswered too
+        self.confirm_participants()
         if self.multi_event:
             if self.input_timer_running and not self.input_timer_elapsed:
                 return False
+        return all(participant.answered for participant in self.participants if participant.subscribed)
+
+    def confirm_participants(self) -> None:
+        """Drops expired and too short availability of subscribed participants, unanswering those left without any."""
         for participant in self.participants:
             if participant.subscribed:
+                was_answered = participant.answered
                 participant.confirm_answered(duration=self.duration)
-                if not participant.answered:
-                    return False
-        return True
+                if was_answered and not participant.answered and participant not in self.expired_participants:
+                    self.expired_participants.append(participant)
+
+    async def send_expired_availability_messages(self) -> None:
+        """DMs participants whose availability expired or was taken by another event without any input from them."""
+        expired_participants, self.expired_participants = self.expired_participants, []
+        if self.created or self.cancelled:
+            return
+        for participant in expired_participants:
+            # Responded again or left since
+            if participant.answered or not participant.subscribed or participant not in self.participants:
+                continue
+            embed = Embed(title=self.get_limited_name(256),
+                          description="Your availability has expired or was taken by another event.",
+                          url=self.availability_message.jump_url if self.availability_message else None)
+            try:
+                await participant.member.send(embed=embed)
+            except Exception as e:
+                logger.error(f"[{self}] Failed to send expired availability message to {participant.name}: {e}")
+
+    @property
+    def availability_state(self) -> list:
+        """
+        What the availability message shows of each participant,
+        ignoring availability start times that are trimmed to the current time.
+        """
+        return [(participant.member.id,
+                 participant.answered,
+                 participant.full_availability_flag,
+                 [timeblock.end_time for timeblock in participant.availability],
+                 [(removed_time.event_name, removed_time.event_timeblock.start_time) for removed_time in participant.removed_times])
+                for participant in self.participants]
 
     @property
     def has_image_saved(self) -> bool:

@@ -134,6 +134,15 @@ class TestCreation:
         assert env.guild.created == []
         assert not event.created
 
+    def test_everyone_answered_confirms_participants_after_an_unanswered_one(self, env):
+        """Regression: a participant whose availability was taken by another event stayed answered."""
+        a = env.make_participant("a")
+        b = env.make_participant("b", [TimeBlock(at(1, 20), at(1, 22))])
+        event = env.make_event([a, b])
+        b.availability = []
+        assert not event.everyone_answered
+        assert not b.answered
+
     def test_make_scheduled_events_only_creates_missing(self, env):
         existing = FakeScheduledEvent(at(1, 20))
         event = env.make_event([env.make_participant("a")], multi_event=True,
@@ -220,6 +229,84 @@ class TestUpdate:
         event.availability_input_timer = datetime.now().astimezone() - timedelta(seconds=env.sched.AVAILABILITY_COOLDOWN_SECONDS + 1)
         assert event.input_timer_elapsed
         assert event.input_timer_running
+
+    def test_expired_availability_updates_availability_message(self, env, monkeypatch):
+        calls = []
+
+        async def fake_update_availability_message(self):
+            calls.append(self)
+
+        monkeypatch.setattr(env.sched.Event, "update_availability_message", fake_update_availability_message)
+        now = env.sched.now()
+        a = env.make_participant("a", [TimeBlock(now - timedelta(hours=2), now - timedelta(minutes=1))])
+        a.full_availability_flag = True
+        b = env.make_participant("b")
+        event = env.make_event([a, b])
+        sent = []
+
+        async def send(**kwargs):
+            sent.append(kwargs["embed"])
+
+        a.member.send = send
+        b.member.send = send
+        run(event.update())
+        assert not a.answered
+        assert not a.full_availability_flag
+        assert calls == [event]
+        # Only the participant whose availability expired is told, and only once
+        assert [embed.description for embed in sent] == ["Your availability has expired or was taken by another event."]
+        # Nothing changed since
+        run(event.update())
+        assert calls == [event]
+        assert len(sent) == 1
+
+    def test_availability_taken_by_another_event_sends_dm_on_next_update(self, env):
+        a = env.make_participant("a", [TimeBlock(at(1, 20), at(1, 22))])
+        b = env.make_participant("b")
+        event = env.make_event([a, b])
+        sent = []
+
+        async def send(**kwargs):
+            sent.append(kwargs["embed"])
+
+        a.member.send = send
+        # Another event's creation removes a's availability and updates this event's messages
+        a.remove_availability_for_event("other", [TimeBlock(at(1, 19), at(1, 23))])
+        assert not event.everyone_answered
+        run(event.update())
+        assert len(sent) == 1
+
+    def test_own_input_leaving_no_availability_sends_no_dm(self, env):
+        a = env.make_participant("a", [TimeBlock(at(1, 20), at(1, 22))])
+        b = env.make_participant("b")
+        event = env.make_event([a, b])
+        sent = []
+
+        async def send(**kwargs):
+            sent.append(kwargs["embed"])
+
+        a.member.send = send
+        # e.g. the availability modal, which confirms the participant directly
+        a.availability = []
+        a.confirm_answered(duration=event.duration)
+        run(event.update())
+        assert sent == []
+
+    def test_clearing_availability_sends_no_dm(self, env):
+        """e.g. deselecting Full Availability, or rescheduling"""
+        a = env.make_participant("a", [TimeBlock(at(1, 20), at(1, 22))])
+        b = env.make_participant("b")
+        event = env.make_event([a, b])
+        sent = []
+
+        async def send(**kwargs):
+            sent.append(kwargs["embed"])
+
+        a.member.send = send
+        a.set_no_availability()
+        run(event.update())
+        assert not a.answered
+        assert sent == []
 
     def test_removes_participants_who_left_the_text_channel(self, env):
         a = env.make_participant("a")

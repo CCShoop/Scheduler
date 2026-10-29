@@ -374,6 +374,9 @@ class Participant:
             self.availability.clear()
         else:
             self.availability = [tb for tb in self.availability if tb.start_time.date() != date]
+        # Unanswered here rather than by a later confirm_answered(), which would take it as expiry
+        if not self.availability:
+            self.answered = False
 
     def set_specific_availability(self, avail_string: str, date_string: str) -> None:
         """
