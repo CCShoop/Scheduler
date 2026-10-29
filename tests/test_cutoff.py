@@ -16,6 +16,11 @@ def guilds(sched, monkeypatch):
     return guild_list
 
 
+def cutoffs(sched):
+    """The saved cutoffs by user ID."""
+    return {user.id: user.cutoff for user in sched.participant_lib.users}
+
+
 def add_member(guild, member_id, name="user"):
     member = make_member(member_id, name)
     guild.members[member_id] = member
@@ -26,7 +31,7 @@ class TestFullAvailability:
     def test_uses_the_users_cutoff(self, env):
         a = env.make_participant("a")
         b = env.make_participant("b")
-        env.sched.participant_lib.user_cutoffs[a.member.id] = 4
+        env.sched.participant_lib.update_user(a.member.id, "user", cutoff=4)
         a.set_full_availability(date=at(1, 0))
         b.set_full_availability(date=at(1, 0))
         assert (a.availability[0].start_time, a.availability[0].end_time) == (at(1, 0), at(2, 4))
@@ -34,7 +39,7 @@ class TestFullAvailability:
 
     def test_full_keyword_uses_the_users_cutoff(self, env):
         a = env.make_participant("a")
-        env.sched.participant_lib.user_cutoffs[a.member.id] = 3
+        env.sched.participant_lib.update_user(a.member.id, "user", cutoff=3)
         a.set_specific_availability("full", at(1, 0).strftime("%Y-%m-%d"))
         assert (a.availability[0].start_time, a.availability[0].end_time) == (at(1, 0), at(2, 3))
 
@@ -49,18 +54,18 @@ class TestCutoffCommand:
 
     def test_saves_the_users_cutoff(self, env):
         self.use(env, 7, 3)
-        assert env.sched.participant_lib.user_cutoffs == {7: 3}
+        assert cutoffs(env.sched) == {7: 3}
 
     def test_blank_resets_to_the_default(self, env):
-        env.sched.participant_lib.user_cutoffs[7] = 3
+        env.sched.participant_lib.update_user(7, "user", cutoff=3)
         content = self.use(env, 7, None)
-        assert env.sched.participant_lib.user_cutoffs == {}
+        assert cutoffs(env.sched) == {}
         assert content == "Your Full Availability now extends to midnight."
 
     def test_default_value_is_not_saved(self, env):
-        env.sched.participant_lib.user_cutoffs[7] = 3
+        env.sched.participant_lib.update_user(7, "user", cutoff=3)
         self.use(env, 7, DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF)
-        assert env.sched.participant_lib.user_cutoffs == {}
+        assert cutoffs(env.sched) == {}
 
     def test_discord_limits_hours_to_negative_6_through_23(self, sched):
         (hours,) = sched.cutoff_command.parameters
@@ -70,48 +75,48 @@ class TestCutoffCommand:
     def test_rejects_out_of_range(self, env, hours):
         content = self.use(env, 7, hours)
         assert "between -6 and 23" in content
-        assert env.sched.participant_lib.user_cutoffs == {}
+        assert cutoffs(env.sched) == {}
 
     @pytest.mark.parametrize("hours, time", [(-6, "6 PM"), (-2, "10 PM"), (1, "1 AM"), (12, "noon"), (23, "11 PM")])
     def test_reply_shows_the_time_of_day(self, env, hours, time):
         content = self.use(env, 7, hours)
-        assert env.sched.participant_lib.user_cutoffs == {7: hours}
+        assert cutoffs(env.sched) == {7: hours}
         assert content == f"Your Full Availability now extends to {time}."
 
     def test_only_changes_the_users_own_cutoff(self, env):
-        env.sched.participant_lib.user_cutoffs[8] = 5
+        env.sched.participant_lib.update_user(8, "user", cutoff=5)
         self.use(env, 7, 3)
-        assert env.sched.participant_lib.user_cutoffs == {7: 3, 8: 5}
+        assert cutoffs(env.sched) == {7: 3, 8: 5}
 
 
 class TestPersistence:
     def test_saved_with_string_keys(self, sched):
-        sched.participant_lib.user_cutoffs[7] = 3
-        assert sched.client.events_dict["user_cutoffs"] == {"7": 3}
+        sched.participant_lib.update_user(7, "user", cutoff=3)
+        assert sched.client.events_dict["users"] == [{"id": 7, "name": "user", "cutoff": 3, "timezone": "ET"}]
 
     def test_loaded_on_startup(self, sched, guilds, monkeypatch):
         guild = FakeGuild()
         add_member(guild, 7)
         guilds.append(guild)
         monkeypatch.setattr(sched.client, "loaded_json", False)
-        monkeypatch.setattr(sched.persist, "read", lambda: {"events": [], "user_cutoffs": {"7": 3}})
+        monkeypatch.setattr(sched.persist, "read", lambda: {"events": [], "users": [{"id": 7, "name": "user", "cutoff": 3}]})
         run(sched.client.retrieve_events())
-        assert sched.participant_lib.user_cutoffs == {7: 3}
+        assert cutoffs(sched) == {7: 3}
 
     def test_users_who_left_while_offline_are_deleted_on_startup(self, sched, guilds, monkeypatch):
         guild = FakeGuild()
         add_member(guild, 7)
         guilds.append(guild)
         monkeypatch.setattr(sched.client, "loaded_json", False)
-        monkeypatch.setattr(sched.persist, "read", lambda: {"events": [], "user_cutoffs": {"7": 3, "8": 5}})
+        monkeypatch.setattr(sched.persist, "read", lambda: {"events": [], "users": [{"id": 7, "name": "user", "cutoff": 3}, {"id": 8, "name": "user", "cutoff": 5}]})
         run(sched.client.retrieve_events())
-        assert sched.participant_lib.user_cutoffs == {7: 3}
+        assert cutoffs(sched) == {7: 3}
 
     def test_data_without_cutoffs_loads(self, sched, guilds, monkeypatch):
         monkeypatch.setattr(sched.client, "loaded_json", False)
         monkeypatch.setattr(sched.persist, "read", lambda: {"events": []})
         run(sched.client.retrieve_events())
-        assert sched.participant_lib.user_cutoffs == {}
+        assert cutoffs(sched) == {}
 
 
 class TestPruning:
@@ -123,26 +128,27 @@ class TestPruning:
         guild = FakeGuild()
         add_member(guild, 7)
         guilds.append(guild)
-        sched.participant_lib.user_cutoffs[7] = 3
+        sched.participant_lib.update_user(7, "user", cutoff=3)
         self.leave(sched, guild, 7)
-        assert sched.participant_lib.user_cutoffs == {}
+        assert cutoffs(sched) == {}
 
     def test_kept_while_user_shares_another_guild(self, sched, guilds):
         first, second = FakeGuild(), FakeGuild()
         add_member(first, 7)
         add_member(second, 7)
         guilds.extend([first, second])
-        sched.participant_lib.user_cutoffs[7] = 3
+        sched.participant_lib.update_user(7, "user", cutoff=3)
         self.leave(sched, first, 7)
-        assert sched.participant_lib.user_cutoffs == {7: 3}
+        assert cutoffs(sched) == {7: 3}
 
     def test_other_users_are_untouched(self, sched, guilds):
         guild = FakeGuild()
         add_member(guild, 7)
         guilds.append(guild)
-        sched.participant_lib.user_cutoffs.update({7: 3, 8: 5})
+        sched.participant_lib.update_user(7, "user", cutoff=3)
+        sched.participant_lib.update_user(8, "user", cutoff=5)
         self.leave(sched, guild, 7)
-        assert sched.participant_lib.user_cutoffs == {8: 5}
+        assert cutoffs(sched) == {8: 5}
 
     def test_kept_while_member_cache_is_incomplete(self, sched, guilds):
         guild = FakeGuild()
@@ -150,19 +156,20 @@ class TestPruning:
         other = FakeGuild()
         other.chunked = False
         guilds.extend([guild, other])
-        sched.participant_lib.user_cutoffs[7] = 3
+        sched.participant_lib.update_user(7, "user", cutoff=3)
         self.leave(sched, guild, 7)
-        assert sched.participant_lib.user_cutoffs == {7: 3}
+        assert cutoffs(sched) == {7: 3}
 
     def test_deleted_when_bot_leaves_the_only_shared_guild(self, sched, guilds):
         guild, other = FakeGuild(), FakeGuild()
         add_member(guild, 7)
         add_member(other, 8)
         guilds.extend([guild, other])
-        sched.participant_lib.user_cutoffs.update({7: 3, 8: 5})
+        sched.participant_lib.update_user(7, "user", cutoff=3)
+        sched.participant_lib.update_user(8, "user", cutoff=5)
         guilds.remove(guild)
         run(sched.on_guild_remove(guild))
-        assert sched.participant_lib.user_cutoffs == {8: 5}
+        assert cutoffs(sched) == {8: 5}
 
 
 class FixedNow:
@@ -185,21 +192,21 @@ class FixedNow:
 class TestNegativeCutoff:
     def test_ends_before_midnight(self, env):
         a = env.make_participant("a")
-        env.sched.participant_lib.user_cutoffs[a.member.id] = -2
+        env.sched.participant_lib.update_user(a.member.id, "user", cutoff=-2)
         a.set_full_availability(date=at(1, 0))
         assert (a.availability[0].start_time, a.availability[0].end_time) == (at(1, 0), at(1, 22))
 
     def test_today_before_cutoff_runs_until_cutoff(self, env, monkeypatch):
         fixed = FixedNow.install(monkeypatch, env.sched, 20)
         a = env.make_participant("a")
-        env.sched.participant_lib.user_cutoffs[a.member.id] = -2
+        env.sched.participant_lib.update_user(a.member.id, "user", cutoff=-2)
         a.set_full_availability()
         assert (a.availability[0].start_time, a.availability[0].end_time) == (fixed, at(0, 22))
 
     def test_today_after_cutoff_raises_without_changing_availability(self, env, monkeypatch):
         FixedNow.install(monkeypatch, env.sched, 23)
         a = env.make_participant("a")
-        env.sched.participant_lib.user_cutoffs[a.member.id] = -2
+        env.sched.participant_lib.update_user(a.member.id, "user", cutoff=-2)
         with pytest.raises(Exception, match="ends at 10 PM .* already passed"):
             a.set_full_availability()
         assert a.availability == []
@@ -208,7 +215,7 @@ class TestNegativeCutoff:
     def test_full_availability_button_reports_passed_cutoff(self, env, monkeypatch):
         FixedNow.install(monkeypatch, env.sched, 23)
         a = env.make_participant("a")
-        env.sched.participant_lib.user_cutoffs[a.member.id] = -2
+        env.sched.participant_lib.update_user(a.member.id, "user", cutoff=-2)
         event = env.make_event([a])
 
         async def press():
@@ -271,7 +278,7 @@ def test_every_command_and_option_description_fits_discord(sched):
 
 
 class TestRespondTooSoon:
-    """The Respond form reports times that end too soon to fit the event, instead of dropping them silently."""
+    """The Enter Availability form reports times that end too soon to fit the event, instead of dropping them silently."""
 
     def submit(self, env, monkeypatch, event, participant, blocks):
         def fake_set_specific_availability(avail_string, date_string):
@@ -318,3 +325,66 @@ class TestRespondTooSoon:
         interaction = self.submit(env, monkeypatch, event, a, [fits])
         assert interaction.followups == []
         assert a.answered
+
+
+class TestTimezone:
+    def submit(self, env, participant, event, timezone):
+        async def go():
+            modal = env.sched.AvailabilityModal(event, participant, title="Enter Availability")
+            modal.timezone._value = timezone
+            await modal.on_submit(FakeInteraction(participant.member))
+        run(go())
+
+    def form_timezone(self, env, participant, event):
+        return env.sched.AvailabilityModal(event, participant, title="Enter Availability").timezone.default
+
+    def test_form_defaults_to_et(self, env):
+        a = env.make_participant("a")
+        assert self.form_timezone(env, a, env.make_event([a])) == "ET"
+
+    def test_form_prefills_last_timezone(self, env):
+        a = env.make_participant("a")
+        event = env.make_event([a, env.make_participant("b")])
+        self.submit(env, a, event, "PT")
+        assert self.form_timezone(env, a, event) == "PT"
+        (user,) = env.sched.participant_lib.users
+        assert (user.id, user.name, user.timezone) == (a.member.id, a.member.name, "PT")
+
+    @pytest.mark.parametrize("timezone", ["ET", "et", " "])
+    def test_default_timezone_removes_the_user(self, env, timezone):
+        a = env.make_participant("a")
+        event = env.make_event([a, env.make_participant("b")])
+        self.submit(env, a, event, "PT")
+        self.submit(env, a, event, timezone)
+        assert env.sched.participant_lib.users == []
+
+    def test_kept_while_cutoff_is_set(self, env):
+        a = env.make_participant("a")
+        event = env.make_event([a, env.make_participant("b")])
+        env.sched.participant_lib.update_user(a.member.id, a.member.name, cutoff=3)
+        self.submit(env, a, event, "PT")
+        self.submit(env, a, event, "ET")
+        (user,) = env.sched.participant_lib.users
+        assert (user.cutoff, user.timezone) == (3, "ET")
+
+    def test_saved_and_loaded(self, sched, guilds, monkeypatch):
+        sched.participant_lib.update_user(7, "user", timezone="CT")
+        data = sched.client.events_dict
+        assert data["users"] == [{"id": 7, "name": "user", "cutoff": 0, "timezone": "CT"}]
+        sched.participant_lib.users.clear()
+        guild = FakeGuild()
+        add_member(guild, 7)
+        guilds.append(guild)
+        monkeypatch.setattr(sched.client, "loaded_json", False)
+        monkeypatch.setattr(sched.persist, "read", lambda: {"events": [], "users": data["users"]})
+        run(sched.client.retrieve_events())
+        assert sched.participant_lib.get_timezone(7) == "CT"
+
+
+def test_help_embeds_fit_discord(sched):
+    # Discord rejects the whole help message if any embed limit is exceeded, and the 6000 character limit covers all embeds in a message
+    assert sum(len(embed) for embed in sched.HELP_EMBEDS) <= 6000
+    for embed in sched.HELP_EMBEDS:
+        assert len(embed.description or "") <= 4096, embed.title
+        for field in embed.fields:
+            assert len(field.name) <= 256 and len(field.value) <= 1024, field.name

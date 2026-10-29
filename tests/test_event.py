@@ -497,6 +497,24 @@ class TestPersistence:
         assert loaded.scheduled_events == event.scheduled_events
         assert [p.member for p in loaded.participants] == [a.member]
 
+    def test_round_trips_id(self, env, monkeypatch):
+        event = env.make_event([env.make_participant("a")])
+        loaded = self.load(env, monkeypatch, self.save_data(env, event))
+        assert loaded.id == event.id
+
+    def test_data_without_id_gets_one(self, env, monkeypatch):
+        event = env.make_event([env.make_participant("a")])
+        data = self.save_data(env, event)
+        del data["id"]
+        loaded = self.load(env, monkeypatch, data)
+        assert loaded.id and loaded.id != event.id
+
+    def test_events_with_the_same_name_have_different_ids(self, env):
+        first = env.make_event([env.make_participant("a")])
+        second = env.make_event([env.make_participant("b")])
+        second.name = first.name
+        assert first.id != second.id
+
     def test_round_trips_timeout_deadlines(self, env, monkeypatch):
         event = env.make_event([env.make_participant("a")], timeout_at=at(3, 12), availability_resent_at=at(0, 1))
         loaded = self.load(env, monkeypatch, self.save_data(env, event))

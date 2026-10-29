@@ -10,14 +10,124 @@ DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF = 0
 # Negative cutoffs end Full Availability before midnight, e.g. -2 is 10 PM
 MIN_HOURS_PAST_MIDNIGHT_CUTOFF = -6
 MAX_HOURS_PAST_MIDNIGHT_CUTOFF = 23
-# Hours past midnight that each user's Full Availability extends to, set with /cutoff.
-# Users without an entry use DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF.
-user_cutoffs: dict[int, int] = {}
+DEFAULT_TIMEZONE = "ET"
+
+
+class User:
+    """
+    Represents the saved settings of a Discord user, kept across events and restarts.
+
+    Attributes
+    ----------
+    id: :class:`int`
+        The user's Discord ID, used to find their member objects.
+    name: :class:`str`
+        The user's Discord username, as of the last time their settings changed.
+    cutoff: :class:`int`
+        Hours past midnight that the user's Full Availability extends to, set with /cutoff.
+    timezone: :class:`str`
+        The timezone the user last entered availability in, prefilled in their next availability form.
+    """
+
+    def __init__(self,
+                 id: int,
+                 name: str,
+                 cutoff: int = DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF,
+                 timezone: str = DEFAULT_TIMEZONE) -> None:
+        self.id: int = id
+        self.name: str = name
+        self.cutoff: int = cutoff
+        self.timezone: str = timezone
+
+    def is_default(self) -> bool:
+        """Whether every setting has its default value, so there is nothing to save."""
+        return self.cutoff == DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF and self.timezone == DEFAULT_TIMEZONE
+
+    def to_dict(self) -> dict:
+        """
+        Stores the user as a dict.
+
+        Returns
+        --------
+        data: :class:`dict`
+            The user dict.
+        """
+        return {
+            'id': self.id,
+            'name': self.name,
+            'cutoff': self.cutoff,
+            'timezone': self.timezone
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'User':
+        """
+        Creates a :class:`User` from a data dict.
+
+        Arguments
+        ----------
+        data: :class:`dict`
+            The data to create the user from.
+
+        Returns
+        --------
+        cls: :class:`User`
+            The created user object.
+        """
+        return cls(id=int(data['id']),
+                   name=str(data.get('name', '')),
+                   cutoff=int(data.get('cutoff', DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF)),
+                   timezone=str(data.get('timezone', DEFAULT_TIMEZONE)))
+
+
+# Only users with a setting that differs from the default are kept
+users: list[User] = []
+
+
+def get_user(user_id: int) -> Optional[User]:
+    """Gets the saved settings of a user, or None if they have none."""
+    for user in users:
+        if user.id == user_id:
+            return user
+    return None
+
+
+def update_user(user_id: int, name: str, **settings) -> None:
+    """
+    Changes a user's saved settings, adding the user if needed and removing them once every setting is back to its default.
+
+    Arguments
+    ---------
+    user_id: :class:`int`
+        The user's Discord ID.
+    name: :class:`str`
+        The user's current Discord username.
+    settings:
+        The settings to change, by attribute name, e.g. cutoff=3.
+    """
+    user = get_user(user_id)
+    if user is None:
+        user = User(id=user_id, name=name)
+        users.append(user)
+    user.name = name
+    for setting, value in settings.items():
+        if not hasattr(user, setting):
+            raise AttributeError(f"Users have no setting {setting}")
+        setattr(user, setting, value)
+    if user.is_default():
+        users.remove(user)
 
 
 def get_cutoff(user_id: int) -> int:
     """Gets how many hours past midnight the user's Full Availability extends to."""
-    return user_cutoffs.get(user_id, DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF)
+    user = get_user(user_id)
+    return user.cutoff if user is not None else DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF
+
+
+def get_timezone(user_id: int) -> str:
+    """Gets the timezone the user last entered availability in."""
+    user = get_user(user_id)
+    return user.timezone if user is not None else DEFAULT_TIMEZONE
 
 
 def format_cutoff(hours: int) -> str:

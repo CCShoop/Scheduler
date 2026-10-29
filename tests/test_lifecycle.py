@@ -573,9 +573,9 @@ class TestJoinPrompt:
         return event, event_buttons(env, event)
 
     @pytest.mark.parametrize("fixture, button, label", [
-        ("scheduling", "respond_button", "Respond"),
+        ("scheduling", "respond_button", "Enter Availability"),
         ("scheduling", "full_button", "Full Availability (Today)"),
-        ("scheduling", "reuse_button", "Use Existing Availability"),
+        ("scheduling", "reuse_button", "Copy From Other Event"),
         ("scheduling", "unsub_button", "Unsubscribe / Resubscribe"),
         ("created", "start_end_button", "Start Event"),
         ("created", "unsubscribe_button", "Unsubscribe / Resubscribe"),
@@ -652,12 +652,89 @@ class TestReuseAvailability:
         view = interaction.followups[0]["view"]
         assert isinstance(view, env.sched.ExistingAvailabilitiesSelectView)
         (select,) = view.children
-        select._values = [second.get_limited_name(99)]
+        select._values = [second.id]
         press(select.callback, participant.member)
         assert blocks_of(participant) == [(at(1, 9), at(1, 12))]
         assert participant.answered and participant.subscribed
         # The event the availability was copied from didn't change, so only the target handles the input
         assert inputs == [target]
+
+
+    def choose(self, env, target, participant, chosen):
+        interaction = press(availability_buttons(env, target).reuse_button.callback, participant.member)
+        (select,) = interaction.followups[0]["view"].children
+        select._values = [chosen.id]
+        return press(select.callback, participant.member)
+
+    def test_copies_availability_as_it_is_when_chosen(self, env, monkeypatch):
+        target, participant, (first, second), inputs = self.setup_events(env, monkeypatch, sources=2)
+        interaction = press(availability_buttons(env, target).reuse_button.callback, participant.member)
+        (select,) = interaction.followups[0]["view"].children
+        second.get_participant(participant.member.id).availability = [TimeBlock(at(2, 18), at(2, 20))]
+        select._values = [second.id]
+        press(select.callback, participant.member)
+        assert blocks_of(participant) == [(at(2, 18), at(2, 20))]
+
+    def test_chooses_by_id_between_events_with_the_same_name(self, env, monkeypatch):
+        target, participant, (first, second), inputs = self.setup_events(env, monkeypatch, sources=2)
+        second.name = first.name
+        self.choose(env, target, participant, second)
+        assert blocks_of(participant) == [(at(1, 9), at(1, 12))]
+
+    def test_options_show_the_events_channel_and_server(self, env, monkeypatch):
+        target, participant, (first, second), inputs = self.setup_events(env, monkeypatch, sources=2)
+        interaction = press(availability_buttons(env, target).reuse_button.callback, participant.member)
+        (select,) = interaction.followups[0]["view"].children
+        expected = f"#{env.text_channel.name} in {env.guild.name}"
+        assert [option.description for option in select.options] == [expected, expected]
+
+    def test_long_option_descriptions_fit_discord(self, env, monkeypatch):
+        target, participant, (first, second), inputs = self.setup_events(env, monkeypatch, sources=2)
+        monkeypatch.setattr(env.guild, "name", "g" * 150)
+        interaction = press(availability_buttons(env, target).reuse_button.callback, participant.member)
+        (select,) = interaction.followups[0]["view"].children
+        assert all(len(option.description) == 100 and option.description.endswith("...") for option in select.options)
+
+    def test_source_event_gone_since_opening(self, env, monkeypatch):
+        target, participant, (first, second), inputs = self.setup_events(env, monkeypatch, sources=2)
+        interaction = press(availability_buttons(env, target).reuse_button.callback, participant.member)
+        (select,) = interaction.followups[0]["view"].children
+        env.sched.client.events.remove(second)
+        select._values = [second.id]
+        interaction = press(select.callback, participant.member)
+        assert "has ended or been cancelled" in interaction.followups[0]["content"]
+        assert blocks_of(participant) == [] and inputs == []
+
+    def test_source_availability_removed_since_opening(self, env, monkeypatch):
+        target, participant, (first, second), inputs = self.setup_events(env, monkeypatch, sources=2)
+        interaction = press(availability_buttons(env, target).reuse_button.callback, participant.member)
+        (select,) = interaction.followups[0]["view"].children
+        second.get_participant(participant.member.id).set_no_availability()
+        select._values = [second.id]
+        interaction = press(select.callback, participant.member)
+        assert "no longer have availability" in interaction.followups[0]["content"]
+        assert blocks_of(participant) == [] and inputs == []
+
+    def test_target_event_created_since_opening(self, env, monkeypatch):
+        target, participant, (first, second), inputs = self.setup_events(env, monkeypatch, sources=2)
+        interaction = press(availability_buttons(env, target).reuse_button.callback, participant.member)
+        (select,) = interaction.followups[0]["view"].children
+        target.created = True
+        select._values = [second.id]
+        interaction = press(select.callback, participant.member)
+        assert "already been created" in interaction.followups[0]["content"]
+        assert blocks_of(participant) == [] and inputs == []
+
+    def test_no_other_events(self, env, monkeypatch):
+        target, participant, _, inputs = self.setup_events(env, monkeypatch, sources=0)
+        interaction = press(availability_buttons(env, target).reuse_button.callback, participant.member)
+        assert interaction.followups[0]["content"] == "You aren't in any other events."
+
+    def test_no_other_answered_events(self, env, monkeypatch):
+        target, participant, _, inputs = self.setup_events(env, monkeypatch, sources=0)
+        env.make_event([Participant(member=participant.member)])
+        interaction = press(availability_buttons(env, target).reuse_button.callback, participant.member)
+        assert interaction.followups[0]["content"] == "You haven't entered availability for any other events."
 
 
 def blocks_of(participant):

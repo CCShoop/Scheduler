@@ -55,12 +55,12 @@ def sched():
     """The scheduler module, with a clean client event list for each test."""
     scheduler.client.events.clear()
     scheduler.client.schedule_again_events.clear()
-    scheduler.participant_lib.user_cutoffs.clear()
+    scheduler.participant_lib.users.clear()
     scheduler.announcer_lib.guild_engines.clear()
     yield scheduler
     scheduler.client.events.clear()
     scheduler.client.schedule_again_events.clear()
-    scheduler.participant_lib.user_cutoffs.clear()
+    scheduler.participant_lib.users.clear()
     scheduler.announcer_lib.guild_engines.clear()
 
 

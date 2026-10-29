@@ -67,6 +67,7 @@ class FakeGuild:
 
     def __init__(self, fail_on_call=None):
         self.id = 5
+        self.name = "Test Server"
         self.created = []
         self.fail_on_call = fail_on_call
         self.channels = {}
@@ -137,6 +138,7 @@ class FakeTextChannel:
     def __init__(self, channel_id=1):
         self.id = channel_id
         self.members = []
+        self.name = "scheduling"
         self.mention = f"<#{channel_id}>"
         self.sent = []
         self.messages = {}

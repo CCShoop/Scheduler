@@ -192,17 +192,17 @@ The availability message has these buttons:
 
 | Button | What it does |
 |--------|--------------|
-| **Respond** | Opens a form for entering when you're free. |
+| **Enter Availability** | Opens a form for entering when you're free. |
 | **Full Availability (Today)** | Marks you as available from now until midnight Eastern Time, or the time you set with `/cutoff`. Discord shows times in your own timezone, so outside Eastern Time this can look like it ends early, e.g. at 11 PM in Central Time. Use `/cutoff` to move it to your midnight. If that time has already passed today, or is too soon to fit the event starting at least 30 minutes from now, the bot tells you instead. If someone else enters availability later than that, yours is extended to match. |
-| **Use Existing Availability** | Copies your availability from another event you're in. If you're in more than one, choose which event to copy from. |
+| **Copy From Other Event** | Copies your availability from another event you're in. If you're in more than one, choose which event to copy from. |
 | **Unsubscribe / Resubscribe** | Stops the bot from mentioning you. You're still a participant. Press it again to resubscribe. Your status shows in the availability message. |
 | **Cancel Scheduling** | Cancels the event, with an optional reason. |
 
-### The Respond form
+### The Enter Availability form
 
 - **Date:** The day you're entering times for, as `YYYY-MM-DD`. It defaults to today. You can leave off the year (`MM-DD`) to mean the next time that date comes around, or enter just the day of the month (`DD`).
 - **Timeslot:** The time ranges you're free. Separate multiple ranges with commas.
-- **Timezone:** The timezone you typed your times in. Supported values: `AT`, `ET`, `CT`, `MT`, `PT`, and their standard and daylight forms, such as `EST` or `PDT`. Times are converted to Eastern Time.
+- **Timezone:** The timezone you typed your times in. Supported values: `AT`, `ET`, `CT`, `MT`, `PT`, and their standard and daylight forms, such as `EST` or `PDT`. Times are converted to Eastern Time. The form fills in the timezone you last used, starting with `ET`.
 - **Note:** An optional note that appears next to your availability. If you leave it blank when you submit again, your note is cleared.
 
 Time ranges accept several formats:
@@ -337,7 +337,7 @@ The server has no authentication. Keep `HOST` set to `127.0.0.1`, or put it behi
 
 | File | Contents |
 |------|----------|
-| `data.json` | Saved events, rewritten every second. The bot reads it on startup to resume events. To start fresh, delete it while the bot is stopped. |
+| `data.json` | Saved events, users' settings, and server voice settings, rewritten every second. The bot reads it on startup to resume events. To start fresh, delete it while the bot is stopped. |
 | `scheduler.log` | The full log. The same output is printed to the console. |
 | `<event name>.png` | Each event's downloaded image, used for its Discord event. Every 10 minutes, the bot deletes `.png` files in its folder that no event or [Schedule Again](#schedule-again) button uses, if they're more than 10 minutes old. Don't keep other `.png` files in the bot's folder. |
 

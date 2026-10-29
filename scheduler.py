@@ -1,6 +1,7 @@
 '''Written by Cael Shoop.'''
 
 import os
+import uuid
 import signal
 import logging
 import asyncio
@@ -334,26 +335,24 @@ async def find_member(guild: Guild, member_id: int) -> Member:
     return member
 
 
-def prune_user_cutoffs(user_ids: Optional[list[int]] = None) -> None:
+def prune_users(user_ids: Optional[list[int]] = None) -> None:
     """
-    Deletes the saved Full Availability cutoffs of users who no longer share a guild with the bot.
+    Deletes the saved settings of users who no longer share a guild with the bot.
 
     Arguments
     ---------
     user_ids: :class:`Optional[list[int]]`
-        The users to check. Default: every user with a saved cutoff.
+        The users to check. Default: every saved user.
     """
     # A member missing from an incomplete member cache would look like they left
     if not all(guild.chunked for guild in client.guilds):
         return
-    if user_ids is None:
-        user_ids = list(participant_lib.user_cutoffs)
-    for user_id in user_ids:
-        if user_id not in participant_lib.user_cutoffs:
+    for user in participant_lib.users.copy():
+        if user_ids is not None and user.id not in user_ids:
             continue
-        if not any(guild.get_member(user_id) is not None for guild in client.guilds):
-            del participant_lib.user_cutoffs[user_id]
-            logger.info(f"Deleted Full Availability cutoff of user {user_id}, who no longer shares a server with the bot")
+        if not any(guild.get_member(user.id) is not None for guild in client.guilds):
+            participant_lib.users.remove(user)
+            logger.info(f"Deleted saved settings of user {user.name} ({user.id}), who no longer shares a server with the bot")
 
 
 def get_location_key(voice_channel: Optional[VoiceChannel], location: Optional[str]) -> tuple:
@@ -539,13 +538,13 @@ class SchedulerClient(Client):
             self.loaded_json = True
             events_data = persist.read()
             if events_data:
-                # Data saved before cutoffs were per user has no entry
-                try:
-                    participant_lib.user_cutoffs.update({int(user_id): int(cutoff)
-                                                         for user_id, cutoff in events_data.get('user_cutoffs', {}).items()})
-                except Exception as e:
-                    logger.error(f"Could not load Full Availability cutoffs: {e}")
-                prune_user_cutoffs()
+                # Data saved before user settings has no entry
+                for user_data in events_data.get('users', []):
+                    try:
+                        participant_lib.users.append(participant_lib.User.from_dict(user_data))
+                    except Exception as e:
+                        logger.error(f"Could not load saved settings of user {user_data}: {e}")
+                prune_users()
                 # Data saved before announcements has no entry
                 try:
                     announcer_lib.guild_engines.update({int(guild_id): engine
@@ -588,7 +587,7 @@ class SchedulerClient(Client):
     @property
     def events_dict(self) -> dict:
         """
-        Shove all events, schedule again buttons, and users' Full Availability cutoffs into a dictionary for writing to the data file.
+        Shove all events, schedule again buttons, and users' saved settings into a dictionary for writing to the data file.
 
         Returns
         -------
@@ -598,8 +597,8 @@ class SchedulerClient(Client):
         events_data = {}
         events_data['events'] = [event.to_dict() for event in self.events]
         events_data['schedule_again_events'] = [after_buttons.to_dict() for after_buttons in self.schedule_again_events]
+        events_data['users'] = [user.to_dict() for user in participant_lib.users]
         # JSON keys are strings
-        events_data['user_cutoffs'] = {str(user_id): cutoff for user_id, cutoff in participant_lib.user_cutoffs.items()}
         events_data['tts_engines'] = {str(guild_id): engine for guild_id, engine in announcer_lib.guild_engines.items()}
         return events_data
 
@@ -787,7 +786,10 @@ class Event:
                  unresolved_participants: Optional[list[dict]] = None,
                  unresolved_scheduler_id: Optional[int] = 0,
                  unresolved_rescheduler_id: Optional[int] = 0,
-                 blocked_users: Optional[list[Participant]] = None) -> None:
+                 blocked_users: Optional[list[Participant]] = None,
+                 event_id: Optional[str] = None) -> None:
+        # Names can repeat, so this tells events apart, e.g. in dropdowns
+        self.id: str = event_id or uuid.uuid4().hex
         self.name: str = name
         self.guild: Guild = guild
         self.text_channel: TextChannel = text_channel
@@ -1945,44 +1947,55 @@ class Event:
                         break
         return other_participants
 
-    def get_other_availabilities(self, participant: Participant) -> list:
+    def get_events_to_copy_availability_from(self, participant: Participant) -> list:
         """
-        Gets availability of a participant from another event that they are in.
+        Gets the other events that a participant has answered, preferring those in the same guild.
 
         Arguments
         ---------
         participant: :class:`Participant`
-            The participant to get availability for.
+            The participant to find events for.
 
         Returns
         -------
-        event_availabilities: :class:`list`
-            The list of availabilities from other events the participant is in.
+        events: :class:`list[Event]`
+            The other events the participant has answered.
         """
-        event_availabilities = []
-        # Get availabilities from other events in the same guild
-        for other_event in client.events:
-            if other_event != self and other_event.guild == self.guild:
-                for other_participant in other_event.participants:
-                    if other_participant.member.id == participant.member.id and other_participant.answered:
-                        event_avail = EventAvailability(event=other_event,
-                                                        avail=other_participant.availability,
-                                                        full_flag=other_participant.full_availability_flag)
-                        event_availabilities.append(event_avail)
-                        break
-        if event_availabilities:
-            return event_availabilities
-        # Get availabilities from all other events
-        for other_event in client.events:
-            if other_event != self:
-                for other_participant in other_event.participants:
-                    if other_participant.member.id == participant.member.id and other_participant.answered:
-                        event_avail = EventAvailability(event=other_event,
-                                                        avail=other_participant.availability,
-                                                        full_flag=other_participant.full_availability_flag)
-                        event_availabilities.append(event_avail)
-                        break
-        return event_availabilities
+        events = [other_event for other_event in client.events
+                  if other_event != self and other_event.has_answered(participant.member.id)]
+        same_guild_events = [other_event for other_event in events if other_event.guild == self.guild]
+        return same_guild_events or events
+
+    def has_answered(self, user_id: int) -> bool:
+        """Whether the user is a participant who has answered the event."""
+        other_participant = self.get_participant(user_id)
+        return other_participant is not None and other_participant.answered
+
+    def copy_availability(self, participant: Participant, source_event: 'Event') -> bool:
+        """
+        Copies a participant's availability from another event, as it is now.
+
+        Arguments
+        ---------
+        participant: :class:`Participant`
+            The participant of this event to copy availability to.
+        source_event: :class:`Event`
+            The event to copy the availability from.
+
+        Returns
+        -------
+        copied: :class:`bool`
+            False if the participant hasn't answered the source event, so nothing was copied.
+        """
+        source_participant = source_event.get_participant(participant.member.id)
+        if source_participant is None or not source_participant.answered:
+            return False
+        participant.set_no_availability()
+        participant.availability = [TimeBlock(tb.start_time, tb.end_time) for tb in source_participant.availability]
+        participant.full_availability_flag = source_participant.full_availability_flag
+        participant.answered = True
+        participant.subscribed = True
+        return True
 
     def reset_timeout(self) -> None:
         """
@@ -3155,6 +3168,8 @@ class Event:
                 logger.warning(f"[{event_name}] voice channel prompt message not found, sending a new one: {e}")
 
         event = cls(
+            # Data saved before event IDs has no entry, so it gets a new one
+            event_id=data.get("id"),
             name=event_name,
             guild=event_guild,
             text_channel=event_text_channel,
@@ -3261,6 +3276,7 @@ class Event:
             logger.warning(f'Failed getting start times: {e}')
             start_times = []
         return {
+            'id': self.id,
             'name': self.name,
             'guild_id': self.guild.id,
             'text_channel_id': self.text_channel.id,
@@ -3371,7 +3387,7 @@ class ScheduleAgainModal(Modal):
                              image_url=event_image_url,
                              usernames=self.event.participants,
                              duration=event_duration)
-                followup = await interaction.followup.send(content="Event created!",
+                followup = await interaction.followup.send(content="Event created.",
                                                            silent=True,
                                                            ephemeral=True)
                 await followup.delete(delay=3)
@@ -3390,7 +3406,7 @@ class ScheduleAgainModal(Modal):
                            image_url=event_image_url,
                            usernames=", ".join([str(p.member.id) for p in self.event.participants]),
                            duration=event_duration)
-            followup = await interaction.followup.send(content="Event scheduling started!",
+            followup = await interaction.followup.send(content="Event scheduling started.",
                                                        silent=True,
                                                        ephemeral=True)
             await followup.delete(delay=3)
@@ -3554,7 +3570,8 @@ class AvailabilityModal(Modal):
         self.timeslot = TextInput(label="Timeslot", placeholder="e.g. 8-11, 1pm-3pm, 22-x3, 1730-2030", default="", required=False)
         self.note = TextInput(label="Note", placeholder="A note to show with or instead of your availability", default=self.participant.note, required=False)
         self.date = TextInput(label="Date", placeholder="YYYY-MM-DD", default=date)
-        self.timezone = TextInput(label="Timezone", placeholder="AT|AST|ADT|ET|EST|EDT|CT|CST|CDT|MT|MST|MDT|PT|PST|PDT", default="ET")
+        self.timezone = TextInput(label="Timezone", placeholder="AT|AST|ADT|ET|EST|EDT|CT|CST|CDT|MT|MST|MDT|PT|PST|PDT",
+                                  default=participant_lib.get_timezone(participant.member.id))
         self.add_item(self.timeslot)
         self.add_item(self.note)
         self.add_item(self.date)
@@ -3568,6 +3585,10 @@ class AvailabilityModal(Modal):
         content = None
         # Participant availability
         avail_string = f'{self.timeslot.value} {self.timezone.value}'
+        timezone = self.timezone.value.strip()
+        if not timezone or timezone.upper() == participant_lib.DEFAULT_TIMEZONE:
+            timezone = participant_lib.DEFAULT_TIMEZONE
+        participant_lib.update_user(interaction.user.id, interaction.user.name, timezone=timezone)
         try:
             logger.info(f'[{self.event}] Received availability from {interaction.user.name}')
             self.participant.note = self.note.value
@@ -3609,21 +3630,21 @@ class AvailabilityButtons(View):
     event: :class:`Event`
         The event that the buttons are for.
     respond_label: :class:`str`
-        The label for the Respond button.
+        The label for the Enter Availability button.
     full_label: :class:`str`
         The label for the Full Availability button.
     reuse_label: :class:`str`
-        The label for the Reuse Availability button.
+        The label for the Copy From Other Event button.
     unsub_label: :class:`str`
         The label for the Unsubscribe button.
     cancel_label: :class:`str`
         The label for the Cancel button.
     respond_button: :class:`callable`
-        The Respond button.
+        The Enter Availability button.
     full_button: :class:`callable`
         The Full Availability button.
     reuse_button: :class:`callable`
-        The Reuse Availability button.
+        The Copy From Other Event button.
     unsub_button: :class:`callable`
         The Unsubscribe button.
     cancel_button: :class:`callable`
@@ -3633,9 +3654,9 @@ class AvailabilityButtons(View):
     def __init__(self, event: Event) -> None:
         super().__init__(timeout=None)
         self.event = event
-        self.respond_label = "Respond"
+        self.respond_label = "Enter Availability"
         self.full_label = "Full Availability (Today)"
-        self.reuse_label = "Use Existing Availability"
+        self.reuse_label = "Copy From Other Event"
         self.unsub_label = "Unsubscribe / Resubscribe"
         self.cancel_label = "Cancel Scheduling"
         self.respond_button = self.add_respond_button()
@@ -3646,12 +3667,12 @@ class AvailabilityButtons(View):
 
     def add_respond_button(self) -> Button:
         """
-        Sets up and gets the Respond button.
+        Sets up and gets the Enter Availability button.
 
         Returns
         -------
         button: :class:`Button`
-            The Respond button.
+            The Enter Availability button.
         """
         button = Button(label=self.respond_label, style=ButtonStyle.green)
 
@@ -3694,7 +3715,7 @@ class AvailabilityButtons(View):
             await interaction.response.defer(ephemeral=True)
             participant = self.event.get_participant(interaction.user.id)
             if participant is None:
-                await interaction.followup.send(content="Could not add you as a participant!",
+                await interaction.followup.send(content="Could not add you as a participant.",
                                                 ephemeral=True)
                 return
             participant.subscribed = True
@@ -3707,7 +3728,7 @@ class AvailabilityButtons(View):
                     minutes_left = int((end_time - now()).total_seconds() // 60)
                     cutoff = participant_lib.format_cutoff(participant_lib.get_cutoff(participant.member.id))
                     content = self.event.get_too_soon_message(f"Your Full Availability today ends at {cutoff}, {minutes_left} minutes from now")
-                    content += " Extend your Full Availability past midnight with /cutoff, or enter later times with Respond."
+                    content += " Extend your Full Availability past midnight with /cutoff, or enter later times with Enter Availability."
                     await interaction.followup.send(content=content, ephemeral=True)
                     return
                 logger.info(f'[{self.event}] {participant} selected full availability')
@@ -3733,12 +3754,12 @@ class AvailabilityButtons(View):
 
     def add_reuse_button(self) -> Button:
         """
-        Sets up and gets the Reuse Availability button.
+        Sets up and gets the Copy From Other Event button.
 
         Returns
         -------
         button: :class:`Button`
-            The Reuse Availability button.
+            The Copy From Other Event button.
         """
         button = Button(label=self.reuse_label, style=ButtonStyle.blurple)
 
@@ -3753,21 +3774,20 @@ class AvailabilityButtons(View):
                 await interaction.followup.send(content="Could not add you as a participant.",
                                                 ephemeral=True)
                 return
-            found_availabilities = self.event.get_other_availabilities(participant)
-            if not found_availabilities:
-                await interaction.followup.send(content="No existing availabilities found.",
-                                                ephemeral=True)
+            source_events = self.event.get_events_to_copy_availability_from(participant)
+            if not source_events:
+                if any(other_event != self.event and other_event.is_participant(interaction.user) for other_event in client.events):
+                    content = "You haven't entered availability for any other events."
+                else:
+                    content = "You aren't in any other events."
+                await interaction.followup.send(content=content, ephemeral=True)
                 return
-            if len(found_availabilities) == 1:
-                participant.set_no_availability()
-                participant.availability = [TimeBlock(tb.start_time, tb.end_time) for tb in found_availabilities[0].avail]
-                participant.full_availability_flag = found_availabilities[0].full_flag
-                participant.answered = True
-                participant.subscribed = True
+            if len(source_events) == 1:
+                self.event.copy_availability(participant, source_events[0])
                 await self.event.handle_input_received(exclude=[participant])
             else:
                 await interaction.followup.send(content="Select another event from which to grab your availability.",
-                                                view=ExistingAvailabilitiesSelectView(self.event, found_availabilities, participant),
+                                                view=ExistingAvailabilitiesSelectView(self.event, source_events),
                                                 ephemeral=True)
             embed = get_participants_other_unanswered_events_embed(self.event, participant)
             if embed:
@@ -3917,7 +3937,7 @@ class EventButtons(View):
                 return
             if not self.event.is_external and interaction.user.id not in [member.id for member in self.event.voice_channel.members]:
                 logger.info(f"[{self.event}] {interaction.user} tried to press start button while not in the event's voice channel")
-                await interaction.followup.send(content=f"You must be in {self.event.voice_channel.mention} to start {self.event}!",
+                await interaction.followup.send(content=f"You must be in {self.event.voice_channel.mention} to start {self.event}.",
                                                 ephemeral=True)
                 return
             logger.info(f"[{self.event}] {interaction.user} started by button press")
@@ -4171,7 +4191,8 @@ class AfterButtons(View):
         if not data["after_buttons_message_id"]:
             raise Exception("No message to attach to")
         message = await text_channel.fetch_message(data["after_buttons_message_id"])
-        event = Event(name=data["name"],
+        event = Event(event_id=data.get("id"),
+                      name=data["name"],
                       voice_channel=voice_channel,
                       location=location,
                       guild=guild,
@@ -4261,7 +4282,7 @@ class AfterButtons(View):
 
         async def forget_button_callback(interaction: Interaction):
             logger.info(f"[{self.event}] forget button pressed by {interaction.user.name}")
-            await interaction.response.send_message(content=f"{self.event} forgotten!",
+            await interaction.response.send_message(content=f"{self.event} forgotten.",
                                                     silent=True,
                                                     ephemeral=True,
                                                     delete_after=3)
@@ -4422,7 +4443,7 @@ class ExistingGuildEventsSelect(Select):
                     event.scheduled_events.append(guild_event)
             remove_times_from_availabilities_for_events()
             await event.update_event_buttons_message()
-            followup = await interaction.followup.send(content="Success!",
+            followup = await interaction.followup.send(content="Success.",
                                                        silent=True,
                                                        ephemeral=True)
             await followup.delete(delay=3)
@@ -4441,52 +4462,55 @@ class ExistingGuildEventsSelectView(View):
         self.add_item(ExistingGuildEventsSelect(guild))
 
 
-class EventAvailability:
-    """
-    Represents the pairing of an event with a user's availability.
-    """
-
-    def __init__(self, event: Event, avail: list, full_flag: bool):
-        self.event = event
-        self.avail = avail
-        self.full_flag = full_flag
+def get_limited_text(text: str, length: int) -> str:
+    """Shortens text to fit a length, ending it with an ellipsis if it was cut."""
+    return text if len(text) <= length else f"{text[:length - 3]}..."
 
 
 class ExistingAvailabilitiesSelect(Select):
     """
-    Represents a dropdown to allow a user to selection an existing availability from another event.
+    Represents a dropdown to allow a user to copy their availability from another event.
+    The events are looked up again when one is chosen, since they can change while the dropdown is open.
     """
 
-    def __init__(self, event: Event, event_avails: list, participant: Participant):
-        # The event the availability is being reused for, while event_avails hold the events it comes from
+    def __init__(self, event: Event, source_events: list[Event]):
+        # The event the availability is copied to, while source_event_names hold the events it can come from
         self.event = event
-        self.event_avails = event_avails
-        self.participant = participant
-        options = []
-        for event_avail in self.event_avails:
-            name = event_avail.event.get_limited_name(99)
-            options.append(SelectOption(label=name, value=name))
-        super().__init__(placeholder="Event Availabilities", options=options)
+        # Event IDs and names, so a source event that ended while the dropdown was open can still be named
+        self.source_event_names = {source_event.id: str(source_event) for source_event in source_events[:25]}
+        options = [SelectOption(label=source_event.get_limited_name(99),
+                                value=source_event.id,
+                                description=get_limited_text(f"#{source_event.text_channel.name} in {source_event.guild.name}", 100))
+                   for source_event in source_events[:25]]
+        super().__init__(placeholder="Choose an event to copy your availability from", options=options)
 
     # Select an availability to attach
     async def callback(self, interaction: Interaction):
+        if await respond_if_cancelled(self.event, interaction):
+            return
         await interaction.response.defer(ephemeral=True)
-        for event_avail in self.event_avails:
-            name = event_avail.event.get_limited_name(99)
-            if name == self.values[0]:
-                logger.info(f'{interaction.user.name} reused availability from {self.values[0]}')
-                self.participant.availability = [TimeBlock(tb.start_time, tb.end_time) for tb in event_avail.avail]
-                self.participant.full_availability_flag = event_avail.full_flag
-                self.participant.answered = True
-                self.participant.subscribed = True
-                followup = await interaction.followup.send(content="**Availability retrieved!**",
-                                                           silent=True,
-                                                           ephemeral=True)
-                await followup.delete(delay=3)
-                await self.event.handle_input_received(exclude=[self.participant])
-                return
-        await interaction.followup.send(content="**Failed to get your availability.**",
-                                        ephemeral=True)
+        if self.event.created:
+            await interaction.followup.send(content=f"{self.event} has already been created.",
+                                            ephemeral=True)
+            return
+        participant = self.event.get_participant(interaction.user.id)
+        if participant is None:
+            await interaction.followup.send(content=f"You're no longer a participant of {self.event}.",
+                                            ephemeral=True)
+            return
+        source_event_id = self.values[0]
+        source_event_name = self.source_event_names[source_event_id]
+        source_event = next((other_event for other_event in client.events if other_event.id == source_event_id), None)
+        if source_event is None:
+            await interaction.followup.send(content=f"{source_event_name} has ended or been cancelled, so its availability can't be copied.",
+                                            ephemeral=True)
+            return
+        if not self.event.copy_availability(participant, source_event):
+            await interaction.followup.send(content=f"You no longer have availability in {source_event}.",
+                                            ephemeral=True)
+            return
+        logger.info(f'{interaction.user.name} reused availability from {source_event}')
+        await self.event.handle_input_received(exclude=[participant])
 
 
 class ExistingAvailabilitiesSelectView(View):
@@ -4494,9 +4518,9 @@ class ExistingAvailabilitiesSelectView(View):
     Represents a view to house the existing availability dropdown.
     """
 
-    def __init__(self, event: Event, event_avails: list, participant: Participant):
+    def __init__(self, event: Event, source_events: list[Event]):
         super().__init__()
-        self.add_item(ExistingAvailabilitiesSelect(event, event_avails, participant))
+        self.add_item(ExistingAvailabilitiesSelect(event, source_events))
 
 
 def get_participants_from_interaction(event_name: str,
@@ -4788,14 +4812,14 @@ async def on_guild_remove(guild: Guild):
         if after_buttons.event.guild.id == guild.id:
             client.schedule_again_events.remove(after_buttons)
             logger.info(f"[{after_buttons.event}] Forgot schedule again buttons of removed guild")
-    prune_user_cutoffs()
+    prune_users()
     announcer_lib.set_engine(guild.id, announcer_lib.NONE)
 
 
 @client.event
 async def on_raw_member_remove(payload):
     # A member left, was kicked, or was banned from a guild
-    prune_user_cutoffs([payload.user.id])
+    prune_users([payload.user.id])
 
 
 @client.event
@@ -4989,7 +5013,7 @@ async def create(event_name: str,
     if isinstance(start_time, datetime):
         start_time_obj = start_time
         if start_time_obj <= now():
-            raise Exception("Start time must be in the future!")
+            raise Exception("Start time must be in the future.")
     elif isinstance(start_time, str):
         try:
             start_time_obj = parse_start_time(start_time)
@@ -5086,13 +5110,13 @@ async def create(event_name: str,
                                             end_time=other_start_time + other_event.duration)
                 if other_event.location_key == location_key:
                     if timeblock.overlaps_with(other_timeblock):
-                        content = f"**Specified time overlaps with** ***{other_event}*** **in the same location!**"
+                        content = f"**Specified time overlaps with** ***{other_event}*** **in the same location.**"
                         raise Exception(content)
                 for other_participant in other_event.participants:
                     if other_participant.member.id in [participant.member.id for participant in participants]:
                         for other_participant_removed_time in other_participant.removed_times:
                             if timeblock.overlaps_with(other_participant_removed_time):
-                                content = f"**Specified time overlaps with an event that** ***{other_participant}*** **is in!**"
+                                content = f"**Specified time overlaps with an event that** ***{other_participant}*** **is in.**"
                                 raise Exception(content)
 
     # Make event
@@ -5471,7 +5495,7 @@ async def attach_command(interaction: Interaction):
         remove_times_from_availabilities_for_events()
         for event in client.events:
             await event.update_messages()
-        followup = await interaction.followup.send(content="Success!",
+        followup = await interaction.followup.send(content="Success.",
                                                    silent=True,
                                                    ephemeral=True)
         await followup.delete(delay=3)
@@ -5562,12 +5586,9 @@ async def cutoff_command(interaction: Interaction,
     if hours is not None and not min_cutoff <= hours <= max_cutoff:
         await interaction.response.send_message(content=f"The cutoff must be between {min_cutoff} and {max_cutoff} hours.", ephemeral=True)
         return
-    # Only cutoffs that differ from the default are saved
-    if hours is None or hours == participant_lib.DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF:
-        participant_lib.user_cutoffs.pop(interaction.user.id, None)
+    if hours is None:
         hours = participant_lib.DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF
-    else:
-        participant_lib.user_cutoffs[interaction.user.id] = hours
+    participant_lib.update_user(interaction.user.id, interaction.user.name, cutoff=hours)
     logger.info(f"{interaction.user.name} set their Full Availability cutoff to {hours}")
     await interaction.response.send_message(content=f"Your Full Availability now extends to {participant_lib.format_cutoff(hours)}.", ephemeral=True)
 
