@@ -260,7 +260,7 @@ class TestEnd:
         run(event.end())
         assert b_view_of_a.removed_times == []
         assert [(tb.start_time, tb.end_time) for tb in b_view_of_a.availability] == [(at(1, 18), at(1, 23))]
-        assert other in env.update_messages_calls
+        assert other in env.update_availability_message_calls
 
     def test_keeps_shared_participant_blocked_for_remaining_occurrences(self, env):
         a = env.make_participant("a", [TimeBlock(at(1, 18), at(2, 23))])

@@ -112,21 +112,18 @@ This is the main command. The bot posts an availability message in the channel a
 | `event_name`      | Yes | The event's name, up to 100 characters. Two events can't have the same name at the same time. |
 | `location`        | Yes | Where the event takes place. The voice and stage channels appear as suggestions, so press Enter to pick the first one. Or type any other location, such as an address, up to 100 characters. See [Locations](#locations). |
 | `image_url`       | No  | An image for the Discord event and the bot's messages. |
-| `include_exclude` | No  | Whether `usernames` and `roles` add people (`INCLUDE`, the default) or leave people out (`EXCLUDE`). |
-| `usernames`       | No  | Comma-separated usernames or user IDs to include or exclude. |
-| `roles`           | No  | Comma-separated role names to include or exclude. |
+| `include_exclude` | No  | Sends you dropdowns of the text channel's members and their roles to add (`INCLUDE`) or leave out (`EXCLUDE`). Choose from either one. |
 | `duration`        | No  | The length in minutes, up to 1440 (24 hours). The default, `0`, sets the length to however long everyone is available. |
 | `multi_event`     | No  | Creates one event on each day everyone is available, instead of a single event. |
 | `timeout`         | No  | The number of days to wait for responses before giving up, from 1 to 30. The default is 7. |
 
-**Who gets invited:** You're always a participant. If you don't set `usernames` or `roles`, everyone who can see the text channel is invited. Bots are never invited. If you set `roles`, `usernames` is ignored.
+**Who gets invited:** You're always a participant. If you don't set `include_exclude`, everyone who can see the text channel is invited. Bots are never invited, and the users dropdown doesn't list them or you. If you don't choose any users or roles within 5 minutes, the command is cancelled.
 
 **Examples:**
 
 ```
 /schedule event_name:Game Night location:General
-/schedule event_name:Raid location:Raids roles:Raiders
-/schedule event_name:Movie location:Theater include_exclude:EXCLUDE usernames:alice, bob
+/schedule event_name:Movie location:Theater include_exclude:EXCLUDE
 /schedule event_name:Board Games location:123 Main St
 ```
 

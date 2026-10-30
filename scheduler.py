@@ -13,8 +13,8 @@ from datetime import datetime, timedelta
 from discord import (app_commands, Interaction, Intents, Client, Embed, Color, Activity,
                      ButtonStyle, EntityType, TextChannel, ActivityType, Status, EventStatus,
                      VoiceChannel, StageChannel, Message, SelectOption, ScheduledEvent, ChannelType,
-                     Guild, Member, PrivacyLevel, User, utils, NotFound, DiscordServerError)
-from discord.ui import View, Button, Modal, TextInput, Select, ChannelSelect, Label, Checkbox
+                     Guild, Member, Role, PrivacyLevel, User, utils, NotFound, DiscordServerError)
+from discord.ui import View, Button, Modal, TextInput, Select, ChannelSelect, UserSelect, RoleSelect, Label, Checkbox
 from discord.ext import tasks
 
 from libs.persistence import Persistence
@@ -250,6 +250,8 @@ def parse_start_time(start_time: str) -> datetime:
 
 # Discord's limit for an external guild event's location
 MAX_LOCATION_LENGTH = 100
+# Prefixes of the location suggestions, which some clients submit along with the text instead of the suggestion's value
+LOCATION_SUGGESTION_PREFIXES = ('🔊', '🎙️', '🎙', '📍')
 
 # Slash command option types, which Discord enforces before the command reaches the bot
 EventName = app_commands.Range[str, 1, MAX_EVENT_NAME_LENGTH]
@@ -308,6 +310,12 @@ def resolve_location(guild: Guild, location: Optional[str]) -> tuple[Optional[Vo
     if location is None or location.strip() == "":
         return None, None
     location = location.strip()
+    for prefix in LOCATION_SUGGESTION_PREFIXES:
+        if location.startswith(prefix):
+            location = location.removeprefix(prefix).strip()
+            break
+    if location == "":
+        return None, None
     if location.isdigit():
         voice_channel = utils.get(get_voice_channels(guild), id=int(location))
         if voice_channel is not None:
@@ -811,6 +819,8 @@ class Event:
                 logger.exception(message)
                 raise Exception(message)
         self.privacy_level = PrivacyLevel.guild_only
+        # The location key last seen on the current guild event, to tell changes made in Discord apart
+        self.guild_location_key: Optional[tuple] = None
         self.scheduler: Participant = scheduler
         self.rescheduler: Participant = rescheduler
         self.participants: list[Participant] = participants
@@ -1016,9 +1026,10 @@ class Event:
                     if self.ready_to_create:
                         # Create the event
                         await self.make_scheduled_events()
+                        availability_states = get_availability_states()
                         remove_times_from_availabilities_for_events()
-                        for event in client.events:
-                            await event.update_messages()
+                        await self.update_messages()
+                        await update_changed_availability_messages(availability_states, exclude=self)
                         return
 
     def intersect_time_blocks(self, timeblocks1: list, timeblocks2: list) -> list[TimeBlock]:
@@ -1422,13 +1433,12 @@ class Event:
             if event is not self and event.created and event.same_location(self):
                 await event.sync_start_button()
         # Restore availability taken by this event, then take it again for any remaining occurrences
+        availability_states = get_availability_states()
         for event in client.events:
             if event is not self:
                 event.restore_availabilities(self)
         remove_times_from_availabilities_for_events()
-        for event in client.events:
-            if event is not self:
-                await event.update_messages()
+        await update_changed_availability_messages(availability_states, exclude=self)
 
     def announce(self, action: str) -> None:
         """Reads out that the event is starting or ending now in its voice channel, if its guild has announcements on."""
@@ -2338,11 +2348,14 @@ class Event:
             logger.error(f'[{self}] Error in cancel while deleting scheduled event: {e}')
         await self.prep_next_scheduled_event()
         # Restore availability taken by this event, then take it again for any remaining occurrences
+        availability_states = get_availability_states()
         for event in client.events:
             event.restore_availabilities(self)
         remove_times_from_availabilities_for_events()
-        for event in client.events:
-            await event.update_messages()
+        # A cancelled event's messages were deleted above, but one reset to scheduling gets its availability message back
+        if self in client.events:
+            await self.update_messages()
+        await update_changed_availability_messages(availability_states, exclude=self)
 
     async def cancel_if_everyone_unsubscribed(self) -> bool:
         """
@@ -2450,11 +2463,12 @@ class Event:
         await self.text_channel.send(content=content, embed=embed)
         logger.info(f"[{self}] Cancelled {len(cancelled_times)} occurrence(s), next starts at {self.start_times[0]}")
         # Restore availability taken by the cancelled occurrences, then take it again for the remaining ones
+        availability_states = get_availability_states()
         for event in client.events:
             event.restore_availabilities(self)
         remove_times_from_availabilities_for_events()
-        for event in client.events:
-            await event.update_messages()
+        await self.update_messages()
+        await update_changed_availability_messages(availability_states, exclude=self)
 
     async def discard(self, reason: str) -> None:
         """
@@ -2481,15 +2495,18 @@ class Event:
             self.voice_channel_prompt = None
         self.remove()
         # Restore availability taken by this event
+        availability_states = get_availability_states()
         for event in client.events:
             event.restore_availabilities(self)
         remove_times_from_availabilities_for_events()
-        for event in client.events:
+        for event, availability_state in availability_states:
             # Events in the same missing text channel or guild are discarded too
             if event.text_channel.id == self.text_channel.id or client.get_guild(event.guild.id) is None:
                 continue
+            if event.availability_state == availability_state:
+                continue
             try:
-                await event.update_messages()
+                await event.update_availability_message()
             except Exception as e:
                 logger.error(f"[{event}] Error updating messages after discarding {self}: {e}")
 
@@ -2849,12 +2866,22 @@ class Event:
         return content
 
     async def sync_location_from_guild_event(self) -> None:
-        """Applies a location change made to the current guild event in Discord to the event and its other guild events."""
-        voice_channel, location = get_guild_event_location(self.scheduled_events[0])
+        """
+        Applies a location change made to the current guild event in Discord to the event and its other guild events.
+        Only a change to the guild event's location counts, since a change the bot makes, e.g. through /edit,
+        reaches the guild event some time after the event's location is set.
+        """
+        # The guild's copy is kept up to date by Discord, unlike the copy returned when the guild event was created
+        guild_event = self.guild.get_scheduled_event(self.scheduled_events[0].id) or self.scheduled_events[0]
+        voice_channel, location = get_guild_event_location(guild_event)
         # The new voice channel isn't cached
         if voice_channel is None and not location:
             return
-        if get_location_key(voice_channel, location) == self.location_key:
+        guild_location_key = get_location_key(voice_channel, location)
+        if guild_location_key == self.guild_location_key:
+            return
+        self.guild_location_key = guild_location_key
+        if guild_location_key == self.location_key:
             return
         old_location = self.location_string
         self.location = location or None
@@ -4441,8 +4468,10 @@ class ExistingGuildEventsSelect(Select):
                     if event.has_image_saved:
                         await guild_event.edit(image=event.get_image())
                     event.scheduled_events.append(guild_event)
+            availability_states = get_availability_states()
             remove_times_from_availabilities_for_events()
             await event.update_event_buttons_message()
+            await update_changed_availability_messages(availability_states, exclude=event)
             followup = await interaction.followup.send(content="Success.",
                                                        silent=True,
                                                        ephemeral=True)
@@ -4523,6 +4552,84 @@ class ExistingAvailabilitiesSelectView(View):
         self.add_item(ExistingAvailabilitiesSelect(event, source_events))
 
 
+class ParticipantsSelectView(View):
+    """
+    Represents a view to house dropdowns of the users and roles to include or exclude from an event.
+    Choosing from either dropdown makes the selection, since roles take priority over users.
+    Channels with more users or roles than a dropdown can list get a searchable dropdown instead.
+    """
+
+    def __init__(self, include_exclude: INCLUDE_EXCLUDE, members: list[Member], roles: list[Role]):
+        super().__init__(timeout=300)
+        # The ids of the selected users or roles, or None until a selection is made
+        self.user_ids: Optional[list[str]] = None
+        self.role_ids: Optional[list[str]] = None
+        action = 'include' if include_exclude == INCLUDE else 'exclude'
+        if len(members) <= 25:
+            options = [SelectOption(label=get_limited_text(member.display_name, 100),
+                                    value=str(member.id),
+                                    description=get_limited_text(member.name, 100))
+                       for member in members]
+            self.users_select = Select(placeholder=f"Choose the users to {action}", min_values=1, max_values=len(options), options=options)
+        else:
+            self.users_select = UserSelect(placeholder=f"Choose the users to {action}", min_values=1, max_values=25)
+        self.users_select.callback = self.users_select_callback
+        self.add_item(self.users_select)
+        if not roles:
+            return
+        if len(roles) <= 25:
+            options = [SelectOption(label=get_limited_text(role.name, 100), value=str(role.id)) for role in roles]
+            self.roles_select = Select(placeholder=f"Or choose the roles to {action}", min_values=1, max_values=len(options), options=options)
+        else:
+            self.roles_select = RoleSelect(placeholder=f"Or choose the roles to {action}", min_values=1, max_values=25)
+        self.roles_select.callback = self.roles_select_callback
+        self.add_item(self.roles_select)
+
+    @staticmethod
+    def get_ids(values: list) -> list[str]:
+        return [value if isinstance(value, str) else str(value.id) for value in values]
+
+    async def users_select_callback(self, interaction: Interaction):
+        await self.finish(interaction, user_ids=self.get_ids(self.users_select.values))
+
+    async def roles_select_callback(self, interaction: Interaction):
+        await self.finish(interaction, role_ids=self.get_ids(self.roles_select.values))
+
+    async def finish(self, interaction: Interaction, user_ids: Optional[list[str]] = None, role_ids: Optional[list[str]] = None):
+        # Only the first selection counts, so one made in the other dropdown before the message is deleted,
+        # or after the view timed out, is ignored. The view stops before awaiting so no other selection can slip in.
+        if self.is_finished():
+            await interaction.response.defer()
+            return
+        self.user_ids = user_ids
+        self.role_ids = role_ids
+        self.stop()
+        await interaction.response.defer()
+        await interaction.delete_original_response()
+
+
+async def prompt_for_participants(interaction: Interaction, include_exclude: INCLUDE_EXCLUDE) -> Optional[tuple[Optional[str], Optional[str]]]:
+    """
+    Sends dropdowns of the channel's members, excluding bots and the command user, and of their roles,
+    to choose who to include or exclude.
+    Returns the selected (user ids, role ids) as comma separated strings, or None if no selection was made in time.
+    """
+    members = [member for member in interaction.channel.members
+               if not member.bot and member.id != interaction.user.id]
+    if not members:
+        return None, None
+    roles = {role.id: role for member in members for role in member.roles
+             if not role.is_default() and not role.managed}
+    roles = sorted(roles.values(), key=lambda role: role.position, reverse=True)
+    view = ParticipantsSelectView(include_exclude, members, roles)
+    message = await interaction.followup.send(view=view, ephemeral=True, wait=True)
+    if await view.wait():
+        await message.delete()
+        return None
+    return (",".join(view.user_ids) if view.user_ids else None,
+            ",".join(view.role_ids) if view.role_ids else None)
+
+
 def get_participants_from_interaction(event_name: str,
                                       interaction: Interaction,
                                       include_exclude: Optional[INCLUDE_EXCLUDE] = None,
@@ -4586,7 +4693,7 @@ def get_participants_from_channel(event_name: str,
     if roles and roles != '':
         try:
             role_names = [role.strip() for role in roles.split(',') if role.strip()]
-            roles = [utils.find(lambda r: r.name.lower() == role_name.lower(), guild.roles) for role_name in role_names]
+            roles = [utils.find(lambda r: r.name.lower() == role_name.lower() or str(r.id) == role_name, guild.roles) for role_name in role_names]
         except Exception as e:
             raise Exception(f'[{event_name}] Failed to parse role(s): {e}')
         if not role_names:
@@ -4892,28 +4999,32 @@ async def on_message(message: Message):
 @app_commands.describe(location='Voice channel for the event, or type a location such as an address.')
 @app_commands.describe(start_time='Start time (in Eastern Time or ISO format) for the event.')
 @app_commands.describe(image_url='URL to an image for the event.')
-@app_commands.describe(include_exclude='Whether to include or exclude users with the designated role.')
-@app_commands.describe(usernames='Comma separated usernames of users to include/exclude.')
-@app_commands.describe(roles='Comma separated roles of users to include/exclude.')
+@app_commands.describe(include_exclude='Choose users or roles to include/exclude from a dropdown.')
 @app_commands.describe(duration=f'Event duration in minutes ({DEFAULT_EVENT_DURATION} minutes default).')
 async def create_command(interaction: Interaction,
                          event_name: EventName,
                          location: Location,
                          start_time: str,
                          image_url: Optional[str] = None,
-                         include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
-                         usernames: Optional[str] = None,
-                         roles: Optional[str] = None,
+                         include_exclude: Optional[INCLUDE_EXCLUDE] = None,
                          duration: Optional[Duration] = DEFAULT_EVENT_DURATION):
     await interaction.response.defer(ephemeral=True)
     logger.info(f"[{event_name}] Received event creation request from {interaction.user.name}")
-    participants = get_participants_from_interaction(event_name=event_name,
-                                                     interaction=interaction,
-                                                     include_exclude=include_exclude,
-                                                     usernames=usernames,
-                                                     roles=roles)
     try:
         voice_channel, location = resolve_location(interaction.guild, location)
+        users, roles = None, None
+        if include_exclude:
+            selection = await prompt_for_participants(interaction, include_exclude)
+            if selection is None:
+                await interaction.followup.send(content=f"No users or roles were chosen in time, so {event_name} wasn't created.",
+                                                ephemeral=True)
+                return
+            users, roles = selection
+        participants = get_participants_from_interaction(event_name=event_name,
+                                                         interaction=interaction,
+                                                         include_exclude=include_exclude or INCLUDE,
+                                                         usernames=users,
+                                                         roles=roles)
         await create(event_name=event_name,
                      guild=interaction.guild,
                      text_channel=interaction.channel,
@@ -4922,7 +5033,7 @@ async def create_command(interaction: Interaction,
                      start_time=start_time,
                      scheduler_id=interaction.user.id,
                      image_url=image_url,
-                     include_exclude=include_exclude,
+                     include_exclude=include_exclude or INCLUDE,
                      usernames=participants,
                      roles=roles,
                      duration=duration)
@@ -5131,14 +5242,12 @@ async def create(event_name: str,
                   duration=duration,
                   start_times=start_times)
     await event.make_scheduled_events()
+    availability_states = get_availability_states()
     client.events.append(event)
 
     remove_times_from_availabilities_for_events()
     await event.update_event_buttons_message()
-
-    other_events = get_events_that_share_participants(event)
-    for other_event in other_events:
-        await other_event.update_messages()
+    await update_changed_availability_messages(availability_states)
     return event
 
 
@@ -5146,9 +5255,7 @@ async def create(event_name: str,
 @app_commands.describe(event_name='Name for the event.')
 @app_commands.describe(location='Voice channel for the event, or type a location such as an address.')
 @app_commands.describe(image_url="URL to an image for the event.")
-@app_commands.describe(include_exclude='Whether to include or exclude users specified.')
-@app_commands.describe(usernames='Comma separated usernames of users to include/exclude.')
-@app_commands.describe(roles='Comma separated roles of users to include/exclude.')
+@app_commands.describe(include_exclude='Choose users or roles to include/exclude from a dropdown.')
 @app_commands.describe(duration='Event duration in minutes (0 minutes default, duration calculated based on participant availability).')
 @app_commands.describe(multi_event='Create an event on each date that everyone is available.')
 @app_commands.describe(timeout=f'Number of days that the event should wait for responses ({DEFAULT_EVENT_TIMEOUT_DAYS} days default).')
@@ -5156,9 +5263,7 @@ async def schedule_command(interaction: Interaction,
                            event_name: EventName,
                            location: Location,
                            image_url: Optional[str] = None,
-                           include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
-                           usernames: Optional[str] = None,
-                           roles: Optional[str] = None,
+                           include_exclude: Optional[INCLUDE_EXCLUDE] = None,
                            duration: Optional[Duration] = 0,
                            multi_event: Optional[bool] = False,
                            timeout: Optional[TimeoutDays] = DEFAULT_EVENT_TIMEOUT_DAYS):
@@ -5166,6 +5271,14 @@ async def schedule_command(interaction: Interaction,
     logger.info(f'[{event_name}] Received event schedule request from {interaction.user.name}')
     try:
         voice_channel, location = resolve_location(interaction.guild, location)
+        users, roles = None, None
+        if include_exclude:
+            selection = await prompt_for_participants(interaction, include_exclude)
+            if selection is None:
+                await interaction.followup.send(content=f"No users or roles were chosen in time, so scheduling wasn't started for {event_name}.",
+                                                ephemeral=True)
+                return
+            users, roles = selection
         await schedule(event_name=event_name,
                        guild=interaction.guild,
                        text_channel=interaction.channel,
@@ -5173,8 +5286,8 @@ async def schedule_command(interaction: Interaction,
                        location=location,
                        scheduler_id=interaction.user.id,
                        image_url=image_url,
-                       include_exclude=include_exclude,
-                       usernames=usernames,
+                       include_exclude=include_exclude or INCLUDE,
+                       usernames=users,
                        roles=roles,
                        duration=duration,
                        multi_event=multi_event,
@@ -5335,11 +5448,12 @@ async def schedule(event_name: str,
                   duration=duration,
                   multi_event=multi_event,
                   timeout_at=timeout_at)
+    availability_states = get_availability_states()
     client.events.append(event)
 
     remove_times_from_availabilities_for_events()
-    for other_event in client.events:
-        await other_event.update_messages()
+    await event.update_messages()
+    await update_changed_availability_messages(availability_states)
     return event
 
 
@@ -5383,6 +5497,7 @@ async def edit_command(interaction: Interaction,
     # Only one event in this text channel/guild, edit it
     if len(events) == 1:
         event = events[0]
+        availability_states = get_availability_states()
         embed = await edit_event(event=event,
                                  name=name,
                                  voice_channel=voice_channel,
@@ -5396,8 +5511,8 @@ async def edit_command(interaction: Interaction,
         else:
             embed.set_footer(text=f"Edited by {interaction.user}")
         remove_times_from_availabilities_for_events()
-        for event in client.events:
-            await event.update_messages()
+        await event.update_messages()
+        await update_changed_availability_messages(availability_states, exclude=event)
         await interaction.followup.send(embed=embed)
     # Multiple events in text channel/guild, select one to edit from a dropdown
     else:
@@ -5408,6 +5523,7 @@ async def edit_command(interaction: Interaction,
             await interaction.response.defer(ephemeral=True, thinking=True)
             for event in events:
                 if event.get_limited_name(25) == select.values[0]:
+                    availability_states = get_availability_states()
                     embed = await edit_event(event=event,
                                              name=name,
                                              voice_channel=voice_channel,
@@ -5421,8 +5537,8 @@ async def edit_command(interaction: Interaction,
                     else:
                         embed.set_footer(text=f"Edited by {interaction.user}")
                     remove_times_from_availabilities_for_events()
-                    for event in client.events:
-                        await event.update_messages()
+                    await event.update_messages()
+                    await update_changed_availability_messages(availability_states, exclude=event)
                     await interaction.followup.send(embed=embed)
                     return
 
@@ -5492,9 +5608,10 @@ async def attach_command(interaction: Interaction):
             await event.save_image_to_file()
             event.scheduled_events.append(guild_event)
             logger.info(f'[{event.name}] attached to event')
+        availability_states = get_availability_states()
         remove_times_from_availabilities_for_events()
-        for event in client.events:
-            await event.update_messages()
+        await event.update_messages()
+        await update_changed_availability_messages(availability_states, exclude=event)
         followup = await interaction.followup.send(content="Success.",
                                                    silent=True,
                                                    ephemeral=True)
@@ -5679,6 +5796,31 @@ def get_participants_other_unanswered_events_embed(event: Event, participant: Pa
                                     inline=False)
                 break
     return embed if valid else None
+
+
+def get_availability_states() -> list[tuple[Event, list]]:
+    """Gets each event with its availability state, to tell later which events' availability changed."""
+    return [(event, event.availability_state) for event in client.events]
+
+
+async def update_changed_availability_messages(availability_states: list[tuple[Event, list]],
+                                               exclude: Optional[Event] = None) -> None:
+    """
+    Updates the availability messages of events whose availability changed, so that events an action
+    didn't affect aren't edited.
+
+    Arguments
+    ---------
+    availability_states: :class:`list[tuple[Event, list]]`
+        Each event with its availability state from before the action, from :func:`get_availability_states`.
+    exclude: :class:`Optional[Event]`
+        An event whose messages are updated separately.
+    """
+    for event, availability_state in availability_states:
+        if event is exclude or event not in client.events:
+            continue
+        if event.availability_state != availability_state:
+            await event.update_availability_message()
 
 
 def remove_times_from_availabilities_for_events() -> None:

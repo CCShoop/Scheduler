@@ -3,14 +3,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from libs.participant import (Participant, TimeBlock, RemovedTime, parse_time_string,
+from libs.participant import (Participant, TimeBlock, RemovedTime, parse_time_string, to_local,
                               DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF)
 
 
 def at(days: int, hour: int, minute: int = 0) -> datetime:
     """Local time `days` from today at hour:minute."""
     base = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
-    return (base + timedelta(days=days)).replace(hour=hour, minute=minute)
+    return to_local((base + timedelta(days=days)).replace(hour=hour, minute=minute))
 
 
 def date_string(days: int, with_year: bool = True) -> str:

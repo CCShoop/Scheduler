@@ -27,6 +27,8 @@ class TestLocation:
         stage_channel = add_stage_channel(env)
         assert env.sched.resolve_location(env.guild, "stage") == (stage_channel, None)
         assert env.sched.resolve_location(env.guild, str(stage_channel.id)) == (stage_channel, None)
+        assert env.sched.resolve_location(env.guild, "🎙️ stage") == (stage_channel, None)
+        assert env.sched.resolve_location(env.guild, "🎙 stage") == (stage_channel, None)
 
     def test_autocomplete_lists_stage_channels_after_voice_channels(self, env):
         add_stage_channel(env)

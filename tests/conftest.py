@@ -68,13 +68,17 @@ def sched():
 def env(sched, monkeypatch):
     """A guild with one text and one voice channel, and message updates stubbed out."""
     update_messages_calls = []
+    update_availability_message_calls = []
 
     async def fake_update_messages(self):
         update_messages_calls.append(self)
 
+    async def fake_update_availability_message(self, rescheduler=None):
+        update_availability_message_calls.append(self)
+
     monkeypatch.setattr(sched.Event, "update_messages", fake_update_messages)
     monkeypatch.setattr(sched.Event, "update_event_buttons_message", noop)
-    monkeypatch.setattr(sched.Event, "update_availability_message", noop)
+    monkeypatch.setattr(sched.Event, "update_availability_message", fake_update_availability_message)
     monkeypatch.setattr(sched.Event, "delete_availability_message", noop)
 
     guild = FakeGuild()
@@ -105,7 +109,8 @@ def env(sched, monkeypatch):
 
     return SimpleNamespace(sched=sched, guild=guild, text_channel=text_channel, voice_channel=voice_channel,
                            make_participant=make_participant, make_event=make_event,
-                           update_messages_calls=update_messages_calls)
+                           update_messages_calls=update_messages_calls,
+                           update_availability_message_calls=update_availability_message_calls)
 
 
 @pytest.fixture

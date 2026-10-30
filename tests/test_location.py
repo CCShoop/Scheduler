@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from discord import EntityType, EventStatus
 
-from libs.participant import TimeBlock
+from libs.participant import Participant, TimeBlock
 from fakes import FakeScheduledEvent, at, run
 
 
@@ -30,6 +30,16 @@ class TestResolveLocation:
     @pytest.mark.parametrize("typed", ["General", "general", "#General", "  General "])
     def test_voice_channel_name(self, env, typed):
         assert env.sched.resolve_location(env.guild, typed) == (env.voice_channel, None)
+
+    @pytest.mark.parametrize("submitted", ["🔊 General", "🔊General", " 🔊  general "])
+    def test_voice_channel_suggestion_name(self, env, submitted):
+        assert env.sched.resolve_location(env.guild, submitted) == (env.voice_channel, None)
+
+    def test_external_suggestion_name(self, env):
+        assert env.sched.resolve_location(env.guild, "📍 123 Main St") == (None, "123 Main St")
+
+    def test_suggestion_prefix_alone_is_empty(self, env):
+        assert env.sched.resolve_location(env.guild, "🔊") == (None, None)
 
     def test_other_text_is_external(self, env):
         assert env.sched.resolve_location(env.guild, " 123 Main St ") == (None, "123 Main St")
@@ -189,6 +199,82 @@ class TestEditLocation:
         event = make_external_event(env)
         embed = run(env.sched.edit_event(event, location="123 MAIN ST"))
         assert embed.fields[0].name == "Location (Unchanged)"
+
+
+class TestSyncLocationFromGuildEvent:
+    def make_created_voice_event(self, env):
+        scheduled_event = FakeScheduledEvent(at(1, 20), channel=env.voice_channel)
+        env.guild.created.append(scheduled_event)
+        event = env.make_event([env.make_participant("a")], created=True, start_times=[at(1, 20)],
+                               scheduled_events=[scheduled_event])
+        return event, scheduled_event
+
+    def test_applies_a_change_made_in_discord(self, env):
+        event, scheduled_event = self.make_created_voice_event(env)
+        run(event.sync_location_from_guild_event())
+        scheduled_event.kwargs = {"entity_type": EntityType.external, "location": "Park"}
+        run(event.sync_location_from_guild_event())
+        assert event.location == "Park" and event.voice_channel is None
+        assert env.update_messages_calls == [event]
+
+    def test_applies_a_change_made_while_offline(self, env):
+        event, scheduled_event = self.make_created_voice_event(env)
+        scheduled_event.kwargs = {"entity_type": EntityType.external, "location": "Park"}
+        run(event.sync_location_from_guild_event())
+        assert event.location == "Park"
+
+    def test_edit_is_not_undone_before_discord_catches_up(self, env):
+        event, scheduled_event = self.make_created_voice_event(env)
+        run(event.sync_location_from_guild_event())
+        # Like discord.py, the fake guild event keeps its old location until Discord sends the update
+        run(env.sched.edit_event(event, location="Park"))
+        run(event.sync_location_from_guild_event())
+        assert event.location == "Park"
+        scheduled_event.kwargs = {"entity_type": EntityType.external, "location": "Park"}
+        run(event.sync_location_from_guild_event())
+        assert event.location == "Park"
+        assert env.update_messages_calls == []
+
+    def test_reads_the_guilds_copy_of_the_guild_event(self, env):
+        event, scheduled_event = self.make_created_voice_event(env)
+        run(event.sync_location_from_guild_event())
+        # The guild event returned on creation is a separate object from the guild's, which Discord updates
+        guild_copy = FakeScheduledEvent(at(1, 20), entity_type=EntityType.external, location="Park")
+        guild_copy.id = scheduled_event.id
+        env.guild.created = [guild_copy]
+        run(event.sync_location_from_guild_event())
+        assert event.location == "Park"
+
+
+class TestUpdateChangedAvailabilityMessages:
+    def test_updates_only_events_whose_availability_changed(self, env):
+        changed = env.make_event([env.make_participant("b", [TimeBlock(at(1, 18), at(1, 20))])])
+        unchanged = env.make_event([env.make_participant("c", [TimeBlock(at(1, 18), at(1, 20))])])
+        availability_states = env.sched.get_availability_states()
+        changed.participants[0].availability[0].end_time = at(1, 21)
+        run(env.sched.update_changed_availability_messages(availability_states))
+        assert env.update_availability_message_calls == [changed]
+
+    def test_skips_excluded_and_removed_events(self, env):
+        excluded = env.make_event([env.make_participant("b", [TimeBlock(at(1, 18), at(1, 20))])])
+        removed = env.make_event([env.make_participant("c", [TimeBlock(at(1, 18), at(1, 20))])])
+        availability_states = env.sched.get_availability_states()
+        excluded.participants[0].availability[0].end_time = at(1, 21)
+        removed.participants[0].availability[0].end_time = at(1, 21)
+        env.sched.client.events.remove(removed)
+        run(env.sched.update_changed_availability_messages(availability_states, exclude=excluded))
+        assert env.update_availability_message_calls == []
+
+    def test_creating_an_event_updates_only_events_it_takes_availability_from(self, env):
+        a = env.make_participant("a", [TimeBlock(at(1, 18), at(1, 23))])
+        a_elsewhere = Participant(member=a.member, availability=[TimeBlock(at(1, 18), at(1, 23))])
+        affected = env.make_event([a_elsewhere])
+        unaffected = env.make_event([env.make_participant("b", [TimeBlock(at(1, 18), at(1, 23))])])
+        run(env.sched.create(event_name="New", guild=env.guild, text_channel=env.text_channel,
+                             voice_channel=env.voice_channel, start_time=at(1, 20), scheduler_id=a.member.id,
+                             usernames=[a]))
+        assert affected in env.update_availability_message_calls
+        assert unaffected not in env.update_availability_message_calls
 
 
 class TestCreateAndSchedule:

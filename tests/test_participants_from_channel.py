@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -14,8 +15,8 @@ def make_member(name, roles=(), bot=False):
 @pytest.fixture
 def channel_env(sched):
     """A guild whose text channel has a scheduler, two members with roles, one without, and a bot."""
-    gamers = SimpleNamespace(name="Gamers")
-    mods = SimpleNamespace(name="Mods")
+    gamers = SimpleNamespace(id=next_id(), name="Gamers")
+    mods = SimpleNamespace(id=next_id(), name="Mods")
     guild = FakeGuild()
     guild.roles = [gamers, mods]
     channel = FakeTextChannel()
@@ -122,6 +123,10 @@ class TestRoles:
     def test_include_several(self, channel_env):
         assert channel_env.get(roles="Gamers, Mods") == ["host", "alice", "bob"]
 
+    def test_role_ids(self, channel_env):
+        gamers, mods = channel_env.guild.roles
+        assert channel_env.get(roles=f"{gamers.id},{mods.id}") == ["host", "alice", "bob"]
+
     def test_role_names_are_case_insensitive(self, channel_env):
         assert channel_env.get(roles="  gAmErS ") == ["host", "alice"]
 
@@ -181,3 +186,109 @@ class TestCreateWithUsernameList:
         event = run(env.sched.schedule(event_name="Game Night", guild=env.guild, text_channel=env.text_channel,
                                        voice_channel=env.voice_channel, scheduler_id=a.id, usernames=[to_entry(b)]))
         assert [participant.member for participant in event.participants] == [a, b]
+
+
+class TestPromptForParticipants:
+    @staticmethod
+    def make_role(name, position, default=False, managed=False):
+        return SimpleNamespace(id=next_id(), name=name, position=position, managed=managed, is_default=lambda: default)
+
+    @staticmethod
+    def make_member(name, roles=(), bot=False):
+        return SimpleNamespace(id=next_id(), name=name, display_name=name.title(), bot=bot, roles=list(roles))
+
+    def prompt(self, sched, members, user, choose=None):
+        """Runs the prompt, choosing from its view with `choose(view)` once it's sent, and returns (result, view)."""
+        sent = {}
+
+        async def send(view, **kwargs):
+            sent["view"] = view
+            if choose is not None:
+                asyncio.get_running_loop().call_soon(lambda: asyncio.ensure_future(choose(view)))
+            return SimpleNamespace(delete=lambda: asyncio.sleep(0))
+
+        interaction = SimpleNamespace(channel=SimpleNamespace(members=members), user=user,
+                                      followup=SimpleNamespace(send=send))
+        return run(sched.prompt_for_participants(interaction, sched.INCLUDE)), sent.get("view")
+
+    @staticmethod
+    def selection_interaction():
+        return SimpleNamespace(response=SimpleNamespace(defer=lambda: asyncio.sleep(0)),
+                               delete_original_response=lambda: asyncio.sleep(0))
+
+    def test_lists_members_except_bots_and_user_and_their_roles(self, sched):
+        everyone = self.make_role("@everyone", 0, default=True)
+        managed = self.make_role("Bot Role", 1, managed=True)
+        low, high = self.make_role("Low", 2), self.make_role("High", 3)
+        host = self.make_member("host", roles=[everyone, high])
+        alice = self.make_member("alice", roles=[everyone, low])
+        bob = self.make_member("bob", roles=[everyone, low, high])
+        botty = self.make_member("botty", roles=[everyone, managed], bot=True)
+
+        async def choose(view):
+            view.users_select._values = [str(alice.id)]
+            await view.users_select_callback(self.selection_interaction())
+
+        result, view = self.prompt(sched, [host, alice, bob, botty], host, choose)
+        assert [option.value for option in view.users_select.options] == [str(alice.id), str(bob.id)]
+        assert [option.label for option in view.roles_select.options] == ["High", "Low"]
+        assert result == (str(alice.id), None)
+
+    def test_choosing_roles(self, sched):
+        gamers, mods = self.make_role("Gamers", 1), self.make_role("Mods", 2)
+        host = self.make_member("host")
+        alice, bob = self.make_member("alice", roles=[gamers]), self.make_member("bob", roles=[mods])
+
+        async def choose(view):
+            view.roles_select._values = [str(gamers.id), str(mods.id)]
+            await view.roles_select_callback(self.selection_interaction())
+
+        result, _ = self.prompt(sched, [host, alice, bob], host, choose)
+        assert result == (None, f"{gamers.id},{mods.id}")
+
+    def test_only_the_first_selection_counts(self, sched):
+        gamers = self.make_role("Gamers", 1)
+        host, alice = self.make_member("host"), self.make_member("alice", roles=[gamers])
+        deletes = []
+
+        def selection_interaction():
+            interaction = self.selection_interaction()
+            interaction.delete_original_response = lambda: asyncio.sleep(0, deletes.append(1))
+            return interaction
+
+        async def choose(view):
+            view.users_select._values = [str(alice.id)]
+            view.roles_select._values = [str(gamers.id)]
+            await asyncio.gather(view.users_select_callback(selection_interaction()),
+                                 view.roles_select_callback(selection_interaction()))
+
+        result, _ = self.prompt(sched, [host, alice], host, choose)
+        assert result == (str(alice.id), None)
+        assert len(deletes) == 1
+
+    def test_no_roles_dropdown_without_roles(self, sched):
+        host, alice = self.make_member("host"), self.make_member("alice")
+
+        async def choose(view):
+            view.users_select._values = [str(alice.id)]
+            await view.users_select_callback(self.selection_interaction())
+
+        _, view = self.prompt(sched, [host, alice], host, choose)
+        assert len(view.children) == 1
+
+    def test_large_channels_get_searchable_dropdowns(self, sched):
+        roles = [self.make_role(f"Role {i}", i) for i in range(30)]
+        host = self.make_member("host")
+        members = [self.make_member(f"user{i}", roles=[roles[i]]) for i in range(30)]
+
+        async def choose(view):
+            view.users_select._values = []
+            await view.users_select_callback(self.selection_interaction())
+
+        _, view = self.prompt(sched, [host] + members, host, choose)
+        assert type(view.users_select).__name__ == "UserSelect"
+        assert type(view.roles_select).__name__ == "RoleSelect"
+
+    def test_alone_in_channel_skips_the_prompt(self, sched):
+        host = self.make_member("host")
+        assert self.prompt(sched, [host], host) == ((None, None), None)

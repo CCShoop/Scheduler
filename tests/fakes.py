@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 from discord import ChannelType, EntityType, EventStatus, NotFound
 
+from libs.participant import to_local
+
 _ids = itertools.count(1000)
 
 
@@ -17,7 +19,7 @@ def next_id() -> int:
 def at(days: int, hour: int, minute: int = 0) -> datetime:
     """Local time `days` from today at hour:minute."""
     base = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
-    return (base + timedelta(days=days)).replace(hour=hour, minute=minute)
+    return to_local((base + timedelta(days=days)).replace(hour=hour, minute=minute))
 
 
 class FakeScheduledEvent:

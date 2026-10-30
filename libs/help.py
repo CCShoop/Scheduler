@@ -12,9 +12,7 @@ commands.add_field(name="schedule",
                    "\nlocation: Where the event will take place. Pick a voice channel or type a location such as an address."
                    "\nstart_time: The start time for the event. Accepts a time (e.g. 2200) or ISO format datetime."
                    "\nimage_url: A URL for an image to use for the guild event and in embed thumbnails."
-                   "\ninclude_exclude: Whether to include or exclude the provided usernames/ids/roles."
-                   "\nusernames: A comma separated list of usernames/ids to include/exclude."
-                   "\nroles: A comma separated list of roles to include/exclude."
+                   "\ninclude_exclude: Choose users or roles to include/exclude from dropdowns."
                    "\nduration: The duration of the event in minutes. Default is 0, which automatically sets the duration based on availability."
                    "\nmulti_event: Whether or not to make one event per day, respecting availabilities.",
                    inline=False)
@@ -24,9 +22,7 @@ commands.add_field(name="create",
                    "\nlocation: Where the event will take place. Pick a voice channel or type a location such as an address."
                    "\nstart_time: The start time for the event. Accepts a time (e.g. 2200) or ISO format datetime."
                    "\nimage_url: A URL for an image to use for the guild event and in embed thumbnails."
-                   "\ninclude_exclude: Whether to include or exclude the provided usernames/ids/roles."
-                   "\nusernames: A comma separated list of usernames/ids to include/exclude."
-                   "\nroles: A comma separated list of roles to include/exclude."
+                   "\ninclude_exclude: Choose users or roles to include/exclude from dropdowns."
                    "\nduration: The duration of the event in minutes. Default is 30 minutes.",
                    inline=False)
 commands.add_field(name="edit",
