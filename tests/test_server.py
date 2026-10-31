@@ -151,3 +151,37 @@ def test_whitespace_only_waits_for_a_message():
     server.callback = received.append
     assert run(exchange(server, "  \n", json.dumps({"name": "test"}))) == "valid"
     assert received == [{"name": "test"}]
+
+
+def test_start_server_serves_clients(monkeypatch):
+    received = []
+    server = Server(host="127.0.0.1", port=0)
+    server.callback = received.append
+    listeners = []
+    start_server = asyncio.start_server
+
+    async def recording_start_server(*args, **kwargs):
+        listener = await start_server(*args, **kwargs)
+        listeners.append(listener)
+        return listener
+
+    monkeypatch.setattr(asyncio, "start_server", recording_start_server)
+
+    async def scenario():
+        task = asyncio.create_task(server.start_server())
+        while not listeners:
+            await asyncio.sleep(0.01)
+        port = listeners[0].sockets[0].getsockname()[1]
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write(json.dumps({"name": "served"}).encode())
+        writer.write_eof()
+        response = (await asyncio.wait_for(reader.read(), timeout=2)).decode()
+        writer.close()
+        await writer.wait_closed()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return response
+
+    assert run(scenario()) == "valid"
+    assert received == [{"name": "served"}]

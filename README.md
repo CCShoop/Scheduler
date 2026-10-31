@@ -18,7 +18,7 @@ A Discord bot that finds a time that works for everyone and turns it into a Disc
 
 ### Requirements
 
-- Python 3.10 or newer
+- Python 3.13 or newer
 - A Discord application with a bot user
 
 ### 1. Create the Discord bot
@@ -40,8 +40,10 @@ A Discord bot that finds a time that works for everyone and turns it into a Disc
 ```bash
 git clone --recurse-submodules <this repository>
 cd Scheduler
-pip install -r requirements.txt
+./setup.sh
 ```
+
+`setup.sh` creates a Python 3.13 virtual environment in `.venv` and installs the dependencies into it, and the bot then runs with `.venv/bin/python`. If `python3.13` isn't installed, the script installs [uv](https://docs.astral.sh/uv/) to download it, without sudo or touching the system Python. It also installs piper-tts and pyopenjtalk when `PIPER_MODEL_EN` or `PIPER_MODEL_JP` is set in `.env`, and lists any missing system packages for voice announcements. Run it again after pulling to update the dependencies. The `.venv/` folder is ignored by git.
 
 `libs/persistence` is a [git submodule](https://github.com/CCShoop/persistence) shared with other bots. If you cloned without `--recurse-submodules`, or are updating an existing copy, run `git submodule update --init` after pulling.
 
@@ -49,15 +51,15 @@ pip install -r requirements.txt
 
 ```bash
 sudo apt install ffmpeg libopus0 espeak-ng   # espeak-ng
-python3 -m pip install piper-tts             # piper, which also needs a voice model in PIPER_MODEL_EN or PIPER_MODEL_JP
+.venv/bin/python -m pip install piper-tts     # piper, which also needs a voice model in PIPER_MODEL_EN or PIPER_MODEL_JP
 sudo apt install python3-dev cmake build-essential   # needed to build pyopenjtalk
-python3 -m pip install pyopenjtalk           # Japanese piper voices
+.venv/bin/python -m pip install pyopenjtalk   # Japanese piper voices
 ```
 
 Each piper voice needs all of these:
 
 1. **piper-tts**, installed for the Python that runs the bot.
-2. **Both of the voice's files in the same folder:** the model (`en_US-lessac-medium.onnx`) and its config (`en_US-lessac-medium.onnx.json`). `python3 -m piper.download_voices` downloads both. If you download from Hugging Face, get the `.onnx.json` file too.
+2. **Both of the voice's files in the same folder:** the model (`en_US-lessac-medium.onnx`) and its config (`en_US-lessac-medium.onnx.json`). `.venv/bin/python -m piper.download_voices` downloads both. If you download from Hugging Face, get the `.onnx.json` file too.
 3. **`PIPER_MODEL_EN` or `PIPER_MODEL_JP` in `.env`**, set to the `.onnx` file. A full path is safest. A relative path such as `piper/en_US-lessac-medium.onnx` is read from the folder the bot is started in. A `piper/` folder in the project is ignored by git.
 4. **For Japanese voices, pyopenjtalk**, installed for the same Python.
 5. **ffmpeg, libopus, and voice support** (`discord.py[voice]`, from `requirements.txt`), which every engine needs.
@@ -65,9 +67,9 @@ Each piper voice needs all of these:
 
 `/tts` checks 1 to 5 before switching, and says what's missing. Missing permissions only show up as errors in the log when an announcement fails. So does a missing pyopenjtalk, if piper runs from a separate install on `PATH` instead of the bot's Python.
 
-Install piper-tts and pyopenjtalk with the same Python that runs the bot, which is why these use `python3 -m pip`. The bot runs piper through that Python, so the `piper` command doesn't need to be on `PATH`. If `/tts` says piper is missing, it names the Python the bot is running, and you can install piper-tts with that one.
+Install piper-tts and pyopenjtalk with the same Python that runs the bot, which is why these use `.venv/bin/python -m pip`. The bot runs piper through that Python, so the `piper` command doesn't need to be on `PATH`. If `/tts` says piper is missing, it names the Python the bot is running, and you can install piper-tts with that one.
 
-`pip install pyopenjtalk` compiles it from source, which needs Python's development headers, `cmake`, and a C++ compiler. `python3-dev` matches the system's default Python. If the bot runs on a different Python version, install that version's headers instead, such as `python3.12-dev`.
+`pip install pyopenjtalk` compiles it from source, which needs Python's development headers, `cmake`, and a C++ compiler. `python3-dev` matches the system's default Python. If the bot runs on a different Python version, install that version's headers instead, such as `python3.13-dev`.
 
 ### 3. Configure `.env`
 
@@ -85,12 +87,12 @@ PORT=5000
 | `DISCORD_TOKEN` | The bot token from the Developer Portal. |
 | `OWNER_ID`      | Your Discord user ID. This user can run the [owner-only commands](#owner-only-commands). To copy your ID, enable Developer Mode under *Settings → Advanced*, then right-click your name and choose **Copy User ID**. |
 | `HOST`, `PORT`  | Where the bot listens for [scheduling requests from other programs](#scheduling-from-another-program). Use `127.0.0.1` to accept connections from the same machine only. All four variables are required. |
-| `PIPER_MODEL_EN`, `PIPER_MODEL_JP` | Optional. The full paths to the `.onnx` files of the piper voice models for the `piper-en` (English) and `piper-jp` (Japanese) [voice announcements](#voice-announcements). Download one with `python3 -m piper.download_voices en_US-lessac-medium` (or `ja_JP-hi_fi_captain-medium`), keeping its `.onnx.json` file next to it. Samples of every voice are at [rhasspy.github.io/piper-samples](https://rhasspy.github.io/piper-samples/). |
+| `PIPER_MODEL_EN`, `PIPER_MODEL_JP` | Optional. The full paths to the `.onnx` files of the piper voice models for the `piper-en` (English) and `piper-jp` (Japanese) [voice announcements](#voice-announcements). Download one with `.venv/bin/python -m piper.download_voices en_US-lessac-medium` (or `ja_JP-hi_fi_captain-medium`), keeping its `.onnx.json` file next to it. Samples of every voice are at [rhasspy.github.io/piper-samples](https://rhasspy.github.io/piper-samples/). |
 
 ### 4. Run the bot
 
 ```bash
-python3 scheduler.py
+.venv/bin/python scheduler.py
 ```
 
 When the bot's status changes to *Watching for event scheduling commands*, it's ready. On startup, it registers its slash commands with Discord. Newly registered commands can take a few minutes to show up in your server.

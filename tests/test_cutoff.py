@@ -409,3 +409,24 @@ def test_help_topics_fit_choices(sched):
     assert "overview" in sched.HELP_TOPICS
     assert len(sched.HELP_TOPICS) <= 25
     assert all(1 <= len(embed.title) <= 100 for embed in sched.HELP_TOPICS.values())
+
+
+class TestHelpCommand:
+    def use(self, sched, topic):
+        interaction = FakeInteraction(SimpleNamespace(id=7, name="user", nick=None))
+        run(sched.help_command.callback(interaction, topic))
+        (kind, kwargs), = interaction.responses
+        assert kind == "send_message" and kwargs["ephemeral"]
+        return kwargs["embed"]
+
+    def test_blank_shows_the_overview(self, sched):
+        assert self.use(sched, None) is sched.HELP_TOPICS["overview"]
+
+    @pytest.mark.parametrize("topic", ["scheduling", "locations", "commands", "buttons", "availability", "managing", "announcements"])
+    def test_shows_the_chosen_topic(self, sched, topic):
+        assert self.use(sched, topic) is sched.HELP_TOPICS[topic]
+
+    def test_offers_each_topic(self, sched):
+        (topic,) = sched.help_command.parameters
+        assert [choice.value for choice in topic.choices] == list(sched.HELP_TOPICS)
+        assert not topic.required
