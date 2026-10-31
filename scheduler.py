@@ -479,6 +479,11 @@ async def parse_packet(guild_getter, data: dict, packet_type: str) -> dict:
         if not isinstance(data["multi_event"], bool):
             raise Exception('"multi_event" must be true or false')
         options["multi_event"] = data["multi_event"]
+        # Optional, like /schedule's timeout option
+        if data.get("timeout_days") is not None:
+            if not is_number(data["timeout_days"]):
+                raise Exception('"timeout_days" must be a whole number of days or null')
+            options["timeout_days"] = data["timeout_days"]
     else:
         if not isinstance(data["start_time"], str):
             raise Exception('"start_time" must be a string')
@@ -676,7 +681,15 @@ class SchedulerClient(Client):
         """
         if not self.loaded_json:
             self.loaded_json = True
-            events_data = persist.read()
+            try:
+                events_data = persist.read()
+                if events_data is not None and not isinstance(events_data, dict):
+                    raise ValueError("not a JSON object")
+            except Exception as e:
+                # Move the bad file aside so saving can't overwrite it with no events
+                backup = persist.quarantine()
+                logger.critical(f"Data file is unreadable ({e}); moved it to {backup} and starting with no events")
+                events_data = None
             if events_data:
                 # Data saved before user settings has no entry
                 for user_data in events_data.get('users', []):
@@ -1372,7 +1385,11 @@ class Event:
                 embed = Embed(title=self.get_limited_name(256),
                               description=desc,
                               url=self.availability_message.jump_url)
-                await unanswered_participant.member.send(embed=embed)
+                # Their DMs may be closed, which mustn't fail the input of whoever answered
+                try:
+                    await unanswered_participant.member.send(embed=embed)
+                except Exception as e:
+                    logger.warning(f"[{self}] Could not remind {unanswered_participant.name} to respond: {e}")
 
     async def update_reminder_message(self) -> None:
         if self.reminder_message is not None:
@@ -1884,7 +1901,8 @@ class Event:
         image_bytes: :class:`bytes`
             The image file loaded as bytes.
         """
-        return open(self.image_path, 'rb').read()
+        with open(self.image_path, 'rb') as file:
+            return file.read()
 
     def delete_image_file(self) -> None:
         """
@@ -4986,6 +5004,73 @@ def get_participants_from_channel(event_name: str,
     return participants
 
 
+async def get_participants_and_scheduler(event_name: str,
+                                         guild: Guild,
+                                         text_channel: TextChannel,
+                                         scheduler_id: Optional[int],
+                                         include_exclude: Optional[INCLUDE_EXCLUDE],
+                                         usernames,
+                                         roles) -> tuple[list[Participant], Optional[Participant]]:
+    """
+    Gets the participants and scheduler of an event being created or scheduled.
+
+    Arguments
+    ---------
+    usernames: :class:`Optional[str]` or :class:`Optional[int]` or :class:`Optional[list[str | int]]` or :class:`list[Participant]`
+        The usernames or ids to include/exclude, or the participants themselves, e.g. from Schedule Again.
+    Other arguments are as in create() and schedule().
+
+    Returns
+    -------
+    participants, scheduler: :class:`tuple[list[Participant], Optional[Participant]]`
+        The participants, and the scheduler, who is only shown on the event if they aren't a participant,
+        e.g. a bot sending a json packet. The scheduler is None without one.
+
+    Raises
+    ------
+    Exception
+        No one, or only bots, would be invited, or the usernames or roles are invalid.
+    """
+    scheduler_user = None
+    if scheduler_id:
+        try:
+            scheduler_user = await find_member(guild, scheduler_id)
+        except NotFound:
+            pass
+
+    if isinstance(usernames, list) and usernames and all(isinstance(un, Participant) for un in usernames):
+        participants = usernames
+    elif usernames is None or isinstance(usernames, (str, int)) or \
+            (isinstance(usernames, list) and all(isinstance(un, (str, int)) for un in usernames)):
+        try:
+            participants = get_participants_from_channel(event_name=event_name,
+                                                         guild=guild,
+                                                         channel=text_channel,
+                                                         user=scheduler_user,
+                                                         include_exclude=include_exclude,
+                                                         usernames=usernames,
+                                                         roles=roles)
+        except Exception as e:
+            logger.error(f"[{event_name}] Error getting participants: {e}")
+            raise Exception(f"Failed to generate participants list: {e}")
+    else:
+        logger.error(f"[{event_name}] Invalid usernames type: {type(usernames)}")
+        raise Exception(f"This is a code error, please inform the developer!\nInvalid usernames type: {type(usernames)}")
+
+    if not participants:
+        raise Exception("No one was found to invite to the event.")
+    if all(participant.is_bot for participant in participants):
+        raise Exception("An event needs at least one person, not just bots.")
+
+    scheduler = None
+    for participant in participants:
+        if scheduler_user is not None and participant.member.id == scheduler_user.id:
+            scheduler = participant
+    if scheduler is None and scheduler_user is not None:
+        scheduler = Participant(member=scheduler_user)
+    return participants, scheduler
+
+
 async def edit_event(event: Event,
                      name: Optional[str] = None,
                      voice_channel: Optional[VoiceChannel] = None,
@@ -5369,65 +5454,16 @@ async def create(event_name: str,
     else:
         raise Exception(f"This is a code error, please inform the developer!\nInvalid start_time type: {type(start_time)}")
 
-    # Scheduler
-    scheduler_user = None
-    if scheduler_id:
-        try:
-            scheduler_user = await find_member(guild, scheduler_id)
-        except NotFound:
-            pass
-
-    # Participants
-    if isinstance(usernames, (str, int)):
-        try:
-            participants = get_participants_from_channel(event_name=event_name,
-                                                         guild=guild,
-                                                         channel=text_channel,
-                                                         user=scheduler_user,
-                                                         include_exclude=include_exclude,
-                                                         usernames=usernames,
-                                                         roles=roles)
-        except Exception as e:
-            logger.error(f"[{event_name}] Error getting participants: {e}")
-            raise Exception(f"Failed to generate participants list: {e}")
-    elif isinstance(usernames, list) and all(isinstance(un, (str, int)) for un in usernames):
-        try:
-            participants = get_participants_from_channel(event_name=event_name,
-                                                         guild=guild,
-                                                         channel=text_channel,
-                                                         user=scheduler_user,
-                                                         include_exclude=include_exclude,
-                                                         usernames=", ".join(str(username) for username in usernames),
-                                                         roles=roles)
-        except Exception as e:
-            logger.error(f"[{event_name}] Error getting participants: {e}")
-            raise Exception(f"Failed to generate participants list: {e}")
-    elif isinstance(usernames, list) and all(isinstance(un, Participant) for un in usernames):
-        participants = usernames
-    elif usernames is None or not usernames:
-        participants = get_participants_from_channel(event_name=event_name,
-                                                     guild=guild,
-                                                     channel=text_channel,
-                                                     user=scheduler_user,
-                                                     include_exclude=include_exclude,
-                                                     roles=roles)
-    else:
-        logger.error(f"Invalid usernames type in schedule: {type(usernames)}")
-        raise Exception(f"This is a code error, please inform the developer!\nInvalid usernames type in create: {type(usernames)}")
-
-    if not participants:
-        raise Exception("No one was found to invite to the event.")
-    if all(participant.is_bot for participant in participants):
-        raise Exception("An event needs at least one person, not just bots.")
-
-    # Scheduler, who is only shown on the event if they aren't a participant, e.g. a bot sending a json packet
-    scheduler = None
+    participants, scheduler = await get_participants_and_scheduler(event_name=event_name,
+                                                                   guild=guild,
+                                                                   text_channel=text_channel,
+                                                                   scheduler_id=scheduler_id,
+                                                                   include_exclude=include_exclude,
+                                                                   usernames=usernames,
+                                                                   roles=roles)
+    # Created events don't collect availability
     for participant in participants:
         participant.answered = True
-        if scheduler_id and participant.member.id == scheduler_id:
-            scheduler = participant
-    if scheduler is None and scheduler_user is not None:
-        scheduler = Participant(member=scheduler_user)
 
     # Image URL
     if image_url == "":
@@ -5621,64 +5657,13 @@ async def schedule(event_name: str,
         logger.info(f"[{event_name}] Scheduling cancelled due to existing name")
         raise Exception(f"Sorry, I already have an event called {event_name}. Please choose a different name.")
 
-    # Scheduler user
-    scheduler_user = None
-    if scheduler_id:
-        try:
-            scheduler_user = await find_member(guild, scheduler_id)
-        except NotFound:
-            pass
-
-    # Participants
-    if isinstance(usernames, (str, int)):
-        try:
-            participants = get_participants_from_channel(event_name=event_name,
-                                                         guild=guild,
-                                                         channel=text_channel,
-                                                         user=scheduler_user,
-                                                         include_exclude=include_exclude,
-                                                         usernames=usernames,
-                                                         roles=roles)
-        except Exception as e:
-            logger.error(f"[{event_name}] Error getting participants: {e}")
-            raise Exception(f"Failed to generate participants list: {e}")
-    elif isinstance(usernames, list) and all(isinstance(un, (str, int)) for un in usernames):
-        try:
-            participants = get_participants_from_channel(event_name=event_name,
-                                                         guild=guild,
-                                                         channel=text_channel,
-                                                         user=scheduler_user,
-                                                         include_exclude=include_exclude,
-                                                         usernames=", ".join(str(username) for username in usernames),
-                                                         roles=roles)
-        except Exception as e:
-            logger.error(f"[{event_name}] Error getting participants: {e}")
-            raise Exception(f"Failed to generate participants list: {e}")
-    elif isinstance(usernames, list) and all(isinstance(un, Participant) for un in usernames):
-        participants = usernames
-    elif usernames is None or not usernames:
-        participants = get_participants_from_channel(event_name=event_name,
-                                                     guild=guild,
-                                                     channel=text_channel,
-                                                     user=scheduler_user,
-                                                     include_exclude=include_exclude,
-                                                     roles=roles)
-    else:
-        logger.error(f"Invalid usernames type in schedule: {type(usernames)}")
-        raise Exception(f"This is a code error, please inform the developer!\nInvalid usernames type in schedule: {type(usernames)}")
-
-    if not participants:
-        raise Exception("No one was found to invite to the event.")
-    if all(participant.is_bot for participant in participants):
-        raise Exception("An event needs at least one person, not just bots.")
-
-    # Scheduler, who is only shown on the event if they aren't a participant, e.g. a bot sending a json packet
-    scheduler = None
-    for participant in participants:
-        if scheduler_user is not None and participant.member.id == scheduler_user.id:
-            scheduler = participant
-    if scheduler is None and scheduler_user is not None:
-        scheduler = Participant(member=scheduler_user)
+    participants, scheduler = await get_participants_and_scheduler(event_name=event_name,
+                                                                   guild=guild,
+                                                                   text_channel=text_channel,
+                                                                   scheduler_id=scheduler_id,
+                                                                   include_exclude=include_exclude,
+                                                                   usernames=usernames,
+                                                                   roles=roles)
 
     # Image URL
     if image_url == "":

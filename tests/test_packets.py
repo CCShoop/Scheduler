@@ -1,3 +1,4 @@
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -257,6 +258,12 @@ class TestPacketErrors:
     def test_create_rejects_zero_duration(self, packet_env):
         self.error(packet_env, packet_env.packet("create", duration=0), "Duration must be 1 to 1440 minutes")
 
+    def test_timeout_days_out_of_range(self, packet_env):
+        self.error(packet_env, packet_env.packet(timeout_days=0), "Timeout must be")
+
+    def test_timeout_days_must_be_a_number(self, packet_env):
+        self.error(packet_env, packet_env.packet(timeout_days="2"), '"timeout_days" must be a whole number')
+
     def test_create_needs_start_time(self, packet_env):
         data = packet_env.packet("create")
         del data["start_time"]
@@ -312,6 +319,21 @@ class TestPacketErrors:
 
     def test_bad_start_time(self, packet_env):
         self.error(packet_env, packet_env.packet("create", start_time=1900), '"start_time" must be a string')
+
+
+class TestPacketTimeout:
+    def test_timeout_days(self, packet_env):
+        event = packet_env.send(packet_env.packet(timeout_days=2))
+        assert abs(event.timeout_at - (packet_env.env.sched.now() + timedelta(days=2))) < timedelta(minutes=1)
+
+    @pytest.mark.parametrize("timeout", ["missing", None])
+    def test_default_timeout(self, packet_env, timeout):
+        data = packet_env.packet()
+        if timeout is None:
+            data["timeout_days"] = None
+        event = packet_env.send(data)
+        expected = packet_env.env.sched.now() + timedelta(days=packet_env.env.sched.DEFAULT_EVENT_TIMEOUT_DAYS)
+        assert abs(event.timeout_at - expected) < timedelta(minutes=1)
 
 
 class TestPacketLocation:

@@ -1,0 +1,3 @@
+[submodule "libs/persistence"]
+	path = libs/persistence
+	url = https://github.com/CCShoop/persistence.git

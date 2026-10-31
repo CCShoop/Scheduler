@@ -13,6 +13,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: true
 
       - uses: actions/setup-python@v5
         with:
@@ -27,8 +28,9 @@ jobs:
 
       - name: Measure coverage
         run: |
-          coverage report --omit='tests/*'
-          coverage json --omit='tests/*' -o "$RUNNER_TEMP/head-cov.json"
+          # The persistence submodule is tested in its own repository
+          coverage report --omit='tests/*,libs/persistence*'
+          coverage json --omit='tests/*,libs/persistence*' -o "$RUNNER_TEMP/head-cov.json"
 
       # Fails if coverage is lower than on the PR's base commit (or, for a tag push, the previous tag)
       - name: Compare coverage with base
@@ -53,8 +55,9 @@ jobs:
             exit 0
           fi
           (cd "$RUNNER_TEMP/base" \
+            && git submodule update --init \
             && { python -m pytest -q --cov=. --cov-report= || true; } \
-            && coverage json --omit='tests/*' -o "$RUNNER_TEMP/base-cov.json")
+            && coverage json --omit='tests/*,libs/persistence*' -o "$RUNNER_TEMP/base-cov.json")
           base=$(percent "$RUNNER_TEMP/base-cov.json")
 
           echo "Coverage: ${head}% (base ${BASE_SHA::7}: ${base}%)" | tee -a "$GITHUB_STEP_SUMMARY"

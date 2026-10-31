@@ -1185,6 +1185,34 @@ class TestStartButtonLead:
                                                           "https://discord.com/channels/5/6/7")
 
 
+class TestPingLastParticipant:
+    def test_closed_dms_do_not_fail_the_input(self, env):
+        a = env.make_participant("a", [TimeBlock(at(1, 18), at(1, 23))])
+        b = env.make_participant("b")
+
+        async def closed_dms(**kwargs):
+            raise Exception("Cannot send messages to this user")
+
+        b.member.send = closed_dms
+        event = env.make_event([a, b])
+        event.availability_message = SimpleNamespace(jump_url="https://discord.com/channels/5/6/7")
+        run(event.ping_last_participant())
+
+    def test_reminds_the_last_participant(self, env):
+        a = env.make_participant("a", [TimeBlock(at(1, 18), at(1, 23))])
+        b = env.make_participant("b")
+        sent = []
+
+        async def send(**kwargs):
+            sent.append(kwargs)
+
+        b.member.send = send
+        event = env.make_event([a, b])
+        event.availability_message = SimpleNamespace(jump_url="https://discord.com/channels/5/6/7")
+        run(event.ping_last_participant())
+        assert len(sent) == 1
+
+
 class TestBackToBackStart:
     """A participant of both events can end the active event in a voice channel to start the one right after it."""
 

@@ -38,10 +38,12 @@ A Discord bot that finds a time that works for everyone and turns it into a Disc
 ### 2. Install the dependencies
 
 ```bash
-git clone <this repository>
+git clone --recurse-submodules <this repository>
 cd Scheduler
 pip install -r requirements.txt
 ```
+
+`libs/persistence` is a [git submodule](https://github.com/CCShoop/persistence) shared with other bots. If you cloned without `--recurse-submodules`, or are updating an existing copy, run `git submodule update --init` after pulling.
 
 [Voice announcements](#voice-announcements) also need `ffmpeg` and `libopus` on the host, plus the text-to-speech engines you want to offer:
 
@@ -279,7 +281,7 @@ A packet without a `type` is treated as `"schedule"`.
 
 ### Fields
 
-Every field must be present, though some can be `null`. The exceptions are `type`, `location`, `voice_channel_id` and `scheduler_id`, which can be left out.
+Every field must be present, though some can be `null`. The exceptions are `type`, `location`, `voice_channel_id`, `scheduler_id` and `timeout_days`, which can be left out.
 
 Discord ids can be numbers or strings of digits. Use strings if your program is in JavaScript, since it can't hold ids as numbers without losing digits.
 
@@ -297,11 +299,10 @@ Discord ids can be numbers or strings of digits. Use strings if your program is 
 | `roles` | see below | Role names or role ids to include or exclude. Role names ignore capitalization. |
 | `duration` | number | The length in minutes, up to 1440 (24 hours). For `"schedule"`, `0` sets the length to however long everyone is available. For `"create"`, it must be at least 1. |
 | `multi_event` | `true` or `false` | `"schedule"` only. Creates one event on each day everyone is available, instead of a single event. |
+| `timeout_days` | number or `null` | `"schedule"` only, and optional. The number of days to wait for responses before giving up, from 1 to 30, like `/schedule`'s `timeout` option. Leave it out or set it to `null` for 7 days. |
 | `start_time` | string | `"create"` only. A full ISO date and time, such as `"2026-10-11T19:00:00-04:00"` (an offset is recommended, since times without one are read as the bot's local time), or a time such as `"2200"`. A time already past moves to the next day. |
 
 `usernames` and `roles` each take `null`, a comma separated string (`"alice, 123456789012345678"`), a single id, or a list of names and ids (`["alice", 123456789012345678]`).
-
-Packets can't set `/schedule`'s `timeout` option, so `"schedule"` packets always wait up to 7 days for responses.
 
 ### Who gets invited
 
@@ -399,7 +400,7 @@ with socket.create_connection(("127.0.0.1", 5000)) as s:
 
 | File | Contents |
 |------|----------|
-| `data.json` | Saved events, users' settings, and server voice settings, rewritten every second. The bot reads it on startup to resume events. To start fresh, delete it while the bot is stopped. |
+| `data.json` | Saved events, users' settings, and server voice settings, saved whenever they change. The bot reads it on startup to resume events. To start fresh, delete it while the bot is stopped. It's written to `data.json.tmp` first and then swapped in, so a crash can't leave it half-written. If it can't be read on startup, the bot renames it to `data.json.corrupt-<date and time>` and starts with no events, so you can fix it and put it back. |
 | `scheduler.log` | The full log. The same output is printed to the console. |
 | `<event id>.png` | Each event's downloaded image, used for its Discord event. The id is the event's `id` in `data.json`. Every 10 minutes, the bot deletes `.png` files in its folder that no event or [Schedule Again](#schedule-again) button uses, if they're more than 10 minutes old. Don't keep other `.png` files in the bot's folder. |
 

@@ -112,6 +112,19 @@ class TestPersistence:
         run(sched.client.retrieve_events())
         assert cutoffs(sched) == {7: 3}
 
+    @pytest.mark.parametrize("contents", ["{not json", "[]"])
+    def test_unreadable_data_file_is_moved_aside(self, sched, guilds, monkeypatch, tmp_path, contents):
+        path = tmp_path / "data.json"
+        path.write_text(contents)
+        monkeypatch.setattr(sched.persist, "filename", str(path))
+        monkeypatch.setattr(sched.persist, "last_written", None)
+        monkeypatch.setattr(sched.client, "loaded_json", False)
+        run(sched.client.retrieve_events())
+        assert not path.exists()
+        (backup,) = tmp_path.glob("data.json.corrupt-*")
+        assert backup.read_text() == contents
+        assert sched.client.events == []
+
     def test_data_without_cutoffs_loads(self, sched, guilds, monkeypatch):
         monkeypatch.setattr(sched.client, "loaded_json", False)
         monkeypatch.setattr(sched.persist, "read", lambda: {"events": []})
