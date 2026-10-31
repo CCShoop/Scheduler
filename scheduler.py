@@ -14,7 +14,7 @@ from discord import (app_commands, Interaction, Intents, Client, Embed, Color, A
                      ButtonStyle, EntityType, TextChannel, ActivityType, Status, EventStatus,
                      VoiceChannel, StageChannel, Message, SelectOption, ScheduledEvent, ChannelType,
                      Guild, Member, Role, PrivacyLevel, User, utils, NotFound, DiscordServerError)
-from discord.ui import View, Button, Modal, TextInput, Select, ChannelSelect, UserSelect, RoleSelect, Label, Checkbox
+from discord.ui import View, Button, Modal, TextInput, TextDisplay, Select, ChannelSelect, UserSelect, RoleSelect, Label, Checkbox
 from discord.ext import tasks
 
 from libs.persistence import Persistence
@@ -2967,7 +2967,9 @@ class Event:
     @property
     def start_button_disabled(self) -> bool:
         """Indicates if the start button should be disabled."""
-        return self.too_early_to_start or self.location_has_active_event
+        active_event = self.active_event_at_location
+        # A participant of both events can end the active event to start the one right after it
+        return self.too_early_to_start or (active_event is not None and not self.follows(active_event))
 
     async def sync_start_button(self) -> None:
         """Enables or disables the start button as its start time approaches or is rescheduled."""
@@ -2994,6 +2996,10 @@ class Event:
             if event.shares_voice_channel(self):
                 return event
         return None
+
+    def follows(self, event) -> bool:
+        """Indicates whether this event is scheduled to start when the provided event ends, or before."""
+        return self.start_times[0] <= event.start_times[0] + event.scheduled_duration + timedelta(minutes=EVENT_BUFFER_MINUTES)
 
     @property
     def location_has_active_event(self) -> bool:
@@ -3489,6 +3495,33 @@ class Event:
             The name of the event.
         """
         return f'{self.name}'
+
+
+class EndActiveEventModal(Modal):
+    """
+    Confirms starting an event by ending the event still active in its voice channel,
+    when the event is scheduled right after it.
+    """
+
+    def __init__(self, event: Event, active_event: Event):
+        super().__init__(title=f"Start {event.get_limited_name(39)}")
+        self.event = event
+        self.active_event = active_event
+        self.add_item(TextDisplay(f"{active_event} is still going in {event.voice_channel.mention}. "
+                                  f"Starting {event} will end {active_event}."))
+
+    async def on_submit(self, interaction: Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        if self.event.started or not self.event.created or self.event.cancelled:
+            return
+        # A different event may have started in the voice channel since the modal opened
+        active_event = self.event.active_event_at_location
+        if active_event is not None and active_event is not self.active_event:
+            await interaction.followup.send(content=active_event.happening_message, ephemeral=True)
+            return
+        logger.info(f"[{self.event}] {interaction.user} started by button press, ending {self.active_event}")
+        if not await self.event.start(reason=f"Event started by {interaction.user} pressing start button.", end_active_event=True):
+            await interaction.followup.send(content=f"Couldn't start {self.event}.", ephemeral=True)
 
 
 class ScheduleAgainModal(Modal):
@@ -4097,25 +4130,32 @@ class EventButtons(View):
                 return
             if self.event not in client.events:
                 client.events.append(self.event)
-            await interaction.response.defer(ephemeral=True)
+            # Refusals are the response rather than a followup, so the press can still open a modal
             if self.event.voice_channel_missing:
-                await interaction.followup.send(content=f"{self.event}'s voice channel was deleted, choose a new one before starting it.",
-                                                ephemeral=True)
+                await interaction.response.send_message(content=f"{self.event}'s voice channel was deleted, choose a new one before starting it.",
+                                                        ephemeral=True)
                 return
             active_event = self.event.active_event_at_location
-            if active_event is not None:
-                await interaction.followup.send(content=active_event.happening_message, ephemeral=True)
+            # A participant of both events can end the active event to start the one right after it
+            can_end_active_event = active_event is not None and self.event.follows(active_event) \
+                and active_event.is_participant(interaction.user)
+            if active_event is not None and not can_end_active_event:
+                await interaction.response.send_message(content=active_event.happening_message, ephemeral=True)
                 return
             if self.event.too_early_to_start:
                 start_button_time = int((self.event.start_times[0] - START_BUTTON_LEAD).timestamp())
-                await interaction.followup.send(content=f"{self.event} can't be started until <t:{start_button_time}:R>.",
-                                                ephemeral=True)
+                await interaction.response.send_message(content=f"{self.event} can't be started until <t:{start_button_time}:R>.",
+                                                        ephemeral=True)
                 return
             if not self.event.is_external and interaction.user.id not in [member.id for member in self.event.voice_channel.members]:
                 logger.info(f"[{self.event}] {interaction.user} tried to press start button while not in the event's voice channel")
-                await interaction.followup.send(content=f"You must be in {self.event.voice_channel.mention} to start {self.event}.",
-                                                ephemeral=True)
+                await interaction.response.send_message(content=f"You must be in {self.event.voice_channel.mention} to start {self.event}.",
+                                                        ephemeral=True)
                 return
+            if active_event is not None:
+                await interaction.response.send_modal(EndActiveEventModal(self.event, active_event))
+                return
+            await interaction.response.defer(ephemeral=True)
             logger.info(f"[{self.event}] {interaction.user} started by button press")
             if not await self.event.start(reason=f"Event started by {interaction.user} pressing start button."):
                 # Another event started at the location first

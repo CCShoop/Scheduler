@@ -198,7 +198,7 @@ class TestVoiceChannelDeleted:
 
         interaction = run(press())
         assert starts == []
-        assert "voice channel was deleted" in interaction.followups[0]["content"]
+        assert "voice channel was deleted" in interaction.responses[0][1]["content"]
 
     def test_timeout_still_applies_while_missing(self, env):
         event = env.make_event([env.make_participant("a")])

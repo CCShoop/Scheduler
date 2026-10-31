@@ -236,8 +236,10 @@ class TestEnd:
     def test_keeps_start_buttons_disabled_while_another_event_is_active(self, env):
         event, _ = make_created_event(env, started=True)
         other_active, _ = make_created_event(env, started=True)
+        # Ends now, with a gap before the waiting event
+        other_active.start_times[0] = env.sched.now() - other_active.duration
         waiting = env.make_event([env.make_participant("b")], created=True,
-                                 start_times=[env.sched.now() + timedelta(minutes=30)])
+                                 start_times=[env.sched.now() + timedelta(minutes=20)])
         waiting.event_buttons = fake_event_buttons()
         waiting.event_buttons.start_end_button.disabled = True
         run(event.end())
@@ -1157,7 +1159,7 @@ class TestStartButtonLead:
 
         interaction = run(press())
         assert starts == []
-        assert "can't be started until" in interaction.followups[0]["content"]
+        assert "can't be started until" in interaction.responses[0][1]["content"]
 
     def test_start_callback_refuses_while_location_is_active(self, env, monkeypatch):
         active, _ = make_created_event(env, started=True)
@@ -1179,8 +1181,85 @@ class TestStartButtonLead:
 
         interaction = run(press())
         assert starts == []
-        assert interaction.followups[0]["content"] == (f"{active} is currently happening in {env.voice_channel.mention}\n"
-                                                       "https://discord.com/channels/5/6/7")
+        assert interaction.responses[0][1]["content"] == (f"{active} is currently happening in {env.voice_channel.mention}\n"
+                                                          "https://discord.com/channels/5/6/7")
+
+
+class TestBackToBackStart:
+    """A participant of both events can end the active event in a voice channel to start the one right after it."""
+
+    @pytest.fixture
+    def events(self, env, monkeypatch):
+        bot_user = SimpleNamespace(name="Scheduler", avatar=None)
+        monkeypatch.setattr(type(env.sched.client), "user", property(lambda self: bot_user))
+        a = env.make_participant("a")
+        now = env.sched.now()
+        active, _ = make_created_event(env, participants=[a], started=True)
+        active.start_times[0] = now - active.duration + timedelta(minutes=5)
+        active.event_buttons_message = SimpleNamespace(jump_url="https://discord.com/channels/5/6/7")
+        following, (scheduled_event,) = make_created_event(env, participants=[Participant(member=a.member)])
+        following.start_times[0] = scheduled_event.start_time = active.start_times[0] + active.duration
+        env.voice_channel.members.append(a.member)
+        return SimpleNamespace(a=a, active=active, following=following)
+
+    def press(self, env, event, member):
+        async def go():
+            interaction = FakeInteraction(member)
+            await env.sched.EventButtons(event).start_callback(interaction)
+            return interaction
+        return run(go())
+
+    def test_start_button_is_enabled(self, env, events):
+        assert not events.following.start_button_disabled
+
+    def test_start_button_stays_disabled_with_a_gap(self, env, events):
+        events.following.start_times[0] += timedelta(minutes=1)
+        assert events.following.start_button_disabled
+
+    def test_participant_of_both_gets_a_modal_naming_the_active_event(self, env, events):
+        interaction = self.press(env, events.following, events.a.member)
+        (kind, modal), = interaction.responses
+        assert kind == "send_modal"
+        text = modal.children[0].content
+        assert str(events.active) in text and env.voice_channel.mention in text
+
+    def test_confirming_ends_the_active_event_and_starts_the_next(self, env, events, monkeypatch):
+        ended = []
+
+        async def fake_end(self, reason=None, forget=False):
+            ended.append(self)
+            self.started = False
+
+        monkeypatch.setattr(env.sched.Event, "end", fake_end)
+        interaction = self.press(env, events.following, events.a.member)
+        modal = interaction.responses[0][1]
+        run(modal.on_submit(FakeInteraction(events.a.member)))
+        assert ended == [events.active]
+        assert events.following.started
+
+    def test_participant_of_only_the_next_event_is_told_it_is_happening(self, env, events):
+        b = env.make_participant("b")
+        events.following.participants.append(b)
+        env.voice_channel.members.append(b.member)
+        interaction = self.press(env, events.following, b.member)
+        assert interaction.responses[0][0] == "send_message"
+        assert "is currently happening" in interaction.responses[0][1]["content"]
+
+    def test_must_be_in_the_voice_channel(self, env, events):
+        env.voice_channel.members.remove(events.a.member)
+        interaction = self.press(env, events.following, events.a.member)
+        assert "You must be in" in interaction.responses[0][1]["content"]
+
+    def test_confirming_after_another_event_started_does_not_end_it(self, env, events, monkeypatch):
+        interaction = self.press(env, events.following, events.a.member)
+        modal = interaction.responses[0][1]
+        events.active.started = False
+        other, _ = make_created_event(env, participants=[env.make_participant("c")], started=True)
+        other.event_buttons_message = SimpleNamespace(jump_url="https://discord.com/channels/5/6/8")
+        confirm = FakeInteraction(events.a.member)
+        run(modal.on_submit(confirm))
+        assert not events.following.started and other.started
+        assert "is currently happening" in confirm.followups[0]["content"]
 
     def test_simultaneous_starts_at_the_same_location_start_one_event(self, env):
         first, (first_scheduled_event,) = make_created_event(env)
