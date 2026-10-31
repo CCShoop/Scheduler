@@ -401,7 +401,7 @@ with socket.create_connection(("127.0.0.1", 5000)) as s:
 |------|----------|
 | `data.json` | Saved events, users' settings, and server voice settings, rewritten every second. The bot reads it on startup to resume events. To start fresh, delete it while the bot is stopped. |
 | `scheduler.log` | The full log. The same output is printed to the console. |
-| `<event name>.png` | Each event's downloaded image, used for its Discord event. Every 10 minutes, the bot deletes `.png` files in its folder that no event or [Schedule Again](#schedule-again) button uses, if they're more than 10 minutes old. Don't keep other `.png` files in the bot's folder. |
+| `<event id>.png` | Each event's downloaded image, used for its Discord event. The id is the event's `id` in `data.json`. Every 10 minutes, the bot deletes `.png` files in its folder that no event or [Schedule Again](#schedule-again) button uses, if they're more than 10 minutes old. Don't keep other `.png` files in the bot's folder. |
 
 ## Running the tests
 

@@ -74,29 +74,46 @@ class TestCleanUpImages:
         monkeypatch.chdir(tmp_path)
         event = env.make_event([env.make_participant("a")], image_url="https://example.invalid/image.png")
         seen_during_download = []
-
-        class FakeResponse:
-            status = 200
-
-            async def read(self):
-                seen_during_download.append(os.path.exists(event.image_path))
-                return b"png"
-
-        class FakeContext:
-            def __init__(self, value):
-                self.value = value
-
-            async def __aenter__(self):
-                return self.value
-
-            async def __aexit__(self, *args):
-                return False
-
-        class FakeSession:
-            def get(self, url):
-                return FakeContext(FakeResponse())
-
-        monkeypatch.setattr(env.sched.aiohttp, "ClientSession", lambda: FakeContext(FakeSession()))
+        fake_download(env, monkeypatch, lambda: seen_during_download.append(os.path.exists(event.image_path)))
         run(event.save_image_to_file())
         assert seen_during_download == [False]
         assert (tmp_path / event.image_path).read_bytes() == b"png"
+
+    @pytest.mark.parametrize("name", ["あ" * 100, "Fate/Zero"])
+    def test_image_is_named_by_event_id(self, env, tmp_path, monkeypatch, name):
+        monkeypatch.chdir(tmp_path)
+        event = env.make_event([env.make_participant("a")], image_url="https://example.invalid/image.png")
+        event.name = name
+        fake_download(env, monkeypatch)
+        run(event.save_image_to_file())
+        assert event.image_path == f"{event.id}.png"
+        assert (tmp_path / event.image_path).read_bytes() == b"png"
+        assert event.image_url is not None
+
+
+def fake_download(env, monkeypatch, on_read=None):
+    """Makes image downloads return b"png", calling on_read() while the download is in progress."""
+
+    class FakeResponse:
+        status = 200
+
+        async def read(self):
+            if on_read is not None:
+                on_read()
+            return b"png"
+
+    class FakeContext:
+        def __init__(self, value):
+            self.value = value
+
+        async def __aenter__(self):
+            return self.value
+
+        async def __aexit__(self, *args):
+            return False
+
+    class FakeSession:
+        def get(self, url):
+            return FakeContext(FakeResponse())
+
+    monkeypatch.setattr(env.sched.aiohttp, "ClientSession", lambda: FakeContext(FakeSession()))

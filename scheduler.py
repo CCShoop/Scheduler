@@ -33,7 +33,8 @@ logger = logging.getLogger("Event Scheduler")
 logger.setLevel(logging.DEBUG)
 formatter = logging.Formatter(fmt='[Scheduler] [%(asctime)s] [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 
-file_handler = logging.FileHandler('scheduler.log')
+# UTF-8 whatever the system's default encoding, so lines with e.g. Japanese event names are never lost
+file_handler = logging.FileHandler('scheduler.log', encoding='utf-8')
 file_handler.setLevel(logging.DEBUG)
 file_handler.setFormatter(formatter)
 
@@ -956,7 +957,8 @@ class Event:
         self.rescheduler: Participant = rescheduler
         self.participants: list[Participant] = participants
         self.image_url: str = image_url
-        self.image_path: str = f'{self.name}.png'
+        # Named by id, since names can contain "/" or be too long in bytes for a file name, e.g. in Japanese
+        self.image_path: str = f'{self.id}.png'
         self.availability_buttons: AvailabilityButtons = availability_buttons
         self.event_buttons_message_lock: asyncio.Lock = asyncio.Lock()
         self.event_buttons_message: Message = event_buttons_message
