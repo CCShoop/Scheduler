@@ -201,7 +201,7 @@ The availability message has these buttons:
 
 - **Date:** The day you're entering times for, as `YYYY-MM-DD`. It defaults to today. You can leave off the year (`MM-DD`) to mean the next time that date comes around, or enter just the day of the month (`DD`).
 - **Timeslot:** The time ranges you're free. Separate multiple ranges with commas.
-- **Timezone:** The timezone you typed your times in. Supported values: `AT`, `ET`, `CT`, `MT`, `PT`, and their standard and daylight forms, such as `EST` or `PDT`. Times are converted to Eastern Time. The form fills in the timezone you last used, starting with `ET`.
+- **Timezone:** The timezone you typed your times in. Supported values: `AT`, `ET`, `CT`, `MT`, `PT`, and their standard and daylight forms, such as `EST` or `PDT`. Times are converted to Eastern Time. When clocks go back, a time in the hour that repeats is the first, daylight one; add the standard form, such as `EST`, for the second. A time skipped when clocks go forward moves forward with them, so 2:30 becomes 3:30. The form fills in the timezone you last used, starting with `ET`.
 - **Note:** An optional note that appears next to your availability. If you leave it blank when you submit again, your note is cleared.
 
 Time ranges accept several formats:

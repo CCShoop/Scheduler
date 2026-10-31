@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -341,14 +341,14 @@ class TestSetSpecificAvailability:
         assert blocks(participant) == [(at(1, 20), at(1, 22)), (at(2, 20), at(2, 22)), (at(3, 20), at(3, 22))]
 
     @pytest.mark.parametrize("zone, offset", [("et", 0), ("ct", 1), ("mt", 2), ("pt", 3), ("at", -1), ("cst", 1), ("pdt", 3)])
-    def test_timezone_offsets(self, zone, offset):
+    def test_timezone_offsets(self, zone, offset, eastern):
         participant = make_participant()
         participant.set_specific_availability(f"8-11 {zone}", date_string(1))
         assert blocks(participant) == [(at(1, 8 + offset), at(1, 11 + offset))]
 
     @pytest.mark.parametrize("zone", ["et", "pt", "at"])
     @pytest.mark.parametrize("keyword", ["now", "current"])
-    def test_now_start_is_not_shifted_by_timezone(self, zone, keyword):
+    def test_now_start_is_not_shifted_by_timezone(self, zone, keyword, eastern):
         participant = make_participant()
         before = datetime.now().astimezone().replace(second=0, microsecond=0)
         participant.set_specific_availability(f"{keyword}- {zone}", date_string(0))
@@ -493,3 +493,58 @@ class TestAvailabilityAcrossDstChange:
         day = dst_timezone.strftime("%m-%d")
         next_day = (dst_timezone + timedelta(days=1)).strftime("%m-%d")
         assert self.local_times(participant) == [(f"{day} 00:00", f"{next_day} 00:00")]
+
+
+def next_clock_change(forward: bool) -> date:
+    """The date of the next time Eastern clocks go forward or back, with the bot running in Eastern."""
+    today = date.today()
+    for days in range(1, 367):
+        day = today + timedelta(days=days)
+        before = datetime.combine(day, datetime.min.time()).astimezone().utcoffset()
+        after = datetime.combine(day + timedelta(days=1), datetime.min.time()).astimezone().utcoffset()
+        if (after > before) == forward and after != before:
+            return day
+    raise AssertionError("No clock change within a year")
+
+
+class TestAvailabilityAtClockChanges:
+    """Times in the hour that repeats or is skipped when clocks change, with the bot in Eastern."""
+
+    @staticmethod
+    def end_utc(participant: Participant) -> str:
+        return participant.availability[0].end_time.astimezone(timezone.utc).strftime("%H:%M")
+
+    @staticmethod
+    def entry(day_before: date, avail: str) -> Participant:
+        participant = make_participant()
+        participant.set_specific_availability(avail, day_before.strftime("%Y-%m-%d"))
+        return participant
+
+    @pytest.mark.parametrize("avail, utc", [
+        ("2330-0130 et", "05:30"),
+        ("2330-0130 edt", "05:30"),
+        ("2330-0130", "05:30"),
+        ("2330-0130 est", "06:30"),
+        ("2330-1 est", "06:00"),
+        ("2330-2 et", "07:00"),
+    ])
+    def test_repeated_hour_is_daylight_unless_standard_is_given(self, eastern, avail, utc):
+        day_before = next_clock_change(forward=False) - timedelta(days=1)
+        assert self.end_utc(self.entry(day_before, avail)) == utc
+
+    def test_other_timezones_use_their_own_clock_change(self, eastern):
+        day_before = next_clock_change(forward=False) - timedelta(days=1)
+        # 11:30 PM Pacific daylight time is the second 1:30 Eastern
+        assert self.end_utc(self.entry(day_before, "2030-2330 pt")) == "06:30"
+
+    @pytest.mark.parametrize("avail, utc, local", [
+        ("2330-0230 et", "07:30", "03:30"),
+        ("2330-0230", "07:30", "03:30"),
+        ("2330-2 et", "07:00", "03:00"),
+        ("2330-3 et", "07:00", "03:00"),
+    ])
+    def test_skipped_hour_moves_forward(self, eastern, avail, utc, local):
+        day_before = next_clock_change(forward=True) - timedelta(days=1)
+        participant = self.entry(day_before, avail)
+        assert self.end_utc(participant) == utc
+        assert participant.availability[0].end_time.astimezone().strftime("%H:%M") == local

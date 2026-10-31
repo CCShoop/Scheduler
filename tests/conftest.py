@@ -128,3 +128,13 @@ def dst_timezone(monkeypatch):
     yield day
     monkeypatch.undo()
     time.tzset()
+
+
+@pytest.fixture
+def eastern(monkeypatch):
+    """Runs the test with the bot's local time in Eastern, as on the server."""
+    monkeypatch.setenv("TZ", "America/New_York")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()

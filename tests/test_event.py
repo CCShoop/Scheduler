@@ -717,3 +717,27 @@ class TestOtherUnansweredEventsEmbed:
         answered.answered = True
         env.make_event([answered])
         assert env.sched.get_participants_other_unanswered_events_embed(event, a) is None
+
+
+class TestOtherEventLookups:
+    """Looking a participant up in other events must not add them to those events."""
+
+    def test_copy_sources_and_other_events_embed_skip_events_the_user_isnt_in(self, env):
+        a = env.make_participant("a", [TimeBlock(at(1, 8), at(1, 12))])
+        b = env.make_participant("b")
+        source = env.make_event([a])
+        # Same guild, but b isn't in it, e.g. they can't see its channel
+        not_in = env.make_event([env.make_participant("c")])
+        event = env.make_event([env.make_participant("a"), b])
+        b_in_event = event.participants[1]
+        assert event.get_events_to_copy_availability_from(b_in_event) == []
+        assert not not_in.is_participant(b.member)
+        assert not source.is_participant(b.member)
+        assert env.sched.get_participants_other_unanswered_events_embed(event, b_in_event) is None
+
+    def test_copy_availability_doesnt_add_to_source(self, env):
+        b = env.make_participant("b")
+        source = env.make_event([env.make_participant("c")])
+        event = env.make_event([b])
+        assert not event.copy_availability(b, source)
+        assert not source.is_participant(b.member)

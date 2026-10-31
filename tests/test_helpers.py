@@ -58,7 +58,8 @@ class TestParseStartTime:
         past = sched.now() - timedelta(days=2, hours=1)
         result = sched.parse_start_time(past.isoformat())
         assert result > sched.now()
-        assert result - past == timedelta(days=3)
+        # Moved by days on the wall clock, which is 3 days +/- an hour of elapsed time across a DST change
+        assert result.replace(tzinfo=None) - past.astimezone().replace(tzinfo=None) == timedelta(days=3)
 
     def test_iso_without_offset_is_local_time(self, sched):
         future = (sched.now() + timedelta(days=3)).replace(tzinfo=None)

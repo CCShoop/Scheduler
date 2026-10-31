@@ -1,7 +1,8 @@
 import re
 from discord import Guild, Member
 from asyncio import Lock
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from calendar import monthrange
 from typing import Optional
 
@@ -172,6 +173,78 @@ def to_local(time: datetime) -> datetime:
     keeps today's offset, which is an hour off past a DST change.
     """
     return time.replace(tzinfo=None).astimezone()
+
+
+# The timezones availability can be entered in, by the letter before their "t", "st" or "dt"
+TIMEZONES = {
+    'a': ZoneInfo('America/Halifax'),
+    'e': ZoneInfo('America/New_York'),
+    'c': ZoneInfo('America/Chicago'),
+    'm': ZoneInfo('America/Denver'),
+    'p': ZoneInfo('America/Los_Angeles'),
+}
+TIMEZONE_PATTERN = re.compile(r'([aecmp])([sd]?)t')
+
+
+def parse_timezone(avail_string: str) -> tuple[Optional[ZoneInfo], Optional[bool], str]:
+    """
+    Finds the timezone in availability text, e.g. "8-11 pt" or "2330-0130 est".
+
+    Returns
+    -------
+    zone: :class:`Optional[ZoneInfo]`
+        The timezone, or None for the bot's local time.
+    is_dst: :class:`Optional[bool]`
+        True for daylight ("edt") or False for standard ("est") time, which picks the hour that repeats
+        when clocks go back. None when not given ("et").
+    avail_string: :class:`str`
+        The text without the timezone.
+    """
+    matches = list(TIMEZONE_PATTERN.finditer(avail_string))
+    if not matches:
+        return None, None, avail_string
+    match = matches[-1]
+    is_dst = {'d': True, 's': False}.get(match.group(2))
+    return TIMEZONES[match.group(1)], is_dst, avail_string[:match.start()] + avail_string[match.end():]
+
+
+def resolve_wall_time(time: datetime, zone: Optional[ZoneInfo] = None, is_dst: Optional[bool] = None) -> datetime:
+    """
+    Gives a wall-clock time in a timezone as a time in the bot's local timezone.
+    A time in the hour that repeats when clocks go back is the first, daylight one, unless is_dst is False.
+    A time skipped when clocks go forward moves forward with them, e.g. 2:30 becomes 3:30.
+
+    Arguments
+    ---------
+    time: :class:`datetime`
+        The wall-clock time. Any tzinfo is ignored.
+    zone: :class:`Optional[ZoneInfo]`
+        The timezone the time is in, or None for the bot's local timezone.
+    is_dst: :class:`Optional[bool]`
+        Whether the time is daylight time, from parse_timezone().
+    """
+    time = time.replace(tzinfo=None, fold=0)
+
+    def instant(fold: int) -> datetime:
+        wall = time.replace(tzinfo=zone, fold=fold)
+        return wall.astimezone(timezone.utc) if zone else wall.astimezone().astimezone(timezone.utc)
+
+    def wall_time(moment: datetime) -> datetime:
+        return moment.astimezone(zone).replace(tzinfo=None) if zone else moment.astimezone().replace(tzinfo=None)
+
+    # Fold 0 and 1 give the time with the offsets from before and after a change,
+    # each of which is a real moment showing that time only if the time isn't skipped
+    candidates = sorted({instant(0), instant(1)})
+    valid = [moment for moment in candidates if wall_time(moment) == time]
+    if len(valid) == 2:
+        # The hour repeats, daylight time first
+        chosen = valid[1] if is_dst is False else valid[0]
+    elif valid:
+        chosen = valid[0]
+    else:
+        # A skipped time moves forward by the skipped hour, e.g. 2:30 becomes 3:30
+        chosen = candidates[-1]
+    return chosen.astimezone()
 
 
 def add_local_days(time: datetime, days: int) -> datetime:
@@ -579,25 +652,18 @@ class Participant:
             self.set_no_availability()
             return
 
-        # Timezone parsing
-        timezone_offset = 0
+        # Timezone parsing, before the s and d of e.g. "est" or "pdt" are stripped
+        zone, is_dst, avail_string = parse_timezone(avail_string)
         avail_string = avail_string.replace('s', '')
         avail_string = avail_string.replace('d', '')
-        if 'at' in avail_string:
-            timezone_offset += -1
-            avail_string = avail_string.replace('at', '')
-        elif 'et' in avail_string:
-            timezone_offset += 0
-            avail_string = avail_string.replace('et', '')
-        elif 'ct' in avail_string:
-            timezone_offset += 1
-            avail_string = avail_string.replace('ct', '')
-        elif 'mt' in avail_string:
-            timezone_offset += 2
-            avail_string = avail_string.replace('mt', '')
-        elif 'pt' in avail_string:
-            timezone_offset += 3
-            avail_string = avail_string.replace('pt', '')
+
+        def resolve(time: datetime) -> datetime:
+            return resolve_wall_time(time, zone, is_dst)
+
+        def wall_now() -> datetime:
+            """The current wall-clock time in the entered timezone."""
+            current = datetime.now(zone).replace(tzinfo=None) if zone else datetime.now()
+            return current.replace(second=0, microsecond=0)
 
         avail_string = avail_string.replace('.', '')
 
@@ -627,24 +693,23 @@ class Participant:
             start_time, part, end_time = timeblock.partition('-')
 
             # Start/end time keywords
-            # The current time is already in the bot's timezone, so the entered timezone doesn't shift it
             start_is_now = 'now' in start_time or 'cur' in start_time or 'curr' in start_time or 'current' in start_time
             if start_is_now:
-                start_time = datetime.now().astimezone().replace(second=0, microsecond=0).strftime("%H%M")
+                start_time = wall_now().strftime("%H%M")
             if 'now' in end_time or 'cur' in end_time or 'curr' in end_time or 'current' in end_time:
                 raise Exception("Invalid end time provided by user: cannot use current time as end time")
 
             start_time = parse_time_string(start_time, 'start')
             end_time = parse_time_string(end_time, 'end')
 
-            # Convert to datetime objects, as naive local wall-clock times until they're stored
+            # Convert to datetime objects, as naive wall-clock times in the entered timezone until they're stored
             # so that adding days past a DST change keeps the entered time of day
             start_time_string = start_time
             end_time_string = end_time
             # Start time is now if today, midnight if not today
             if start_time_string == '':
                 if date_is_today:
-                    start_time = datetime.now().replace(second=0, microsecond=0)
+                    start_time = wall_now()
                 else:
                     start_time = datetime(year, month, day)
             # Start time is defined
@@ -652,8 +717,6 @@ class Participant:
                 start_hr = int(start_time_string[:2])
                 start_min = int(start_time_string[2:])
                 start_time = datetime(year, month, day, start_hr, start_min)
-                if not start_is_now:
-                    start_time += timedelta(hours=timezone_offset)
             # End time is midnight
             if end_time_string == '':
                 end_time = datetime(year, month, day) + timedelta(days=1)
@@ -662,20 +725,19 @@ class Participant:
                 end_hr = int(end_time_string[:2])
                 end_min = int(end_time_string[2:])
                 end_time = datetime(year, month, day, end_hr, end_min)
-                end_time += timedelta(hours=timezone_offset)
                 while end_time < start_time:
                     end_time += timedelta(days=1)
 
             # Currency check
-            while to_local(end_time) < datetime.now().astimezone():
+            while resolve(end_time) < datetime.now().astimezone():
                 start_time += timedelta(days=1)
                 end_time += timedelta(days=1)
 
-            self.add_to_availability(TimeBlock(to_local(start_time), to_local(end_time)))
+            self.add_to_availability(TimeBlock(resolve(start_time), resolve(end_time)))
             while extend > 1:
                 start_time += timedelta(days=1)
                 end_time += timedelta(days=1)
-                self.add_to_availability(TimeBlock(to_local(start_time), to_local(end_time)))
+                self.add_to_availability(TimeBlock(resolve(start_time), resolve(end_time)))
                 extend -= 1
 
     def clean_availability(self) -> None:

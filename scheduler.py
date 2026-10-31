@@ -2130,9 +2130,13 @@ class Event:
         same_guild_events = [other_event for other_event in events if other_event.guild == self.guild]
         return same_guild_events or events
 
+    def find_participant(self, user_id: int) -> Optional[Participant]:
+        """Gets the participant with the id, without adding them like get_participant() does."""
+        return next((participant for participant in self.participants if participant.member.id == user_id), None)
+
     def has_answered(self, user_id: int) -> bool:
         """Whether the user is a participant who has answered the event."""
-        other_participant = self.get_participant(user_id)
+        other_participant = self.find_participant(user_id)
         return other_participant is not None and other_participant.answered
 
     def copy_availability(self, participant: Participant, source_event: 'Event') -> bool:
@@ -2151,7 +2155,7 @@ class Event:
         copied: :class:`bool`
             False if the participant hasn't answered the source event, so nothing was copied.
         """
-        source_participant = source_event.get_participant(participant.member.id)
+        source_participant = source_event.find_participant(participant.member.id)
         if source_participant is None or not source_participant.answered:
             return False
         participant.set_no_availability()
