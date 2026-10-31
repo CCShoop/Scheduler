@@ -181,7 +181,7 @@ When `/tts` is set to an engine, the bot joins an event's voice or stage channel
 
 ### Adding an image later
 
-Send the bot a direct message that includes the event's name and an image attachment. If the event has been created, the bot updates the Discord event's image. If not, it uses the image once the event is created.
+Use `/edit` with `image_url` in the event's text channel. If the event has been created, the bot updates the Discord event's image. If not, it uses the image once the event is created.
 
 ---
 
