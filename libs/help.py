@@ -88,7 +88,9 @@ _topic("commands", "Other Commands",
          "\nIf the channel has more than one event, pick one from a dropdown."
          "\nChanging the image of a created event updates the Discord event. Before it's created, the image is used once it is."),
         ("/attach",
-         "Have the bot manage a Discord event that was created outside the bot. Pick the event from a dropdown."),
+         "Have the bot manage a Discord event that was created outside the bot. The event option suggests the server's events the bot isn't managing yet."
+         "\nOther events with the same name and location are added as more occurrences of it."
+         " If the bot already has an event with that name and location, the Discord event is added to it. Otherwise, everyone who can see the channel is a participant."),
         ("/availability",
          "Show everyone's availability for an event in the current channel."),
         ("/listevents",

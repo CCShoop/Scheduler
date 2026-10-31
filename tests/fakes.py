@@ -49,6 +49,10 @@ class FakeScheduledEvent:
     def location(self):
         return self.kwargs.get("location")
 
+    @property
+    def cover_image(self):
+        return self.kwargs.get("cover_image")
+
     async def delete(self, reason=None):
         self.deleted = True
 

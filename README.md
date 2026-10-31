@@ -161,7 +161,7 @@ Use this command when you already know the time. It takes the same options as `/
 | Command         | What it does |
 |-----------------|--------------|
 | `/edit`         | Change an event in the current channel. You can change its name, location, image, duration, multi-event setting, or timeout. If the channel has more than one event, pick one from a dropdown. |
-| `/attach`       | Have the bot manage a Discord event that was created outside the bot. Pick the event from a dropdown. |
+| `/attach`       | Have the bot manage a Discord event that was created outside the bot. The `event` option suggests the server's events the bot isn't managing yet. Other events with the same name and location are added as more occurrences of it. If the bot already has an event with that name and location, the Discord event is added to it. Otherwise, everyone who can see the channel is a participant. |
 | `/availability` | Show everyone's availability for an event in the current channel. |
 | `/listevents`   | List every event the bot is managing in this server. |
 | `/listmyevents` | List every event you're a participant in. |

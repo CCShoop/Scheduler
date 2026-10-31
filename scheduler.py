@@ -4688,99 +4688,6 @@ class VoiceChannelPrompt(View):
                 logger.error(f"[{self.event}] Error disabling voice channel prompt: {e}")
 
 
-class ExistingGuildEventsSelect(Select):
-    """
-    Represents a dropdown of existing guild scheduled events for a user to attach to.
-
-    Attributes
-    -----------
-    guild: :class:`Guild`
-        The guild to get the events from.
-    """
-
-    def __init__(self, guild: Guild):
-        self.guild = guild
-        options = [
-            SelectOption(label=guild_event.name if len(guild_event.name) <= 25 else f"{guild_event.name[:22]}...",
-                         description=guild_event.description[:50] if guild_event.description else None,
-                         value=str(guild_event.id))
-            for guild_event in self.guild.scheduled_events[:25]
-        ]
-        super().__init__(placeholder='Guild Event', options=options)
-
-    # Select a guild event to attach to
-    async def callback(self, interaction: Interaction):
-        selected_guild_event_id = int(self.values[0])
-        selected_guild_event: ScheduledEvent = self.guild.get_scheduled_event(selected_guild_event_id)
-        if selected_guild_event:
-            await interaction.response.defer(ephemeral=True)
-            logger.info(f'{interaction.user.name} attached to {selected_guild_event.name}')
-            existingEvent = False
-            # Event exists, adding guild event to that event
-            for it_event in client.events:
-                if selected_guild_event.name == it_event.name and \
-                        get_location_key(*get_guild_event_location(selected_guild_event)) == it_event.location_key:
-                    existingEvent = True
-                    it_event.created = True
-                    it_event.text_channel = interaction.channel
-                    event = it_event
-                    break
-            # Event does not exist
-            if not existingEvent:
-                participants = get_participants_from_interaction(event_name=selected_guild_event.name, interaction=interaction)
-                scheduler = None
-                for participant in participants:
-                    participant.answered = True
-                    if participant.member.id == interaction.user.id:
-                        scheduler = participant
-                image_url = None
-                if selected_guild_event.cover_image is not None:
-                    image_url = selected_guild_event.cover_image.url
-                # Start times are filled in from the matching guild events below
-                voice_channel, location = get_guild_event_location(selected_guild_event)
-                event = Event(name=selected_guild_event.name,
-                              voice_channel=voice_channel,
-                              location=location,
-                              guild=self.guild,
-                              text_channel=interaction.channel,
-                              image_url=image_url,
-                              scheduler=scheduler,
-                              participants=participants,
-                              created=True)
-                client.events.append(event)
-            known_ids = [scheduled_event.id for scheduled_event in event.scheduled_events]
-            for guild_event in self.guild.scheduled_events:
-                if guild_event.id in known_ids:
-                    continue
-                if guild_event.name == selected_guild_event.name and \
-                        get_location_key(*get_guild_event_location(guild_event)) == event.location_key:
-                    event.start_times.append(guild_event.start_time.astimezone())
-                    if event.has_image_saved:
-                        await guild_event.edit(image=event.get_image())
-                    event.scheduled_events.append(guild_event)
-            availability_states = get_availability_states()
-            remove_times_from_availabilities_for_events()
-            await event.update_event_buttons_message()
-            await update_changed_availability_messages(availability_states, exclude=event)
-            followup = await interaction.followup.send(content="Success.",
-                                                       silent=True,
-                                                       ephemeral=True)
-            await followup.delete(delay=3)
-        else:
-            await interaction.response.send_message(content="Error getting guild scheduled event.")
-            logger.exception(f"Error getting guild scheduled event selected by {interaction.user.name}")
-
-
-class ExistingGuildEventsSelectView(View):
-    """
-    Represents a view to house the guild scheduled events dropdown.
-    """
-
-    def __init__(self, guild: Guild):
-        super().__init__()
-        self.add_item(ExistingGuildEventsSelect(guild))
-
-
 def get_limited_text(text: str, length: int) -> str:
     """Shortens text to fit a length, ending it with an ellipsis if it was cut."""
     return text if len(text) <= length else f"{text[:length - 3]}..."
@@ -5849,75 +5756,106 @@ async def edit_command(interaction: Interaction,
 edit_command.autocomplete('location')(location_autocomplete)
 
 
-@client.tree.command(name='attach', description='Create an event message for an existing guild event.')
-async def attach_command(interaction: Interaction):
-    await interaction.response.defer(ephemeral=True, thinking=True)
-    logger.info(f'Received attach command request from {interaction.user.name}')
-    guild_events = interaction.guild.scheduled_events
-    if len(guild_events) == 0:
-        await interaction.followup.send(content="**There are no guild events to attach to.**", ephemeral=True)
-        return
-    if len(guild_events) == 1:
-        guild_event = guild_events[0]
-        logger.info(f'[{guild_event.name}] {interaction.user.name} attached to guild scheduled event')
-        existingEvent = False
-        # Event exists, adding guild event to that event
-        for it_event in client.events:
-            if guild_event.name == it_event.name:
-                existingEvent = True
-                it_event.text_channel = interaction.channel
-                it_event.created = True
-                # Keep start_times index-aligned with scheduled_events
-                if len(it_event.scheduled_events) == 0:
-                    it_event.scheduled_events.append(guild_event)
-                    it_event.start_times = [guild_event.start_time.astimezone()]
-                else:
-                    it_event.scheduled_events[0] = guild_event
-                    if it_event.start_times:
-                        it_event.start_times[0] = guild_event.start_time.astimezone()
-                    else:
-                        it_event.start_times.append(guild_event.start_time.astimezone())
-                event = it_event
-                break
-        # Event does not exist
-        if not existingEvent:
-            participants = get_participants_from_interaction(event_name=guild_event.name, interaction=interaction)
-            scheduler = None
-            for participant in participants:
-                participant.answered = True
-                if participant.member.id == interaction.user.id:
-                    scheduler = participant
-            start_times = [guild_event.start_time.astimezone()]
-            image_url = None
-            if guild_event.cover_image is not None:
-                image_url = guild_event.cover_image.url
-            voice_channel, location = get_guild_event_location(guild_event)
-            event = Event(name=guild_event.name,
-                          voice_channel=voice_channel,
-                          location=location,
-                          guild=interaction.guild,
-                          text_channel=interaction.channel,
-                          image_url=image_url,
-                          scheduler=scheduler,
-                          participants=participants,
-                          start_times=start_times,
-                          created=True)
-            client.events.append(event)
-            await event.save_image_to_file()
-            event.scheduled_events.append(guild_event)
-            logger.info(f'[{event.name}] attached to event')
-        availability_states = get_availability_states()
-        remove_times_from_availabilities_for_events()
-        await event.update_messages()
-        await update_changed_availability_messages(availability_states, exclude=event)
-        followup = await interaction.followup.send(content="Success.",
-                                                   silent=True,
-                                                   ephemeral=True)
-        await followup.delete(delay=3)
+def get_managed_guild_event_ids() -> set[int]:
+    """The IDs of the guild events that the bot's events manage."""
+    return {scheduled_event.id for event in client.events for scheduled_event in event.scheduled_events}
+
+
+def get_guild_event_label(guild_event: ScheduledEvent) -> str:
+    """A guild event's name and start time in plain text, for an autocomplete suggestion."""
+    start = to_local(guild_event.start_time.astimezone()).strftime(" (%a %m/%d %H:%M ET)")
+    return get_limited_text(guild_event.name, 100 - len(start)) + start
+
+
+async def attach_autocomplete(interaction: Interaction, current: str) -> list[app_commands.Choice[str]]:
+    """
+    Suggests the guild's events that the bot isn't managing yet, soonest first.
+    """
+    current = current.strip().casefold()
+    managed_ids = get_managed_guild_event_ids()
+    guild_events = sorted((guild_event for guild_event in interaction.guild.scheduled_events
+                           if guild_event.id not in managed_ids and current in guild_event.name.casefold()),
+                          key=lambda guild_event: guild_event.start_time)
+    return [app_commands.Choice(name=get_guild_event_label(guild_event), value=str(guild_event.id))
+            for guild_event in guild_events[:25]]
+
+
+async def attach_guild_event(interaction: Interaction, guild_event: ScheduledEvent) -> Event:
+    """
+    Has the bot manage a guild event, and every other unmanaged guild event with the same name and location
+    as occurrences of it. Joins a bot event with that name and location if there is one, and otherwise makes one,
+    with everyone who can see the text channel as participants.
+    """
+    guild = interaction.guild
+    location_key = get_location_key(*get_guild_event_location(guild_event))
+    event = next((it_event for it_event in client.events
+                  if it_event.name == guild_event.name and it_event.location_key == location_key), None)
+    if event is None:
+        participants = get_participants_from_interaction(event_name=guild_event.name, interaction=interaction)
+        scheduler = None
+        for participant in participants:
+            participant.answered = True
+            if participant.member.id == interaction.user.id:
+                scheduler = participant
+        voice_channel, location = get_guild_event_location(guild_event)
+        # Start times are filled in from the matching guild events below
+        event = Event(name=guild_event.name,
+                      voice_channel=voice_channel,
+                      location=location,
+                      guild=guild,
+                      text_channel=interaction.channel,
+                      image_url=guild_event.cover_image.url if guild_event.cover_image is not None else None,
+                      scheduler=scheduler,
+                      participants=participants,
+                      created=True)
+        await event.save_image_to_file()
+        client.events.append(event)
     else:
-        await interaction.followup.send(content="Select an existing guild event from the dropdown menu.",
-                                        view=ExistingGuildEventsSelectView(interaction.guild),
-                                        ephemeral=True)
+        event.created = True
+        event.text_channel = interaction.channel
+
+    # Keep start_times index-aligned with scheduled_events. Start times past the guild events
+    # haven't been created yet, and are dropped if one of the attached guild events is at that time.
+    managed_ids = get_managed_guild_event_ids()
+    linked = list(zip(event.start_times, event.scheduled_events))
+    pending_times = event.start_times[len(event.scheduled_events):]
+    new_guild_events = [it_guild_event for it_guild_event in guild.scheduled_events
+                        if it_guild_event.id not in managed_ids
+                        and it_guild_event.name == guild_event.name
+                        and get_location_key(*get_guild_event_location(it_guild_event)) == location_key]
+    for new_guild_event in new_guild_events:
+        linked.append((new_guild_event.start_time.astimezone(), new_guild_event))
+        if new_guild_event.cover_image is None and event.has_image_saved:
+            await new_guild_event.edit(image=event.get_image())
+    linked.sort(key=lambda pair: pair[0])
+    linked_times = [start_time for start_time, _ in linked]
+    event.start_times = linked_times + [start_time for start_time in pending_times if start_time not in linked_times]
+    event.scheduled_events = [scheduled_event for _, scheduled_event in linked]
+    logger.info(f"[{event}] {interaction.user.name} attached {len(new_guild_events)} guild event(s)")
+
+    availability_states = get_availability_states()
+    remove_times_from_availabilities_for_events()
+    await event.update_messages()
+    await update_changed_availability_messages(availability_states, exclude=event)
+    return event
+
+
+@client.tree.command(name='attach', description='Have the bot manage a Discord event created outside of it.')
+@app_commands.describe(event="The Discord event to manage. Suggestions list the server's events the bot isn't managing yet.")
+@app_commands.autocomplete(event=attach_autocomplete)
+async def attach_command(interaction: Interaction, event: str):
+    logger.info(f'Received attach command request from {interaction.user.name}')
+    guild_event = interaction.guild.get_scheduled_event(int(event)) if event.isdigit() else None
+    if guild_event is None:
+        await interaction.response.send_message(content="**Pick an event from the suggestions.**", ephemeral=True)
+        return
+    if guild_event.id in get_managed_guild_event_ids():
+        await interaction.response.send_message(content=f"**The bot is already managing {guild_event.name}.**", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    await attach_guild_event(interaction, guild_event)
+    # The event's message in the channel shows it's attached
+    await interaction.delete_original_response()
 
 
 @client.tree.command(name='listevents', description='List all events in this server.')
