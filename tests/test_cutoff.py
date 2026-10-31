@@ -395,9 +395,17 @@ class TestTimezone:
 
 
 def test_help_embeds_fit_discord(sched):
-    # Discord rejects the whole help message if any embed limit is exceeded, and the 6000 character limit covers all embeds in a message
-    assert sum(len(embed) for embed in sched.HELP_EMBEDS) <= 6000
-    for embed in sched.HELP_EMBEDS:
+    # Discord rejects the whole help message if any embed limit is exceeded
+    for embed in sched.HELP_TOPICS.values():
+        assert len(embed) <= 6000, embed.title
         assert len(embed.description or "") <= 4096, embed.title
+        assert len(embed.fields) <= 25, embed.title
         for field in embed.fields:
             assert len(field.name) <= 256 and len(field.value) <= 1024, field.name
+
+
+def test_help_topics_fit_choices(sched):
+    # A slash command option allows at most 25 choices, each named in up to 100 characters
+    assert "overview" in sched.HELP_TOPICS
+    assert len(sched.HELP_TOPICS) <= 25
+    assert all(1 <= len(embed.title) <= 100 for embed in sched.HELP_TOPICS.values())

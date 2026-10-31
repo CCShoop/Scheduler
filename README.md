@@ -165,7 +165,7 @@ Use this command when you already know the time. It takes the same options as `/
 | `/listmyevents` | List every event you're a participant in. |
 | `/cutoff`       | Set how many hours past midnight your **Full Availability** extends to, from -6 to 23. Negative numbers end it before midnight to match an earlier bedtime, so `-2` means 10 PM. The default is 0, which means midnight. Hours are counted from midnight Eastern Time, the bot's timezone, because Discord doesn't tell bots what timezone you're in. If you live somewhere else, add your offset from Eastern Time so it ends at your midnight: `1` for Central, `2` for Mountain, `3` for Pacific, or `-1` for Atlantic. Leave the number blank to go back to the default. The setting is yours alone and applies in every server. It's deleted if you no longer share a server with the bot. |
 | `/tts`          | Choose the text-to-speech engine for this server's [voice announcements](#voice-announcements): `espeak-ng`, `piper-en`, `piper-jp`, or `none` to turn them off. The piper options show their voice's language. Anyone can change it, and the bot posts who changed it in the channel. |
-| `/help`         | Show the built-in help. |
+| `/help`         | Show the built-in help. Pick a `topic` to read about scheduling, locations, other commands, the availability buttons, entering availability, managing events, or voice announcements. Leave it blank for an overview. |
 
 ### Voice announcements
 

@@ -22,7 +22,7 @@ import libs.participant as participant_lib
 import libs.announcer as announcer_lib
 from libs.announcer import Announcer
 from libs.participant import Participant, TimeBlock, add_local_days, print_date_time, print_time, print_time_until, to_local
-from libs.help import HELP_EMBEDS
+from libs.help import HELP_TOPICS
 from server import Server
 
 # .env
@@ -5953,8 +5953,10 @@ async def tts_command(interaction: Interaction, engine: str):
 
 
 @client.tree.command(name='help', description='Show helpful information.')
-async def help_command(interaction: Interaction):
-    await interaction.response.send_message(embeds=HELP_EMBEDS, ephemeral=True)
+@app_commands.describe(topic='What to show help for. Leave blank for an overview of the bot and its topics.')
+@app_commands.choices(topic=[app_commands.Choice(name=embed.title, value=key) for key, embed in HELP_TOPICS.items()])
+async def help_command(interaction: Interaction, topic: Optional[str] = None):
+    await interaction.response.send_message(embed=HELP_TOPICS.get(topic, HELP_TOPICS["overview"]), ephemeral=True)
 
 
 def first_start_time(event):
