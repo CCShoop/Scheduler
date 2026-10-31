@@ -257,14 +257,17 @@ LOCATION_SUGGESTION_PREFIXES = ('🔊', '🎙️', '🎙', '📍')
 EventName = app_commands.Range[str, 1, MAX_EVENT_NAME_LENGTH]
 Location = app_commands.Range[str, 1, MAX_LOCATION_LENGTH]
 Duration = app_commands.Range[int, 0, MAX_EVENT_DURATION]
+CreateDuration = app_commands.Range[int, 1, MAX_EVENT_DURATION]
 TimeoutDays = app_commands.Range[int, 1, MAX_EVENT_TIMEOUT_DAYS]
 
 
 def validate_event_options(event_name: Optional[str] = None,
                            duration: Optional[int] = None,
-                           timeout_days: Optional[int] = None) -> None:
+                           timeout_days: Optional[int] = None,
+                           min_duration: int = 0) -> None:
     """
     Checks event options that didn't come through a slash command, e.g. a modal or a json packet.
+    Created events pass a min_duration of 1, since only scheduling can work out a duration of 0.
 
     Raises
     ------
@@ -273,8 +276,8 @@ def validate_event_options(event_name: Optional[str] = None,
     """
     if event_name is not None and not 1 <= len(event_name) <= MAX_EVENT_NAME_LENGTH:
         raise Exception(f"Event name must be 1 to {MAX_EVENT_NAME_LENGTH} characters.")
-    if duration is not None and not 0 <= duration <= MAX_EVENT_DURATION:
-        raise Exception(f"Duration must be 0 to {MAX_EVENT_DURATION} minutes.")
+    if duration is not None and not min_duration <= duration <= MAX_EVENT_DURATION:
+        raise Exception(f"Duration must be {min_duration} to {MAX_EVENT_DURATION} minutes.")
     if timeout_days is not None and not 1 <= timeout_days <= MAX_EVENT_TIMEOUT_DAYS:
         raise Exception(f"Timeout must be 1 to {MAX_EVENT_TIMEOUT_DAYS} days.")
 
@@ -326,6 +329,160 @@ def resolve_location(guild: Guild, location: Optional[str]) -> tuple[Optional[Vo
     if len(location) > MAX_LOCATION_LENGTH:
         raise Exception(f"Location must be {MAX_LOCATION_LENGTH} characters or fewer.")
     return None, location
+
+
+# The fields every json packet of a type must have, though some may be null
+PACKET_FIELDS = {
+    "schedule": ["name", "guild_id", "text_channel_id", "image_url", "include_exclude",
+                 "usernames", "roles", "duration", "multi_event"],
+    "create": ["name", "guild_id", "text_channel_id", "start_time", "image_url", "include_exclude",
+               "usernames", "roles", "duration"],
+}
+
+
+def is_number(value) -> bool:
+    """Indicates whether a json value is a whole number, since bools are ints in Python."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def get_packet_id(data: dict, key: str) -> Optional[int]:
+    """
+    Gets a Discord id from a json packet, as a number or a string of digits,
+    since JavaScript can't hold ids as numbers. Returns None for a null id.
+    """
+    value = data.get(key)
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value)
+    if is_number(value):
+        return value
+    raise Exception(f'"{key}" must be an id, as a number or a string of digits')
+
+
+def check_packet_names(data: dict, key: str) -> None:
+    """Checks that a packet's usernames or roles are null, a string, an id, or a list of strings and ids."""
+    value = data[key]
+    if value is None or isinstance(value, str) or is_number(value):
+        return
+    if isinstance(value, list) and all(isinstance(name, str) or is_number(name) for name in value):
+        return
+    raise Exception(f'"{key}" must be null, a comma separated string, an id, or a list of names and ids')
+
+
+def is_packet_participant(scheduler: Member, usernames) -> bool:
+    """Indicates whether a packet's scheduler takes part in the event: a person always does, a bot only when named."""
+    if not scheduler.bot:
+        return True
+    if isinstance(usernames, str):
+        usernames = usernames.split(',')
+    elif is_number(usernames):
+        usernames = [usernames]
+    names = strip_names(usernames or [])
+    return scheduler.name in names or str(scheduler.id) in names
+
+
+async def parse_packet(guild_getter, data: dict, packet_type: str) -> dict:
+    """
+    Checks a json packet and looks up its guild, channels, and scheduler.
+    The scheduler is optional, e.g. for a bot scheduling events that nobody in particular asked for.
+
+    Arguments
+    ---------
+    guild_getter: :class:`Callable[[int], Optional[Guild]]`
+        Gets a guild by id.
+    data: :class:`dict`
+        The json packet.
+    packet_type: :class:`str`
+        "schedule" or "create".
+
+    Returns
+    -------
+    options: :class:`dict`
+        The packet's fields as arguments for schedule() or create().
+
+    Raises
+    ------
+    Exception
+        A message describing the first problem with the packet.
+    """
+    missing = [key for key in PACKET_FIELDS[packet_type] if key not in data]
+    if missing:
+        raise Exception(f"missing field(s): {', '.join(missing)}")
+    if not isinstance(data["name"], str):
+        raise Exception('"name" must be a string')
+
+    guild_id = get_packet_id(data, "guild_id")
+    guild = guild_getter(guild_id) if guild_id is not None else None
+    if guild is None:
+        raise Exception(f'server {data["guild_id"]} not found, or the bot isn\'t in it')
+    text_channel_id = get_packet_id(data, "text_channel_id")
+    text_channel = guild.get_channel(text_channel_id) if text_channel_id is not None else None
+    if text_channel is None:
+        raise Exception(f'text channel {data["text_channel_id"]} not found in {guild.name}')
+    if not hasattr(text_channel, "send") or text_channel in get_voice_channels(guild):
+        raise Exception(f'channel {data["text_channel_id"]} is not a text channel')
+
+    location = data.get("location")
+    if location is not None and not isinstance(location, str):
+        raise Exception('"location" must be a string or null')
+    voice_channel_id = get_packet_id(data, "voice_channel_id")
+    if voice_channel_id is not None:
+        if location is not None and location.strip():
+            raise Exception('set "location" or "voice_channel_id", not both')
+        voice_channel = utils.get(get_voice_channels(guild), id=voice_channel_id)
+        if voice_channel is None:
+            raise Exception(f'voice channel {data["voice_channel_id"]} not found in {guild.name}')
+        location = None
+    else:
+        # A location naming a voice channel uses it, like /schedule's location option
+        voice_channel, location = resolve_location(guild, location)
+    # Without a location, the event falls back to the first voice channel
+    if voice_channel is None and location is None and get_voice_channels(guild):
+        voice_channel = get_voice_channels(guild)[0]
+
+    scheduler_id = get_packet_id(data, "scheduler_id")
+    if scheduler_id is not None:
+        try:
+            scheduler = await find_member(guild, scheduler_id)
+        except NotFound:
+            raise Exception(f'scheduler {data["scheduler_id"]} not found in {guild.name}')
+        # Scheduling mustn't put an event somewhere the scheduler can't go,
+        # though a bot scheduler that isn't a participant only posts in the text channel
+        if not can_see_channel(text_channel, scheduler):
+            raise Exception(f"the scheduler can't see text channel {text_channel.name}")
+        if voice_channel is not None and is_packet_participant(scheduler, data["usernames"]) \
+                and not voice_channel.permissions_for(scheduler).view_channel:
+            raise Exception(f"the scheduler can't see voice channel {voice_channel.name}")
+    if data["image_url"] is not None and not isinstance(data["image_url"], str):
+        raise Exception('"image_url" must be a string or null')
+    if data["include_exclude"] is not None and not isinstance(data["include_exclude"], str):
+        raise Exception('"include_exclude" must be "INCLUDE", "EXCLUDE", or null')
+    check_packet_names(data, "usernames")
+    check_packet_names(data, "roles")
+    if not is_number(data["duration"]):
+        raise Exception('"duration" must be a whole number of minutes')
+
+    options = dict(event_name=data["name"],
+                   guild=guild,
+                   text_channel=text_channel,
+                   voice_channel=voice_channel,
+                   location=location,
+                   scheduler_id=scheduler_id,
+                   image_url=data["image_url"],
+                   include_exclude=data["include_exclude"],
+                   usernames=data["usernames"],
+                   roles=data["roles"],
+                   duration=data["duration"])
+    if packet_type == "schedule":
+        if not isinstance(data["multi_event"], bool):
+            raise Exception('"multi_event" must be true or false')
+        options["multi_event"] = data["multi_event"]
+    else:
+        if not isinstance(data["start_time"], str):
+            raise Exception('"start_time" must be a string')
+        options["start_time"] = data["start_time"]
+    return options
 
 
 async def find_member(guild: Guild, member_id: int) -> Member:
@@ -475,6 +632,8 @@ class SchedulerClient(Client):
         "schedule" (the default when "type" is missing) collects availability like /schedule;
         "create" makes the event at a given start time like /create.
         """
+        if not isinstance(data, dict):
+            raise Exception("the packet must be a JSON object")
         packet_type = data.get("type", "schedule")
         if packet_type == "schedule":
             await self.schedule_from_dict(data)
@@ -492,22 +651,8 @@ class SchedulerClient(Client):
         data: :class:`dict`
             The json packet with the information necessary for creating an event at a set time.
         """
-        logger.info(f"[{data['name']}] Create from dict triggered")
-        guild = self.get_guild(data["guild_id"])
-        text_channel = guild.get_channel(data["text_channel_id"])
-        voice_channel = guild.get_channel(data["voice_channel_id"]) if data.get("voice_channel_id") else None
-        await create(event_name=data["name"],
-                     guild=guild,
-                     text_channel=text_channel,
-                     voice_channel=voice_channel,
-                     location=data.get("location"),
-                     start_time=data["start_time"],
-                     scheduler_id=data["scheduler_id"],
-                     image_url=data["image_url"],
-                     include_exclude=data["include_exclude"],
-                     usernames=data["usernames"],
-                     roles=data["roles"],
-                     duration=data["duration"])
+        logger.info(f"[{data.get('name')}] Create from dict triggered")
+        await create(**await parse_packet(self.get_guild, data, "create"))
 
     async def schedule_from_dict(self, data: dict) -> None:
         """
@@ -518,22 +663,8 @@ class SchedulerClient(Client):
         data: :class:`dict`
             The json packet with the information necessary for scheduling an event.
         """
-        logger.info(f"[{data['name']}] Schedule from dict triggered")
-        guild = self.get_guild(data["guild_id"])
-        text_channel = guild.get_channel(data["text_channel_id"])
-        voice_channel = guild.get_channel(data["voice_channel_id"]) if data.get("voice_channel_id") else None
-        await schedule(event_name=data["name"],
-                       guild=guild,
-                       text_channel=text_channel,
-                       voice_channel=voice_channel,
-                       location=data.get("location"),
-                       scheduler_id=data["scheduler_id"],
-                       image_url=data["image_url"],
-                       include_exclude=data["include_exclude"],
-                       usernames=data["usernames"],
-                       roles=data["roles"],
-                       duration=data["duration"],
-                       multi_event=data["multi_event"])
+        logger.info(f"[{data.get('name')}] Schedule from dict triggered")
+        await schedule(**await parse_packet(self.get_guild, data, "schedule"))
 
     async def retrieve_events(self) -> None:
         """
@@ -1074,9 +1205,10 @@ class Event:
         """
         if self.created or self.ready_to_create:
             return
+        # Bots can't enter availability, so they're always available
         subbed_participants = []
         for participant in self.participants:
-            if participant.subscribed:
+            if participant.subscribed and not participant.is_bot:
                 subbed_participants.append(participant)
 
         current_time = now() + timedelta(minutes=START_TIME_DELAY)
@@ -1385,7 +1517,9 @@ class Event:
                 await self.start(f"Event started by {client.user} at its start time.")
             else:
                 await self.update_reminder_message()
-        elif all(participant.member in self.voice_channel.members for participant in self.subscribed_participants):
+        # Bots can join whenever they like
+        elif all(participant.member in self.voice_channel.members
+                 for participant in self.subscribed_participants if not participant.is_bot):
             await self.start(f"Event started by {client.user} because all users were in the voice channel.")
         else:
             await self.update_reminder_message()
@@ -2367,7 +2501,8 @@ class Event:
         cancelled: :class:`bool`
             True if the event was cancelled.
         """
-        if self.cancelled or self.started or self.subscribed_participants:
+        # Bots alone don't keep an event going
+        if self.cancelled or self.started or any(not participant.is_bot for participant in self.subscribed_participants):
             return False
         if self.participants:
             reason = "All participants unsubscribed."
@@ -2625,6 +2760,12 @@ class Event:
                 self.unresolved_rescheduler_id = 0
         self.unresolved_participants = still_unresolved
         if not self.unresolved_participants:
+            # A scheduler who isn't a participant, e.g. a bot that sent a json packet, is only shown on the event
+            if self.unresolved_scheduler_id and self.scheduler is None:
+                try:
+                    self.scheduler = Participant(member=await find_member(self.guild, self.unresolved_scheduler_id))
+                except Exception as e:
+                    logger.info(f"[{self}] Could not look up the scheduler, who isn't a participant: {e}")
             self.unresolved_scheduler_id = 0
             self.unresolved_rescheduler_id = 0
         return resolved
@@ -3402,6 +3543,9 @@ class ScheduleAgainModal(Modal):
             return
         event_image_url = self.event_image_url.value
         if self.event_start_time.value != "":
+            # An automatic duration can't be worked out for a set start time
+            if event_duration == 0:
+                event_duration = DEFAULT_EVENT_DURATION
             try:
                 event_start_time: datetime = parse_start_time(self.event_start_time.value)
                 await create(event_name=event_name,
@@ -4630,6 +4774,25 @@ async def prompt_for_participants(interaction: Interaction, include_exclude: INC
             ",".join(view.role_ids) if view.role_ids else None)
 
 
+def is_this_bot(member: Member) -> bool:
+    """Indicates whether the member is this bot, which never takes part in events."""
+    return client.user is not None and member.id == client.user.id
+
+
+def can_see_channel(channel: TextChannel, member: Member) -> bool:
+    """
+    Indicates whether the member can see the channel.
+    Members missing from the member cache aren't in channel.members, so their permissions are checked instead.
+    """
+    return member in channel.members or channel.permissions_for(member).view_channel
+
+
+def strip_names(names: list) -> list[str]:
+    """Strips a list of names or ids, which may be numbers, and drops the blank ones."""
+    names = [(str(name) if isinstance(name, int) else name).strip() for name in names]
+    return [name for name in names if name]
+
+
 def get_participants_from_interaction(event_name: str,
                                       interaction: Interaction,
                                       include_exclude: Optional[INCLUDE_EXCLUDE] = None,
@@ -4652,8 +4815,8 @@ def get_participants_from_channel(event_name: str,
                                   channel: TextChannel,
                                   user: Optional[User] = None,
                                   include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
-                                  usernames: Optional[str] = None,
-                                  roles: Optional[str] or Optional[list[str]] = None):
+                                  usernames: Optional[str] or Optional[list[str | int]] or Optional[int] = None,
+                                  roles: Optional[str] or Optional[list[str | int]] or Optional[int] = None):
     """
     Gets participants for an event from a channel using the included guidelines.
 
@@ -4668,33 +4831,71 @@ def get_participants_from_channel(event_name: str,
     user: :class:`Optional[User]` or :class:`Optional[Member]`
         The user that is scheduling the event.
     include_exclude: :class:`Optional[INCLUDE_EXCLUDE]`
-        Whether to include or exclude the provided usernames/ids/roles.
-        Default: INCLUDE
+        Whether to include or exclude the provided usernames/ids/roles, in any case.
+        Default: INCLUDE, also used when None
         REQUIRES usernames or roles.
-    usernames: :class:`Optional[str]`
-        The comma separated usernames or ids to include/exclude.
-    roles: :class:`Optional[str]` or :class:`Optional[list[str]]`
-        The comma separated role names or ids, or a list of them, to include/exclude.
+    usernames: :class:`Optional[str]` or :class:`Optional[list[str | int]]` or :class:`Optional[int]`
+        The comma separated usernames or ids, a list of them, or a single id, to include/exclude.
+        Blank or empty usernames with INCLUDE add only the scheduler, or everyone when the scheduler
+        is a bot or can't see the channel.
+        With roles, the usernames are always added and the roles include/exclude everyone else.
+        Bots are only added when included by name, never as the scheduler, and never this bot itself.
+        A person scheduler is added, but the scheduler isn't otherwise treated differently from anyone else.
+    roles: :class:`Optional[str]` or :class:`Optional[list[str | int]]` or :class:`Optional[int]`
+        The comma separated role names or ids, a list of them, or a single id, to include/exclude.
 
     Returns
     -------
     participants: :class:`list[Participant]`
         The list of participants for the event.
     """
+    # Json packets may send a lowercase or null include_exclude
+    if include_exclude is None:
+        include_exclude = INCLUDE
+    elif isinstance(include_exclude, str):
+        include_exclude = include_exclude.upper()
+    if include_exclude not in (INCLUDE, EXCLUDE):
+        raise Exception(f'[{event_name}] include_exclude must be {INCLUDE} or {EXCLUDE}, not {include_exclude}')
+
     participants = []
-    # Add the scheduler/creator as a participant
+
+    def add(member: Member) -> None:
+        """Adds the member as a participant unless they already are one."""
+        if member.id not in {participant.member.id for participant in participants}:
+            participants.append(Participant(member=member))
+
+    # A person scheduling the event takes part in it, but a bot scheduler (e.g. one sending a json packet)
+    # doesn't unless it's included by name
+    scheduler_added = False
     if user is not None:
         # The user may be missing from the member cache
         member = guild.get_member(user.id) or user
-        if not member.bot:
-            participants.append(Participant(member=member))
+        if not member.bot and can_see_channel(channel, member):
+            scheduler_added = True
+            add(member)
+
+    # Json packets may send a single id as a number
+    if isinstance(roles, int):
+        roles = [roles]
+    if isinstance(usernames, int):
+        usernames = [usernames]
+
+    if type(usernames) is str:
+        usernames = usernames.split(',')
+    if usernames is not None and type(usernames) is not list:
+        raise Exception(f'[{event_name}] Received incompatible usernames variable type: {type(usernames)}')
+    if usernames is not None:
+        try:
+            usernames = strip_names(usernames)
+        except Exception as e:
+            raise Exception(f'[{event_name}] Failed to parse username(s): {e}')
 
     # Add users meeting role criteria
     if roles and roles != '':
         try:
             if type(roles) is str:
                 roles = roles.split(',')
-            role_names = [role.strip() for role in roles if role.strip()]
+            role_names = strip_names(roles)
             roles = [utils.find(lambda r: r.name.lower() == role_name.lower() or str(r.id) == role_name, guild.roles) for role_name in role_names]
         except Exception as e:
             raise Exception(f'[{event_name}] Failed to parse role(s): {e}')
@@ -4703,53 +4904,40 @@ def get_participants_from_channel(event_name: str,
         missing_role_names = [role_name for role_name, role in zip(role_names, roles) if role is None]
         if missing_role_names:
             raise Exception(f'[{event_name}] Role(s) not found: {", ".join(missing_role_names)}')
+        # Usernames sent with roles, e.g. the person who started scheduling through another bot, are always added
+        if usernames:
+            for member in channel.members:
+                if not is_this_bot(member) and (member.name in usernames or str(member.id) in usernames):
+                    add(member)
         for member in channel.members:
             if member.bot:
                 continue
-            if user is not None:
-                if member.name == user.name:
-                    continue
-            found_role = False
-            for role in roles:
-                if role in member.roles:
-                    found_role = True
-                    break
-            if include_exclude == INCLUDE and found_role:
-                participants.append(Participant(member=member))
-            elif include_exclude == EXCLUDE and not found_role:
-                participants.append(Participant(member=member))
+            found_role = any(role in member.roles for role in roles)
+            if (include_exclude == INCLUDE) == found_role:
+                add(member)
         return participants
 
     # Add users meeting username criteria
-    if type(usernames) is str:
-        usernames = usernames.split(',')
-    if usernames and type(usernames) is not list:
-        raise Exception(f'[{event_name}] Received incompatible usernames variable type: {type(usernames)}')
-    if usernames and usernames != '':
-        try:
-            usernames = [username.strip() for username in usernames]
-        except Exception as e:
-            raise Exception(f'[{event_name}] Failed to parse username(s): {e}')
+    # Including no one leaves just the scheduler, but a scheduler who isn't a participant
+    # (e.g. another bot sending a json packet) gets everyone
+    if usernames == [] and include_exclude == INCLUDE and scheduler_added:
+        return participants
+    if usernames:
         for member in channel.members:
-            if member.bot:
+            if is_this_bot(member):
                 continue
-            if user is not None:
-                if member.name == user.name:
-                    continue
-            if include_exclude == INCLUDE and (member.name in usernames or str(member.id) in usernames):
-                participants.append(Participant(member=member))
-            elif include_exclude == EXCLUDE and member.name not in usernames and str(member.id) not in usernames:
-                participants.append(Participant(member=member))
+            named = member.name in usernames or str(member.id) in usernames
+            # Bots are only included by name
+            if include_exclude == INCLUDE and named:
+                add(member)
+            elif include_exclude == EXCLUDE and not named and not member.bot:
+                add(member)
         return participants
 
     # Add all users in the channel
     for member in channel.members:
-        if member.bot:
-            continue
-        if user is not None:
-            if member.id == user.id:
-                continue
-        participants.append(Participant(member=member))
+        if not member.bot:
+            add(member)
     return participants
 
 
@@ -5009,7 +5197,7 @@ async def create_command(interaction: Interaction,
                          start_time: str,
                          image_url: Optional[str] = None,
                          include_exclude: Optional[INCLUDE_EXCLUDE] = None,
-                         duration: Optional[Duration] = DEFAULT_EVENT_DURATION):
+                         duration: Optional[CreateDuration] = DEFAULT_EVENT_DURATION):
     await interaction.response.defer(ephemeral=True)
     logger.info(f"[{event_name}] Received event creation request from {interaction.user.name}")
     try:
@@ -5057,7 +5245,7 @@ async def create(event_name: str,
                  text_channel: TextChannel,
                  voice_channel: Optional[VoiceChannel],
                  start_time: datetime or str,
-                 scheduler_id: Optional[int] = 0,
+                 scheduler_id: Optional[int] = None,
                  image_url: Optional[str] = None,
                  include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
                  usernames: Optional[str] or Optional[list[str]] or Optional[list[int]] or Optional[list[Participant]] = None,
@@ -5082,7 +5270,8 @@ async def create(event_name: str,
     start_time: :class:`datetime` or :class:`str`
         The start time for the event.
     scheduler_id: :class:`Optional[int]`
-        The ID of the member who scheduled the event.
+        The ID of the member who scheduled the event. Optional, e.g. for a bot scheduling events
+        that nobody in particular asked for. A scheduler who can't see the text channel isn't invited.
     image_url: :class:`Optional[str]`
         The URL for the image.
     include_exclude: :class:`Optional[INCLUDE_EXCLUDE]`
@@ -5112,7 +5301,7 @@ async def create(event_name: str,
     Exception: :class:`Exception`
         A string message describing the error.
      """
-    validate_event_options(event_name=event_name, duration=duration)
+    validate_event_options(event_name=event_name, duration=duration, min_duration=1)
     # Location
     if location is None and voice_channel is None and not get_voice_channels(guild):
         logger.info(f"[{event_name}] Scheduling cancelled due to no location and no voice channel in guild")
@@ -5137,13 +5326,14 @@ async def create(event_name: str,
 
     # Scheduler
     scheduler_user = None
-    if scheduler_id != 0:
-        scheduler_user = guild.get_member(scheduler_id)
-    if scheduler_user is None:
-        scheduler_user = guild.members[0]
+    if scheduler_id:
+        try:
+            scheduler_user = await find_member(guild, scheduler_id)
+        except NotFound:
+            pass
 
     # Participants
-    if isinstance(usernames, str):
+    if isinstance(usernames, (str, int)):
         try:
             participants = get_participants_from_channel(event_name=event_name,
                                                          guild=guild,
@@ -5155,9 +5345,7 @@ async def create(event_name: str,
         except Exception as e:
             logger.error(f"[{event_name}] Error getting participants: {e}")
             raise Exception(f"Failed to generate participants list: {e}")
-    elif isinstance(usernames, list) and (
-            all(isinstance(un, str) for un in usernames) or (
-            all(isinstance(un, int) for un in usernames))):
+    elif isinstance(usernames, list) and all(isinstance(un, (str, int)) for un in usernames):
         try:
             participants = get_participants_from_channel(event_name=event_name,
                                                          guild=guild,
@@ -5182,14 +5370,19 @@ async def create(event_name: str,
         logger.error(f"Invalid usernames type in schedule: {type(usernames)}")
         raise Exception(f"This is a code error, please inform the developer!\nInvalid usernames type in create: {type(usernames)}")
 
-    # Scheduler
+    if not participants:
+        raise Exception("No one was found to invite to the event.")
+    if all(participant.is_bot for participant in participants):
+        raise Exception("An event needs at least one person, not just bots.")
+
+    # Scheduler, who is only shown on the event if they aren't a participant, e.g. a bot sending a json packet
     scheduler = None
     for participant in participants:
         participant.answered = True
-        if participant.member.id == scheduler_id:
+        if scheduler_id and participant.member.id == scheduler_id:
             scheduler = participant
-    if scheduler is None:
-        scheduler = participants[0]
+    if scheduler is None and scheduler_user is not None:
+        scheduler = Participant(member=scheduler_user)
 
     # Image URL
     if image_url == "":
@@ -5313,7 +5506,7 @@ async def schedule(event_name: str,
                    guild: Guild,
                    text_channel: TextChannel,
                    voice_channel: Optional[VoiceChannel],
-                   scheduler_id: Optional[int] = 0,
+                   scheduler_id: Optional[int] = None,
                    image_url: Optional[str] = None,
                    include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
                    usernames: Optional[str] = None,
@@ -5337,7 +5530,8 @@ async def schedule(event_name: str,
         The voice channel that the event occurs in.
         Default: the guild's first voice channel, unless a location is provided.
     scheduler_id: :class:`Optional[int]`
-        The ID of the member who scheduled the event.
+        The ID of the member who scheduled the event. Optional, e.g. for a bot scheduling events
+        that nobody in particular asked for. A scheduler who can't see the text channel isn't invited.
     image_url: :class:`Optional[str]`
         The URL for the image.
     include_exclude: :class:`Optional[INCLUDE_EXCLUDE]`
@@ -5383,11 +5577,14 @@ async def schedule(event_name: str,
 
     # Scheduler user
     scheduler_user = None
-    if scheduler_id != 0:
-        scheduler_user = guild.get_member(scheduler_id)
+    if scheduler_id:
+        try:
+            scheduler_user = await find_member(guild, scheduler_id)
+        except NotFound:
+            pass
 
     # Participants
-    if isinstance(usernames, str):
+    if isinstance(usernames, (str, int)):
         try:
             participants = get_participants_from_channel(event_name=event_name,
                                                          guild=guild,
@@ -5399,9 +5596,7 @@ async def schedule(event_name: str,
         except Exception as e:
             logger.error(f"[{event_name}] Error getting participants: {e}")
             raise Exception(f"Failed to generate participants list: {e}")
-    elif isinstance(usernames, list) and (
-            all(isinstance(un, str) for un in usernames) or (
-            all(isinstance(un, int) for un in usernames))):
+    elif isinstance(usernames, list) and all(isinstance(un, (str, int)) for un in usernames):
         try:
             participants = get_participants_from_channel(event_name=event_name,
                                                          guild=guild,
@@ -5426,13 +5621,18 @@ async def schedule(event_name: str,
         logger.error(f"Invalid usernames type in schedule: {type(usernames)}")
         raise Exception(f"This is a code error, please inform the developer!\nInvalid usernames type in schedule: {type(usernames)}")
 
-    # Scheduler participant
+    if not participants:
+        raise Exception("No one was found to invite to the event.")
+    if all(participant.is_bot for participant in participants):
+        raise Exception("An event needs at least one person, not just bots.")
+
+    # Scheduler, who is only shown on the event if they aren't a participant, e.g. a bot sending a json packet
     scheduler = None
     for participant in participants:
         if scheduler_user is not None and participant.member.id == scheduler_user.id:
             scheduler = participant
-    if scheduler is None and participants:
-        scheduler = participants[0]
+    if scheduler is None and scheduler_user is not None:
+        scheduler = Participant(member=scheduler_user)
 
     # Image URL
     if image_url == "":

@@ -48,21 +48,36 @@ class TestEveryone:
     def test_bot_scheduler_is_not_added(self, channel_env):
         assert channel_env.get(user=channel_env.bot) == ["host", "alice", "bob", "carol"]
 
+    def test_bot_scheduler_named_in_usernames_is_added(self, channel_env):
+        assert channel_env.get(user=channel_env.bot, usernames="botty, alice") == ["alice", "botty"]
+        assert channel_env.get(user=channel_env.bot, usernames="botty", roles="Mods") == ["botty", "bob"]
+
+    def test_this_bot_is_never_added(self, channel_env, monkeypatch):
+        monkeypatch.setattr(channel_env.sched, "is_this_bot", lambda member: member is channel_env.bot)
+        assert channel_env.get(usernames="botty, alice") == ["host", "alice"]
+        assert channel_env.get(usernames="carol", roles="Mods") == ["host", "carol", "bob"]
+
     def test_scheduler_missing_from_member_cache(self, channel_env):
         del channel_env.guild.members[channel_env.scheduler.id]
         assert channel_env.get() == ["host", "alice", "bob", "carol"]
 
-    def test_scheduler_outside_channel_is_still_added(self, channel_env):
+    def test_scheduler_outside_channel_is_not_added(self, channel_env):
         outsider = make_member("outsider")
         channel_env.guild.members[outsider.id] = outsider
-        assert channel_env.get(user=outsider) == ["outsider", "host", "alice", "bob", "carol"]
+        assert channel_env.get(user=outsider) == ["host", "alice", "bob", "carol"]
 
-    def test_empty_channel(self, channel_env):
-        channel_env.channel.members.clear()
+    def test_scheduler_with_permission_but_not_in_channel_members_is_added(self, channel_env):
+        # channel.members leaves out members missing from the member cache
+        channel_env.channel.members.remove(channel_env.scheduler)
+        channel_env.channel.permissions_for = lambda member: SimpleNamespace(view_channel=True)
+        assert channel_env.get() == ["host", "alice", "bob", "carol"]
+
+    def test_channel_with_only_the_scheduler(self, channel_env):
+        channel_env.channel.members[:] = [channel_env.scheduler]
         assert channel_env.get() == ["host"]
 
-    def test_empty_usernames_and_roles_add_everyone(self, channel_env):
-        assert channel_env.get(usernames=[], roles="") == ["host", "alice", "bob", "carol"]
+    def test_null_usernames_and_roles_add_everyone(self, channel_env):
+        assert channel_env.get(usernames=None, roles=None) == ["host", "alice", "bob", "carol"]
 
 
 class TestUsernames:
@@ -92,8 +107,12 @@ class TestUsernames:
         assert channel_env.get(usernames="host", include_exclude=channel_env.sched.EXCLUDE) == \
             ["host", "alice", "bob", "carol"]
 
-    def test_listing_bot_does_not_add_it(self, channel_env):
-        assert channel_env.get(usernames="botty") == ["host"]
+    def test_listing_bot_adds_it(self, channel_env):
+        assert channel_env.get(usernames="botty") == ["host", "botty"]
+        assert channel_env.get(usernames=[channel_env.bot.id]) == ["host", "botty"]
+
+    def test_excluding_does_not_add_bots(self, channel_env):
+        assert channel_env.get(usernames="alice", include_exclude=channel_env.sched.EXCLUDE) == ["host", "bob", "carol"]
 
     def test_duplicates_add_member_once(self, channel_env):
         assert channel_env.get(usernames="alice,alice") == ["host", "alice"]
@@ -107,13 +126,66 @@ class TestUsernames:
     def test_without_scheduler(self, channel_env):
         assert channel_env.get(user=None, usernames="host,alice") == ["host", "alice"]
 
+    def test_members_outside_channel_are_skipped(self, channel_env):
+        outsider = make_member("outsider")
+        channel_env.guild.members[outsider.id] = outsider
+        assert channel_env.get(usernames=f"alice,outsider,{outsider.id}") == ["host", "alice"]
+
+    def test_accepts_a_single_id(self, channel_env):
+        assert channel_env.get(usernames=channel_env.bob.id) == ["host", "bob"]
+
+    def test_accepts_ids_as_numbers(self, channel_env):
+        assert channel_env.get(usernames=[channel_env.bob.id, "carol"]) == ["host", "bob", "carol"]
+
+    def test_blank_entries_are_ignored(self, channel_env):
+        assert channel_env.get(usernames="alice, ,") == ["host", "alice"]
+
+    @pytest.mark.parametrize("usernames", ["", " , ", [], [" "]])
+    def test_blank_include_with_human_scheduler_adds_only_them(self, channel_env, usernames):
+        assert channel_env.get(usernames=usernames) == ["host"]
+
+    @pytest.mark.parametrize("usernames", ["", " , ", [], [" "]])
+    def test_blank_include_with_bot_scheduler_adds_everyone(self, channel_env, usernames):
+        assert channel_env.get(user=channel_env.bot, usernames=usernames) == ["host", "alice", "bob", "carol"]
+
+    @pytest.mark.parametrize("usernames", ["", []])
+    def test_blank_include_with_scheduler_outside_channel_adds_everyone(self, channel_env, usernames):
+        outsider = make_member("outsider")
+        channel_env.guild.members[outsider.id] = outsider
+        assert channel_env.get(user=outsider, usernames=usernames) == ["host", "alice", "bob", "carol"]
+
+    @pytest.mark.parametrize("usernames", ["", []])
+    def test_blank_include_without_scheduler_adds_everyone(self, channel_env, usernames):
+        assert channel_env.get(user=None, usernames=usernames) == ["host", "alice", "bob", "carol"]
+
+    @pytest.mark.parametrize("usernames", ["", []])
+    def test_blank_exclude_adds_everyone(self, channel_env, usernames):
+        assert channel_env.get(usernames=usernames, include_exclude=channel_env.sched.EXCLUDE) == \
+            ["host", "alice", "bob", "carol"]
+
     def test_rejects_other_types(self, channel_env):
         with pytest.raises(Exception, match="incompatible usernames variable type"):
-            channel_env.get(usernames=42)
+            channel_env.get(usernames=1.5)
 
     def test_rejects_non_string_entries(self, channel_env):
         with pytest.raises(Exception, match="Failed to parse username"):
-            channel_env.get(usernames=[42])
+            channel_env.get(usernames=[None])
+
+
+class TestIncludeExclude:
+    @pytest.mark.parametrize("include_exclude", [None, "include", "Include"])
+    def test_null_and_lowercase_include(self, channel_env, include_exclude):
+        assert channel_env.get(usernames="alice", include_exclude=include_exclude) == ["host", "alice"]
+        assert channel_env.get(roles="Mods", include_exclude=include_exclude) == ["host", "bob"]
+
+    def test_lowercase_exclude(self, channel_env):
+        assert channel_env.get(usernames="alice", include_exclude="exclude") == ["host", "bob", "carol"]
+        assert channel_env.get(roles="Mods", include_exclude="exclude") == ["host", "alice", "carol"]
+
+    @pytest.mark.parametrize("include_exclude", ["both", "", 1])
+    def test_rejects_other_values(self, channel_env, include_exclude):
+        with pytest.raises(Exception, match="include_exclude must be INCLUDE or EXCLUDE"):
+            channel_env.get(usernames="alice", include_exclude=include_exclude)
 
 
 class TestRoles:
@@ -149,8 +221,25 @@ class TestRoles:
         with pytest.raises(Exception, match="No role names were given"):
             channel_env.get(roles=" , ")
 
-    def test_roles_take_priority_over_usernames(self, channel_env):
-        assert channel_env.get(roles="Mods", usernames="alice") == ["host", "bob"]
+    def test_usernames_with_roles_are_always_added_first(self, channel_env):
+        assert channel_env.get(roles="Mods", usernames="carol") == ["host", "carol", "bob"]
+
+    def test_usernames_with_excluded_roles_are_still_added(self, channel_env):
+        assert channel_env.get(roles="Mods", usernames="bob", include_exclude=channel_env.sched.EXCLUDE) == \
+            ["host", "bob", "alice", "carol"]
+
+    def test_usernames_with_the_role_are_added_once(self, channel_env):
+        assert channel_env.get(roles="Gamers", usernames="alice") == ["host", "alice"]
+
+    def test_bot_scheduler_with_username_and_roles(self, channel_env):
+        assert channel_env.get(user=channel_env.bot, usernames=str(channel_env.carol.id), roles="Mods") == \
+            ["carol", "bob"]
+
+    def test_bots_named_with_roles_are_added(self, channel_env):
+        assert channel_env.get(usernames="botty", roles="Gamers") == ["host", "botty", "alice"]
+
+    def test_blank_usernames_with_roles_use_only_roles(self, channel_env):
+        assert channel_env.get(roles="Mods", usernames="") == ["host", "bob"]
 
     def test_bots_with_role_are_skipped(self, channel_env):
         assert "botty" not in channel_env.get(roles="Gamers,Mods")
@@ -165,13 +254,21 @@ class TestRoles:
     def test_empty_list_adds_everyone(self, channel_env):
         assert channel_env.get(roles=[]) == ["host", "alice", "bob", "carol"]
 
+    def test_accepts_a_single_id(self, channel_env):
+        gamers, mods = channel_env.guild.roles
+        assert channel_env.get(roles=mods.id) == ["host", "bob"]
+
+    def test_accepts_ids_as_numbers(self, channel_env):
+        gamers, mods = channel_env.guild.roles
+        assert channel_env.get(roles=[gamers.id, "Mods"]) == ["host", "alice", "bob"]
+
     def test_rejects_other_types(self, channel_env):
         with pytest.raises(Exception, match="Failed to parse role"):
-            channel_env.get(roles=42)
+            channel_env.get(roles=1.5)
 
     def test_rejects_non_string_entries(self, channel_env):
         with pytest.raises(Exception, match="Failed to parse role"):
-            channel_env.get(roles=[42])
+            channel_env.get(roles=[None])
 
 
 class TestCreateWithUsernameList:
@@ -197,6 +294,40 @@ class TestCreateWithUsernameList:
         event = run(env.sched.schedule(event_name="Game Night", guild=env.guild, text_channel=env.text_channel,
                                        voice_channel=env.voice_channel, scheduler_id=a.id, usernames=[to_entry(b)]))
         assert [participant.member for participant in event.participants] == [a, b]
+
+    def test_single_id(self, env, members):
+        a, b = members
+        event = run(env.sched.create(event_name="Game Night", guild=env.guild, text_channel=env.text_channel,
+                                     voice_channel=env.voice_channel, start_time=at(1, 20),
+                                     scheduler_id=a.id, usernames=b.id))
+        assert [participant.member for participant in event.participants] == [a, b]
+        event = run(env.sched.schedule(event_name="Game Night 2", guild=env.guild, text_channel=env.text_channel,
+                                       voice_channel=env.voice_channel, scheduler_id=a.id, usernames=b.id))
+        assert [participant.member for participant in event.participants] == [a, b]
+
+    @pytest.mark.parametrize("usernames", ["", []])
+    def test_blank_usernames(self, env, members, usernames):
+        a, b = members
+        event = run(env.sched.schedule(event_name="Game Night", guild=env.guild, text_channel=env.text_channel,
+                                       voice_channel=env.voice_channel, scheduler_id=a.id, usernames=usernames))
+        assert [participant.member for participant in event.participants] == [a]
+        a.bot = True
+        event = run(env.sched.create(event_name="Game Night 2", guild=env.guild, text_channel=env.text_channel,
+                                     voice_channel=env.voice_channel, start_time=at(1, 20),
+                                     scheduler_id=a.id, usernames=usernames))
+        assert [participant.member for participant in event.participants] == [b]
+
+    def test_mixed_ids_and_names(self, env, members):
+        a, b = members
+        c = env.make_participant("c").member
+        c.bot = False
+        event = run(env.sched.create(event_name="Game Night", guild=env.guild, text_channel=env.text_channel,
+                                     voice_channel=env.voice_channel, start_time=at(1, 20),
+                                     scheduler_id=a.id, usernames=[b.id, "c"]))
+        assert [participant.member for participant in event.participants] == [a, b, c]
+        event = run(env.sched.schedule(event_name="Game Night 2", guild=env.guild, text_channel=env.text_channel,
+                                       voice_channel=env.voice_channel, scheduler_id=a.id, usernames=[str(b.id), c.id]))
+        assert [participant.member for participant in event.participants] == [a, b, c]
 
 
 class TestCreateWithRolesOnly:
@@ -232,6 +363,61 @@ class TestCreateWithRolesOnly:
                                        voice_channel=env.voice_channel, scheduler_id=a.id,
                                        include_exclude=include_exclude, usernames=usernames, roles=roles))
         assert "".join(participant.member.name for participant in event.participants) == expected
+
+
+class TestCreateScheduler:
+    @pytest.fixture
+    def members(self, env):
+        a, b = env.make_participant("a"), env.make_participant("b")
+        for member in env.text_channel.members:
+            member.bot = False
+        return a.member, b.member
+
+    def create(self, env, **kwargs):
+        return run(env.sched.create(event_name="Game Night", guild=env.guild, text_channel=env.text_channel,
+                                    voice_channel=env.voice_channel, start_time=at(1, 20), **kwargs))
+
+    def test_unknown_scheduler_is_not_replaced_by_another_member(self, env, members):
+        a, b = members
+        event = self.create(env, scheduler_id=12345, usernames="b")
+        assert [participant.member for participant in event.participants] == [b]
+        assert event.scheduler is None
+
+    def test_no_scheduler(self, env, members):
+        a, b = members
+        event = self.create(env, usernames=None)
+        assert [participant.member for participant in event.participants] == [a, b]
+        assert event.scheduler is None
+
+    def test_bot_scheduler_is_shown_but_not_invited(self, env, members):
+        a, b = members
+        a.bot = True
+        gamers = SimpleNamespace(id=next_id(), name="Gamers")
+        env.guild.roles = [gamers]
+        c = env.make_participant("c").member
+        c.bot = False
+        for member in (a, b, c):
+            member.roles = []
+        c.roles = [gamers]
+        event = self.create(env, scheduler_id=a.id, usernames=str(b.id), roles="Gamers")
+        assert [participant.member for participant in event.participants] == [b, c]
+        assert event.scheduler.member is a and event.scheduler not in event.participants
+
+    def test_no_participants_is_an_error(self, env, members):
+        with pytest.raises(Exception, match="No one was found to invite"):
+            self.create(env, usernames="nobody")
+
+    @pytest.mark.parametrize("command", ["create", "schedule"])
+    def test_only_bots_is_an_error(self, env, members, command):
+        a, b = members
+        a.bot = b.bot = True
+        kwargs = dict(event_name="Game Night", guild=env.guild, text_channel=env.text_channel,
+                      voice_channel=env.voice_channel, scheduler_id=a.id, usernames=[b.id])
+        if command == "create":
+            kwargs["start_time"] = at(1, 20)
+        with pytest.raises(Exception, match="at least one person, not just bots"):
+            run(getattr(env.sched, command)(**kwargs))
+        assert env.sched.client.events == []
 
 
 class TestPromptForParticipants:

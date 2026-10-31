@@ -18,8 +18,8 @@ def date_string(days: int, with_year: bool = True) -> str:
     return day.strftime("%Y-%m-%d") if with_year else day.strftime("%m-%d")
 
 
-def make_participant(**kwargs) -> Participant:
-    member = SimpleNamespace(id=1, name="tester", nick=None)
+def make_participant(bot=False, **kwargs) -> Participant:
+    member = SimpleNamespace(id=1, name="tester", nick=None, bot=bot)
     return Participant(member=member, **kwargs)
 
 
@@ -272,13 +272,26 @@ class TestAvailabilityEditing:
         assert blocks(participant) == [(at(2, 8), at(2, 10))]
         assert not participant.full_availability_flag
 
+    def test_bot_has_always_answered(self):
+        participant = make_participant(bot=True)
+        assert participant.answered
+        participant.answered = False
+        assert participant.answered
+        assert participant.availability_string == "[Bot] Always available\n"
+
+    def test_person_answered_follows_setter(self):
+        participant = make_participant()
+        assert not participant.answered
+        participant.answered = True
+        assert participant.answered
+
     def test_set_no_availability_clears_all(self):
         participant = make_participant(availability=[TimeBlock(at(1, 8), at(1, 10))])
         participant.set_no_availability()
         assert participant.availability == []
 
     def test_dict_round_trip(self):
-        member = SimpleNamespace(id=1, name="tester", nick=None)
+        member = SimpleNamespace(id=1, name="tester", nick=None, bot=False)
         participant = Participant(member=member, availability=[TimeBlock(at(1, 8), at(1, 10))],
                                   answered=True, note="hi",
                                   removed_times=[RemovedTime("other", TimeBlock(at(2, 8), at(2, 9)), None)])

@@ -26,6 +26,16 @@ class TestCompareAvailabilities:
         assert event.start_times == [at(1, 20)]
         assert event.ready_to_create
 
+    def test_bots_are_always_available(self, env):
+        a = env.make_participant("a", [TimeBlock(at(1, 18), at(1, 23))])
+        bot = env.make_participant("bot")
+        bot.member.bot = True
+        event = env.make_event([a, bot])
+        assert event.everyone_answered
+        event.compare_availabilities()
+        assert event.start_times == [at(1, 18)]
+        assert event.ready_to_create
+
     def test_no_common_block(self, env):
         a = env.make_participant("a", [TimeBlock(at(1, 8), at(1, 10))])
         b = env.make_participant("b", [TimeBlock(at(1, 12), at(1, 14))])

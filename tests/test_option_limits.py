@@ -14,7 +14,7 @@ def option_limits(command):
 class TestSlashCommandLimits:
     def test_create(self, sched):
         assert option_limits(sched.create_command) == {
-            "event_name": (1, 100), "location": (1, 100), "duration": (0, 1440)}
+            "event_name": (1, 100), "location": (1, 100), "duration": (1, 1440)}
 
     def test_schedule(self, sched):
         assert option_limits(sched.schedule_command) == {
@@ -50,11 +50,22 @@ class TestValidateEventOptions:
         with pytest.raises(Exception, match=match):
             sched.validate_event_options(**kwargs)
 
+    def test_min_duration(self, sched):
+        sched.validate_event_options(duration=1, min_duration=1)
+        with pytest.raises(Exception, match="Duration must be 1 to 1440 minutes"):
+            sched.validate_event_options(duration=0, min_duration=1)
+
     def test_schedule_rejects_bad_timeout(self, env):
         # Covers the json packet path, which skips slash command limits
         with pytest.raises(Exception, match="Timeout"):
             run(env.sched.schedule(event_name="packet", guild=env.guild, text_channel=env.text_channel,
                                    voice_channel=env.voice_channel, timeout_days=0))
+        assert env.sched.client.events == []
+
+    def test_create_rejects_zero_duration(self, env):
+        with pytest.raises(Exception, match="Duration must be 1 to 1440 minutes"):
+            run(env.sched.create(event_name="packet", guild=env.guild, text_channel=env.text_channel,
+                                 voice_channel=env.voice_channel, start_time="2200", duration=0))
         assert env.sched.client.events == []
 
     def test_create_rejects_bad_duration(self, env):
@@ -65,7 +76,7 @@ class TestValidateEventOptions:
 
 
 class TestScheduleAgainModal:
-    def submit(self, env, monkeypatch, duration):
+    def submit(self, env, monkeypatch, duration, start_time=""):
         event = env.make_event([env.make_participant("a")])
         calls = []
 
@@ -73,11 +84,12 @@ class TestScheduleAgainModal:
             calls.append(kwargs)
 
         monkeypatch.setattr(env.sched, "schedule", fake_schedule)
+        monkeypatch.setattr(env.sched, "create", fake_schedule)
 
         async def go():
             modal = env.sched.ScheduleAgainModal(event=event, title="Schedule Again")
             modal.event_duration._value = duration
-            modal.event_start_time._value = ""
+            modal.event_start_time._value = start_time
             interaction = FakeInteraction(SimpleNamespace(id=1, name="a", nick=None))
             await modal.on_submit(interaction)
             return modal, interaction
@@ -98,3 +110,12 @@ class TestScheduleAgainModal:
     def test_blank_duration_means_automatic(self, env, monkeypatch):
         _, _, calls = self.submit(env, monkeypatch, "")
         assert calls[0]["duration"] == 0
+
+    @pytest.mark.parametrize("duration", ["", "0"])
+    def test_automatic_duration_with_start_time_uses_default(self, env, monkeypatch, duration):
+        _, _, calls = self.submit(env, monkeypatch, duration, start_time="2200")
+        assert calls[0]["duration"] == env.sched.DEFAULT_EVENT_DURATION
+
+    def test_duration_with_start_time_is_kept(self, env, monkeypatch):
+        _, _, calls = self.submit(env, monkeypatch, "45", start_time="2200")
+        assert calls[0]["duration"] == 45

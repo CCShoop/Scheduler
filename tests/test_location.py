@@ -319,23 +319,25 @@ class TestCreateAndSchedule:
 
     def test_schedule_from_dict_with_location(self, env, monkeypatch):
         a = env.make_participant("a")
+        a.member.bot = False
         monkeypatch.setattr(env.sched.client, "get_guild", lambda guild_id: env.guild)
         run(env.sched.client.schedule_from_dict({
             "name": "Board Games", "guild_id": env.guild.id, "text_channel_id": env.text_channel.id,
             "location": "123 Main St", "scheduler_id": a.member.id, "image_url": None,
-            "include_exclude": "INCLUDE", "usernames": [a], "roles": None, "duration": 0, "multi_event": False,
+            "include_exclude": "INCLUDE", "usernames": [a.member.id], "roles": None, "duration": 0, "multi_event": False,
         }))
         (event,) = env.sched.client.events
         assert event.location == "123 Main St"
 
     def test_create_packet_makes_event_at_start_time(self, env, monkeypatch):
         a = env.make_participant("a")
+        a.member.bot = False
         monkeypatch.setattr(env.sched.client, "get_guild", lambda guild_id: env.guild)
         start = at(1, 19)
         run(env.sched.client.handle_packet({
             "type": "create", "name": "Range", "guild_id": env.guild.id, "text_channel_id": env.text_channel.id,
             "location": "123 Main St", "scheduler_id": a.member.id, "start_time": start.isoformat(),
-            "image_url": None, "include_exclude": "INCLUDE", "usernames": [a], "roles": None, "duration": 60,
+            "image_url": None, "include_exclude": "INCLUDE", "usernames": [a.member.id], "roles": None, "duration": 60,
         }))
         (event,) = env.sched.client.events
         assert event.start_times == [start] and event.location == "123 Main St"
@@ -362,6 +364,27 @@ class TestPersistence:
         loaded = run(env.sched.Event.from_dict(data))
         assert loaded.location == "123 Main St"
         assert loaded.voice_channel is None
+
+    def test_scheduler_who_is_not_a_participant_is_restored(self, env, monkeypatch):
+        a = env.make_participant("a")
+        bot = env.make_participant("bot")
+        env.text_channel.members.remove(bot.member)
+        event = make_external_event(env, participants=[a], scheduler=bot)
+        data = event.to_dict()
+        env.sched.client.events.remove(event)
+        monkeypatch.setattr(env.sched.client, "get_guild", lambda guild_id: env.guild)
+        loaded = run(env.sched.Event.from_dict(data))
+        assert loaded.scheduler.member is bot.member
+        assert [participant.member for participant in loaded.participants] == [a.member]
+
+    def test_scheduler_who_is_a_participant_is_restored_as_one(self, env, monkeypatch):
+        a = env.make_participant("a")
+        event = make_external_event(env, participants=[a], scheduler=a)
+        data = event.to_dict()
+        env.sched.client.events.remove(event)
+        monkeypatch.setattr(env.sched.client, "get_guild", lambda guild_id: env.guild)
+        loaded = run(env.sched.Event.from_dict(data))
+        assert loaded.scheduler is loaded.participants[0]
 
     def test_old_data_without_location_loads_voice_channel(self, env, monkeypatch):
         event = env.make_event([env.make_participant("a")])

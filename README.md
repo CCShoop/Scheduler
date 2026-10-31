@@ -117,7 +117,7 @@ This is the main command. The bot posts an availability message in the channel a
 | `multi_event`     | No  | Creates one event on each day everyone is available, instead of a single event. |
 | `timeout`         | No  | The number of days to wait for responses before giving up, from 1 to 30. The default is 7. |
 
-**Who gets invited:** You're always a participant. If you don't set `include_exclude`, everyone who can see the text channel is invited. Bots are never invited, and the users dropdown doesn't list them or you. If you don't choose any users or roles within 5 minutes, the command is cancelled.
+**Who gets invited:** You're always a participant. If you don't set `include_exclude`, everyone who can see the text channel is invited. Bots are only invited if you pick one from the users dropdown. In smaller channels the dropdown doesn't list bots or you. If you don't choose any users or roles within 5 minutes, the command is cancelled.
 
 **Examples:**
 
@@ -150,7 +150,7 @@ Use this command when you already know the time. It takes the same options as `/
 | Option       | Required | Description |
 |--------------|----------|-------------|
 | `start_time` | Yes | A time such as `2200`, or a full ISO date and time such as `2026-10-04T22:00`. |
-| `duration`   | No  | The length in minutes, up to 1440 (24 hours). The default is 30. |
+| `duration`   | No  | The length in minutes, from 1 to 1440 (24 hours). The default is 30. |
 
 ### Other commands
 
@@ -243,7 +243,7 @@ If an event hasn't started by an hour after its scheduled end time, the bot canc
 When an event ends or is cancelled, the bot shows a **Schedule Again** button for about a week. It reuses the location and participants, and lets you change the name, duration, image URL, and start time:
 
 - Leave **Start Time** blank to start collecting availability again, as with `/schedule`.
-- Enter a **Start Time** to create the event at that time, as with `/create`.
+- Enter a **Start Time** to create the event at that time, as with `/create`. A **Duration** of `0` or blank uses 30 minutes, since an automatic length only works when collecting availability.
 
 Click **Forget** to dismiss the button.
 
@@ -262,59 +262,126 @@ Only the user set as `OWNER_ID` can run these. Send them to the bot as direct me
 
 ## Scheduling from another program
 
-The bot listens for TCP connections on `HOST:PORT` from `.env`. Send a JSON object whose `type` says what to do.
+Another program, such as your own bot, can start events by sending JSON to the bot over TCP. The bot listens on `HOST:PORT` from `.env`. Send one JSON object per request, and the bot replies with a short text message.
 
-### `"type": "schedule"`: find a time that works for everyone
+The server has no authentication. Keep `HOST` set to `127.0.0.1`, or put it behind a firewall.
 
-Starts scheduling an event, just as `/schedule` would:
+### Packet types
 
-```json
-{
-  "type": "schedule",
-  "name": "Game Night",
-  "guild_id": 123456789012345678,
-  "text_channel_id": 123456789012345678,
-  "voice_channel_id": 123456789012345678,
-  "location": null,
-  "scheduler_id": 123456789012345678,
-  "image_url": null,
-  "include_exclude": "INCLUDE",
-  "usernames": null,
-  "roles": null,
-  "duration": 0,
-  "multi_event": false
-}
-```
+The `type` field says what to do:
 
-A packet without a `type` is treated as `schedule`.
+| `type` | Does the same as | Extra fields |
+|--------|------------------|--------------|
+| `"schedule"` | [`/schedule`](#schedule-find-a-time-that-works-for-everyone): asks everyone for their availability, then creates the event when a time works | `multi_event` |
+| `"create"` | [`/create`](#create-create-an-event-at-a-time-you-choose): creates the event right away at `start_time` | `start_time` |
 
-### `"type": "create"`: create an event at a time you choose
+A packet without a `type` is treated as `"schedule"`.
 
-Creates the event right away, just as `/create` would:
+### Fields
+
+Every field must be present, though some can be `null`. The exceptions are `type`, `location`, `voice_channel_id` and `scheduler_id`, which can be left out.
+
+Discord ids can be numbers or strings of digits. Use strings if your program is in JavaScript, since it can't hold ids as numbers without losing digits.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | The event's name, up to 100 characters. It can't match another event the bot is tracking. |
+| `guild_id` | id | The server to hold the event in. The bot must be in it. |
+| `text_channel_id` | id | The text channel for the bot's messages. Who can see this channel decides who can be invited. |
+| `voice_channel_id` | id or `null` | A voice or stage channel to hold the event in. Can't be combined with `location`. |
+| `location` | string or `null` | Works like the `/schedule` `location` option: a voice or stage channel's name puts the event in that channel, and any other text, up to 100 characters, is an external location such as an address. Without `location` or `voice_channel_id`, the event uses the server's first voice channel. |
+| `scheduler_id` | id or `null` | The person the event is for, such as whoever made a reservation. Leave it out or set it to `null` when nobody in particular asked for the event. See [The scheduler](#the-scheduler). |
+| `image_url` | string or `null` | An image for the Discord event and the bot's messages. |
+| `include_exclude` | string or `null` | `"INCLUDE"` or `"EXCLUDE"`, in any case. `null` means `"INCLUDE"`. Decides whether `usernames` and `roles` are the people invited or the people left out. |
+| `usernames` | see below | Usernames or user ids to include or exclude. |
+| `roles` | see below | Role names or role ids to include or exclude. Role names ignore capitalization. |
+| `duration` | number | The length in minutes, up to 1440 (24 hours). For `"schedule"`, `0` sets the length to however long everyone is available. For `"create"`, it must be at least 1. |
+| `multi_event` | `true` or `false` | `"schedule"` only. Creates one event on each day everyone is available, instead of a single event. |
+| `start_time` | string | `"create"` only. A full ISO date and time, such as `"2026-10-11T19:00:00-04:00"` (an offset is recommended, since times without one are read as the bot's local time), or a time such as `"2200"`. A time already past moves to the next day. |
+
+`usernames` and `roles` each take `null`, a comma separated string (`"alice, 123456789012345678"`), a single id, or a list of names and ids (`["alice", 123456789012345678]`).
+
+Packets can't set `/schedule`'s `timeout` option, so `"schedule"` packets always wait up to 7 days for responses.
+
+### Who gets invited
+
+Only members who can see the text channel can be invited. Anyone in `usernames` who isn't in the text channel is skipped without an error, but a role that doesn't exist is an error.
+
+Bots are only invited when they're listed in `usernames`. Being the scheduler, "everyone" and `roles` don't invite them, and this bot never invites itself. Bots can't enter availability, so they count as available at any time, and an event starts in its voice channel without waiting for them to join.
+
+| `usernames` | `roles` | Who's invited |
+|-------------|---------|---------------|
+| `null` | `null` or empty | Everyone in the text channel. |
+| names or ids | `null` or empty | With `INCLUDE`, only those people. With `EXCLUDE`, everyone except them. |
+| `null` or empty | role names or ids | With `INCLUDE`, only people with one of the roles. With `EXCLUDE`, everyone without any of them. |
+| names or ids | role names or ids | The people in `usernames` are always invited, whatever `include_exclude` says. `roles` then decides everyone else, as in the row above. |
+| empty (`""` or `[]`) | `null` or empty | With `INCLUDE`, only the scheduler, or everyone if there's no scheduler or it's a bot. With `EXCLUDE`, everyone. |
+
+A person as the scheduler is also invited on top of this. A bot scheduler isn't. If no one ends up invited, or only bots are, the packet is rejected.
+
+### The scheduler
+
+`scheduler_id` is who the bot's messages say the event was "Scheduled by". It's optional, so a packet can come from any of these:
+
+- **Someone owns the event**, such as a person who reserved a range lane. Send their id as `scheduler_id`. They're shown as the scheduler and always invited, without being in `usernames` or `roles` and even if those would exclude them. The packet is rejected if they can't see the text channel or the event's voice channel, including the server's first voice channel when there's no `location`, so nobody can put an event somewhere they can't go. An external location isn't checked.
+- **A bot scheduled it**, such as one announcing an episode release. Send the bot's id as `scheduler_id` to show it as the scheduler. It isn't invited unless it's also listed in `usernames`. It must be able to see the text channel, and also the voice channel if it's invited.
+- **No scheduler.** Leave out `scheduler_id` or set it to `null`, and the bot's messages don't show one.
+
+Either way, only `usernames` and `roles` decide who else is invited. An id that isn't in the server is rejected.
+
+### Example: an event someone owns
+
+Someone reserved a lane, and everyone with the Range role is invited along with them:
 
 ```json
 {
   "type": "create",
   "name": "Range Night",
-  "guild_id": 123456789012345678,
-  "text_channel_id": 123456789012345678,
-  "voice_channel_id": null,
+  "guild_id": "123456789012345678",
+  "text_channel_id": "123456789012345678",
   "location": "123 Main St",
-  "scheduler_id": 123456789012345678,
+  "scheduler_id": "234567890123456789",
   "start_time": "2026-10-11T19:00:00-04:00",
   "image_url": null,
   "include_exclude": "INCLUDE",
-  "usernames": "123456789012345678, 234567890123456789",
-  "roles": null,
+  "usernames": null,
+  "roles": "Range",
   "duration": 60
 }
 ```
 
-`start_time` takes the same formats as `/create`: a full ISO date and time (an offset such as `-04:00` is recommended), or a time such as `2200`.
+To invite only them, set `usernames` to `""`. To invite them and everyone *without* the role, set `include_exclude` to `"EXCLUDE"`.
 
-### Both types
+### Example: an event a bot scheduled
 
-Every field is required except `location` and `voice_channel_id`. `usernames` and `roles` each take a comma separated string or a list of names or ids. `include_exclude` decides whether those people are the only ones invited or the ones left out, and `roles` takes priority over `usernames` when both are set. Set both to `null` to invite everyone in the channel. Set `location` to a string, such as an address, to hold the event there instead of in a voice channel. Without either one, the event uses the server's first voice channel. The bot replies `valid` if the request was accepted, `invalid JSON` if the message couldn't be parsed, or `error: <message>` if scheduling failed or the `type` is unknown.
+A new episode is out, so the episode bot asks everyone with the Anime role when they can watch it together. The bot is shown as the scheduler but isn't invited:
+
+```json
+{
+  "type": "schedule",
+  "name": "Episode 12",
+  "guild_id": "123456789012345678",
+  "text_channel_id": "123456789012345678",
+  "location": "Watch Party",
+  "scheduler_id": "876543210987654321",
+  "image_url": "https://example.com/episode-12.png",
+  "include_exclude": "INCLUDE",
+  "usernames": null,
+  "roles": ["Anime"],
+  "duration": 0,
+  "multi_event": false
+}
+```
+
+Here `"location": "Watch Party"` names a voice channel. Leave `roles` as `null` too to invite everyone in the text channel, or leave out `scheduler_id` to show no scheduler.
+
+### Replies
+
+| Reply | Meaning |
+|-------|---------|
+| `valid` | The event was created, or scheduling started. |
+| `invalid JSON` | The message couldn't be read as JSON. |
+| `error: <message>` | The packet was rejected and nothing was created. The message says why, for example `error: missing field(s): roles, duration`, `error: "guild_id" must be an id, as a number or a string of digits`, `error: text channel 123 not found in My Server`, `error: the scheduler can't see voice channel General`, `error: An event needs at least one person, not just bots.`, or `error: No one was found to invite to the event.` |
 
 Example in Python:
 
@@ -325,8 +392,6 @@ with socket.create_connection(("127.0.0.1", 5000)) as s:
     s.sendall(json.dumps(payload).encode())
     print(s.recv(1024).decode())
 ```
-
-The server has no authentication. Keep `HOST` set to `127.0.0.1`, or put it behind a firewall.
 
 ---
 

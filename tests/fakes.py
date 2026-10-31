@@ -151,6 +151,9 @@ class FakeTextChannel:
         self.messages[message.id] = message
         return message
 
+    def permissions_for(self, member):
+        return SimpleNamespace(view_channel=member in self.members)
+
     async def fetch_message(self, message_id):
         if message_id not in self.messages or self.messages[message_id].deleted:
             raise LookupError(f"Unknown message {message_id}")
@@ -191,8 +194,8 @@ async def noop(*args, **kwargs):
     pass
 
 
-def make_member(member_id, name):
-    return SimpleNamespace(id=member_id, name=name, nick=None, avatar=None, mention=f"<@{member_id}>")
+def make_member(member_id, name, bot=False):
+    return SimpleNamespace(id=member_id, name=name, nick=None, avatar=None, mention=f"<@{member_id}>", bot=bot)
 
 
 def run(coro):

@@ -373,7 +373,7 @@ class Participant:
                  blocked_until: Optional[datetime] = None) -> None:
         self.member = member
         self.availability = availability or []
-        self.answered = answered
+        self._answered = answered
         self.subscribed = subscribed
         self.unavailable = unavailable
         self.removed_times = removed_times or []
@@ -827,6 +827,19 @@ class Participant:
         self.removed_times = new_removed_times
 
     @property
+    def answered(self) -> bool:
+        """Whether the participant has responded. Bots can't enter availability, so they always have."""
+        return self._answered or self.is_bot
+
+    @answered.setter
+    def answered(self, answered: bool) -> None:
+        self._answered = answered
+
+    @property
+    def is_bot(self) -> bool:
+        return self.member.bot
+
+    @property
     def name(self) -> str:
         return self.member.name
 
@@ -848,6 +861,8 @@ class Participant:
         response: :class:`str`
             The participant's availability string
         """
+        if self.is_bot:
+            return "[Bot] Always available\n"
         self.removed_times.sort(key=lambda rt: rt.start_time)
         removed_index = 0
         response = ''

@@ -909,6 +909,15 @@ class TestUpdateWhileCreated:
         assert event.location == "Park"
         assert event.voice_channel is None
 
+    def test_bots_alone_do_not_keep_an_event_going(self, env):
+        a = env.make_participant("a")
+        bot = env.make_participant("bot")
+        bot.member.bot = True
+        a.subscribed = False
+        event = env.make_event([a, bot])
+        run(event.cancel_if_everyone_unsubscribed())
+        assert event.cancelled
+
     def test_unsubscribed_participant_joining_voice_channel_is_resubscribed(self, env):
         a = env.make_participant("a")
         b = env.make_participant("b")
@@ -1021,6 +1030,16 @@ class TestUpdateWhileCreated:
         event, _ = make_created_event(env, reminder_flag=True)
         event.start_times[0] = env.sched.now() + timedelta(minutes=5)
         env.voice_channel.members.append(event.participants[0].member)
+        run(event.update())
+        assert event.started
+
+    def test_starts_without_waiting_for_bots(self, env):
+        a = env.make_participant("a", [TimeBlock(at(1, 18), at(2, 23))])
+        bot = env.make_participant("bot")
+        bot.member.bot = True
+        event, _ = make_created_event(env, participants=[a, bot], reminder_flag=True)
+        event.start_times[0] = env.sched.now() + timedelta(minutes=5)
+        env.voice_channel.members.append(a.member)
         run(event.update())
         assert event.started
 
