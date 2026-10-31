@@ -314,7 +314,7 @@ Creates the event right away, just as `/create` would:
 
 ### Both types
 
-Every field is required except `location` and `voice_channel_id`. Set `location` to a string, such as an address, to hold the event there instead of in a voice channel. Without either one, the event uses the server's first voice channel. The bot replies `valid` if the request was accepted, `invalid JSON` if the message couldn't be parsed, or `error: <message>` if scheduling failed or the `type` is unknown.
+Every field is required except `location` and `voice_channel_id`. `usernames` and `roles` each take a comma separated string or a list of names or ids. `include_exclude` decides whether those people are the only ones invited or the ones left out, and `roles` takes priority over `usernames` when both are set. Set both to `null` to invite everyone in the channel. Set `location` to a string, such as an address, to hold the event there instead of in a voice channel. Without either one, the event uses the server's first voice channel. The bot replies `valid` if the request was accepted, `invalid JSON` if the message couldn't be parsed, or `error: <message>` if scheduling failed or the `type` is unknown.
 
 Example in Python:
 

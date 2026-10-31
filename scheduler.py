@@ -4634,7 +4634,7 @@ def get_participants_from_interaction(event_name: str,
                                       interaction: Interaction,
                                       include_exclude: Optional[INCLUDE_EXCLUDE] = None,
                                       usernames: Optional[str] = None,
-                                      roles: Optional[str] = None) -> list[Participant]:
+                                      roles: Optional[str] or Optional[list[str]] = None) -> list[Participant]:
     """
     Wrapper function for getting participants from a channel of an interaction.
     """
@@ -4653,7 +4653,7 @@ def get_participants_from_channel(event_name: str,
                                   user: Optional[User] = None,
                                   include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
                                   usernames: Optional[str] = None,
-                                  roles: Optional[str] = None):
+                                  roles: Optional[str] or Optional[list[str]] = None):
     """
     Gets participants for an event from a channel using the included guidelines.
 
@@ -4673,8 +4673,8 @@ def get_participants_from_channel(event_name: str,
         REQUIRES usernames or roles.
     usernames: :class:`Optional[str]`
         The comma separated usernames or ids to include/exclude.
-    roles: :class:`Optional[str]`
-        A comma separated list of roles to include/exclude.
+    roles: :class:`Optional[str]` or :class:`Optional[list[str]]`
+        The comma separated role names or ids, or a list of them, to include/exclude.
 
     Returns
     -------
@@ -4692,7 +4692,9 @@ def get_participants_from_channel(event_name: str,
     # Add users meeting role criteria
     if roles and roles != '':
         try:
-            role_names = [role.strip() for role in roles.split(',') if role.strip()]
+            if type(roles) is str:
+                roles = roles.split(',')
+            role_names = [role.strip() for role in roles if role.strip()]
             roles = [utils.find(lambda r: r.name.lower() == role_name.lower() or str(r.id) == role_name, guild.roles) for role_name in role_names]
         except Exception as e:
             raise Exception(f'[{event_name}] Failed to parse role(s): {e}')
@@ -5059,7 +5061,7 @@ async def create(event_name: str,
                  image_url: Optional[str] = None,
                  include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
                  usernames: Optional[str] or Optional[list[str]] or Optional[list[int]] or Optional[list[Participant]] = None,
-                 roles: Optional[str] = None,
+                 roles: Optional[str] or Optional[list[str]] = None,
                  duration: Optional[int] = DEFAULT_EVENT_DURATION,
                  multi_event: Optional[bool] = False,
                  location: Optional[str] = None):
@@ -5089,8 +5091,8 @@ async def create(event_name: str,
         REQUIRES usernames or roles.
     usernames: :class:`Optional[str]`
         Comma separated list of usernames or ids to include/exclude.
-    roles: :class:`Optional[str]`
-        Comma separated list of roles to include/exclude.
+    roles: :class:`Optional[str]` or :class:`Optional[list[str]]`
+        Comma separated list of role names or ids, or a list of them, to include/exclude.
     duration: :class:`Optional[int]`
         The duration of the event in minutes.
         Default: 30
@@ -5173,7 +5175,9 @@ async def create(event_name: str,
         participants = get_participants_from_channel(event_name=event_name,
                                                      guild=guild,
                                                      channel=text_channel,
-                                                     user=scheduler_user)
+                                                     user=scheduler_user,
+                                                     include_exclude=include_exclude,
+                                                     roles=roles)
     else:
         logger.error(f"Invalid usernames type in schedule: {type(usernames)}")
         raise Exception(f"This is a code error, please inform the developer!\nInvalid usernames type in create: {type(usernames)}")
@@ -5313,7 +5317,7 @@ async def schedule(event_name: str,
                    image_url: Optional[str] = None,
                    include_exclude: Optional[INCLUDE_EXCLUDE] = INCLUDE,
                    usernames: Optional[str] = None,
-                   roles: Optional[str] = None,
+                   roles: Optional[str] or Optional[list[str]] = None,
                    duration: Optional[int] = 0,
                    multi_event: Optional[bool] = False,
                    timeout_days: Optional[int] = DEFAULT_EVENT_TIMEOUT_DAYS,
@@ -5342,8 +5346,8 @@ async def schedule(event_name: str,
         REQUIRES usernames or roles.
     usernames: :class:`Optional[str]` or :class:`Optional[list[str]]` or :class:`Optional[list[int]]` or :class:`Optional[list[Participant]]`
         Comma separated list of usernames or ids to include/exclude.
-    roles: :class:`Optional[str]`
-        Comma separated list of roles to include/exclude.
+    roles: :class:`Optional[str]` or :class:`Optional[list[str]]`
+        Comma separated list of role names or ids, or a list of them, to include/exclude.
     duration: :class:`Optional[int]`
         The duration of the event in minutes.
         Default: 0
@@ -5415,7 +5419,9 @@ async def schedule(event_name: str,
         participants = get_participants_from_channel(event_name=event_name,
                                                      guild=guild,
                                                      channel=text_channel,
-                                                     user=scheduler_user)
+                                                     user=scheduler_user,
+                                                     include_exclude=include_exclude,
+                                                     roles=roles)
     else:
         logger.error(f"Invalid usernames type in schedule: {type(usernames)}")
         raise Exception(f"This is a code error, please inform the developer!\nInvalid usernames type in schedule: {type(usernames)}")

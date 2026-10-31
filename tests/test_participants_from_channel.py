@@ -158,9 +158,20 @@ class TestRoles:
     def test_without_scheduler(self, channel_env):
         assert channel_env.get(user=None, roles="Gamers") == ["host", "alice"]
 
-    def test_rejects_unparseable_roles(self, channel_env):
+    def test_accepts_a_list(self, channel_env):
+        gamers, mods = channel_env.guild.roles
+        assert channel_env.get(roles=[" gamers ", str(mods.id)]) == ["host", "alice", "bob"]
+
+    def test_empty_list_adds_everyone(self, channel_env):
+        assert channel_env.get(roles=[]) == ["host", "alice", "bob", "carol"]
+
+    def test_rejects_other_types(self, channel_env):
         with pytest.raises(Exception, match="Failed to parse role"):
-            channel_env.get(roles=["Gamers"])
+            channel_env.get(roles=42)
+
+    def test_rejects_non_string_entries(self, channel_env):
+        with pytest.raises(Exception, match="Failed to parse role"):
+            channel_env.get(roles=[42])
 
 
 class TestCreateWithUsernameList:
@@ -186,6 +197,41 @@ class TestCreateWithUsernameList:
         event = run(env.sched.schedule(event_name="Game Night", guild=env.guild, text_channel=env.text_channel,
                                        voice_channel=env.voice_channel, scheduler_id=a.id, usernames=[to_entry(b)]))
         assert [participant.member for participant in event.participants] == [a, b]
+
+
+class TestCreateWithRolesOnly:
+    """JSON packets can filter by roles alone, with usernames null or empty."""
+
+    @pytest.fixture
+    def members(self, env):
+        gamers = SimpleNamespace(id=next_id(), name="Gamers")
+        env.guild.roles = [gamers]
+        a, b, c = env.make_participant("a"), env.make_participant("b"), env.make_participant("c")
+        for member in env.text_channel.members:
+            member.bot = False
+            member.roles = []
+        b.member.roles = [gamers]
+        return a.member, b.member, c.member
+
+    @pytest.mark.parametrize("usernames", [None, "", []])
+    @pytest.mark.parametrize("roles", ["Gamers", ["Gamers"]])
+    @pytest.mark.parametrize("include_exclude, expected", [("INCLUDE", "ab"), ("EXCLUDE", "ac")])
+    def test_create(self, env, members, usernames, roles, include_exclude, expected):
+        a = members[0]
+        event = run(env.sched.create(event_name="Game Night", guild=env.guild, text_channel=env.text_channel,
+                                     voice_channel=env.voice_channel, start_time=at(1, 20), scheduler_id=a.id,
+                                     include_exclude=include_exclude, usernames=usernames, roles=roles))
+        assert "".join(participant.member.name for participant in event.participants) == expected
+
+    @pytest.mark.parametrize("usernames", [None, "", []])
+    @pytest.mark.parametrize("roles", ["Gamers", ["Gamers"]])
+    @pytest.mark.parametrize("include_exclude, expected", [("INCLUDE", "ab"), ("EXCLUDE", "ac")])
+    def test_schedule(self, env, members, usernames, roles, include_exclude, expected):
+        a = members[0]
+        event = run(env.sched.schedule(event_name="Game Night", guild=env.guild, text_channel=env.text_channel,
+                                       voice_channel=env.voice_channel, scheduler_id=a.id,
+                                       include_exclude=include_exclude, usernames=usernames, roles=roles))
+        assert "".join(participant.member.name for participant in event.participants) == expected
 
 
 class TestPromptForParticipants:
