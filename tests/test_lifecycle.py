@@ -134,7 +134,8 @@ class TestStart:
         now = env.sched.now()
         soon_start = now + timedelta(minutes=30)
         soon_guild_event = FakeScheduledEvent(soon_start)
-        soon = env.make_event([env.make_participant("b")], created=True, start_times=[soon_start],
+        # Shares a participant, since events at the same external location can overlap
+        soon = env.make_event([Participant(member=event.participants[0].member)], created=True, start_times=[soon_start],
                               scheduled_events=[soon_guild_event], duration=timedelta(hours=1),
                               voice_channel=None, location="the park")
         soon.event_buttons = fake_event_buttons()

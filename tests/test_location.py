@@ -108,19 +108,19 @@ class TestExternalEvent:
         assert env.guild.created[0].kwargs["channel"] is env.voice_channel
         assert "location" not in env.guild.created[0].kwargs
 
-    def test_same_location_ignores_case(self, env):
+    def test_external_events_never_share_a_voice_channel(self, env):
         event = make_external_event(env)
         other = make_external_event(env, location="123 main st")
         voice = env.make_event([env.make_participant("b")])
-        assert event.same_location(other)
-        assert not event.same_location(voice)
+        assert not event.shares_voice_channel(other)
+        assert not event.shares_voice_channel(voice)
 
-    def test_avoids_created_events_at_the_same_location(self, env):
-        occupying = make_external_event(env, location="123 MAIN ST", participants=[env.make_participant("b")],
-                                        start_times=[at(1, 18)], created=True)
+    def test_overlaps_created_events_at_the_same_location(self, env):
+        make_external_event(env, location="123 MAIN ST", participants=[env.make_participant("b")],
+                            start_times=[at(1, 18)], created=True)
         event = make_external_event(env)
         event.compare_availabilities()
-        assert event.start_times == [occupying.start_times[0] + occupying.duration]
+        assert event.start_times == [at(1, 18)]
 
     def test_voice_channel_events_do_not_block_external_events(self, env):
         env.make_event([env.make_participant("b")], start_times=[at(1, 18)], created=True)
@@ -151,12 +151,22 @@ class TestExternalLifecycle:
         run(event.update())
         assert not event.started
 
-    def test_does_not_start_while_another_event_is_running_there(self, env):
+    def test_starts_while_another_event_is_running_there(self, env):
         event, _ = make_created_external_event(env, env.sched.now(), reminder_flag=True)
-        make_external_event(env, participants=[env.make_participant("b")], created=True, started=True,
-                            start_times=[env.sched.now()])
+        running = make_external_event(env, participants=[env.make_participant("b")], created=True, started=True,
+                                      start_times=[env.sched.now()])
         run(event.update())
-        assert not event.started
+        assert event.started
+        assert running.started and not running.ended
+
+    def test_starting_does_not_push_back_events_at_the_same_location(self, env):
+        later_start = env.sched.now() + timedelta(minutes=30)
+        later = make_external_event(env, participants=[env.make_participant("b")], created=True,
+                                    start_times=[later_start], scheduled_events=[FakeScheduledEvent(later_start)])
+        event, _ = make_created_external_event(env, env.sched.now(), reminder_flag=True)
+        run(event.update())
+        assert event.started
+        assert later.start_times == [later_start]
 
     def test_sends_reminder_even_if_everyone_is_in_a_voice_channel(self, env):
         event, _ = make_created_external_event(env, env.sched.now() + timedelta(minutes=5))
@@ -286,12 +296,20 @@ class TestCreateAndSchedule:
         assert event.location == "123 Main St"
         assert env.guild.created[0].kwargs["location"] == "123 Main St"
 
-    def test_create_rejects_overlap_at_the_same_location(self, env):
+    def test_create_allows_overlap_at_the_same_location(self, env):
         make_external_event(env, participants=[env.make_participant("b")], start_times=[at(1, 20)], created=True)
         a = env.make_participant("a")
-        with pytest.raises(Exception, match="same location"):
-            run(env.sched.create(event_name="Board Games", guild=env.guild, text_channel=env.text_channel,
-                                 voice_channel=None, location="123 main st", start_time=at(1, 21),
+        event = run(env.sched.create(event_name="Board Games", guild=env.guild, text_channel=env.text_channel,
+                                     voice_channel=None, location="123 main st", start_time=at(1, 21),
+                                     scheduler_id=a.member.id, usernames=[a]))
+        assert event in env.sched.client.events
+
+    def test_create_rejects_overlap_in_the_same_voice_channel(self, env):
+        env.make_event([env.make_participant("b")], start_times=[at(1, 20)], created=True)
+        a = env.make_participant("a")
+        with pytest.raises(Exception, match="same voice channel"):
+            run(env.sched.create(event_name="Game Night", guild=env.guild, text_channel=env.text_channel,
+                                 voice_channel=env.voice_channel, start_time=at(1, 21),
                                  scheduler_id=a.member.id, usernames=[a]))
 
     def test_create_allows_overlap_with_voice_channel_event(self, env):

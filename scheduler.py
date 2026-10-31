@@ -528,7 +528,7 @@ def get_location_key(voice_channel: Optional[VoiceChannel], location: Optional[s
     return ("voice", voice_channel.id if voice_channel is not None else None)
 
 
-# Held while starting an event, so two events at the same location can't start at once
+# Held while starting an event, so two events in the same voice channel can't start at once
 location_start_locks: dict[tuple, asyncio.Lock] = {}
 
 
@@ -1192,9 +1192,9 @@ class Event:
 
     def get_occupied_timeblocks(self) -> list[TimeBlock]:
         """
-        Gets the time blocks taken by created events in the same location, including every occurrence of a multi event.
+        Gets the time blocks taken by created events in the same voice channel, including every occurrence of a multi event.
         """
-        conflicting_events = [event for event in client.events if event.same_location(self) and event.created]
+        conflicting_events = [event for event in client.events if event.shares_voice_channel(self) and event.created]
         return [
             TimeBlock(start_time=start_time, end_time=start_time + event.scheduled_duration)
             for event in conflicting_events
@@ -1443,7 +1443,7 @@ class Event:
         self.event_buttons.convert()
         await self.update_event_buttons_message()
         # Push back start times of all other events that share
-        # this location to start after the end of this event
+        # this voice channel or participants to start after the end of this event
         buffer_time = timedelta(minutes=EVENT_BUFFER_MINUTES)
         buffered_end = self.start_times[0] + self.duration + buffer_time
         affected_events = []
@@ -1451,16 +1451,16 @@ class Event:
             # A running event has already started, so it can't be pushed back
             if event == self or not event.created or event.started:
                 continue
-            if event.same_location(self) or event.shares_participants(self):
+            if event.shares_voice_channel(self) or event.shares_participants(self):
                 affected_events.append(event)
         for event in sorted(affected_events, key=lambda e: min(e.start_times)):
             if event.start_times[0] < buffered_end:
                 await event.move_first_start_time(buffered_end)
             buffered_end = event.start_times[0] + event.duration + buffer_time
             await event.update_event_buttons_message()
-        # Disable start buttons of events scheduled for the same location
+        # Disable start buttons of events scheduled for the same voice channel
         for event in client.events:
-            if event is not self and event.created and event.same_location(self):
+            if event is not self and event.created and event.shares_voice_channel(self):
                 await event.sync_start_button()
         return True
 
@@ -1564,9 +1564,9 @@ class Event:
             self.event_buttons_message = None
         # Clears started or removes this event, so it no longer blocks its location
         await self.prep_next_scheduled_event()
-        # Re-enable start buttons of events scheduled for the same location
+        # Re-enable start buttons of events scheduled for the same voice channel
         for event in client.events:
-            if event is not self and event.created and event.same_location(self):
+            if event is not self and event.created and event.shares_voice_channel(self):
                 await event.sync_start_button()
         # Restore availability taken by this event, then take it again for any remaining occurrences
         availability_states = get_availability_states()
@@ -2981,7 +2981,7 @@ class Event:
     @property
     def active_event_at_location(self):
         """
-        The different event active at the event's location.
+        The different event active in the event's voice channel.
 
         Returns
         -------
@@ -2991,13 +2991,13 @@ class Event:
         for event in client.events:
             if event is self or not event.started:
                 continue
-            if event.same_location(self):
+            if event.shares_voice_channel(self):
                 return event
         return None
 
     @property
     def location_has_active_event(self) -> bool:
-        """Indicates if the event's location has a different active event in it."""
+        """Indicates if the event's voice channel has a different active event in it."""
         return self.active_event_at_location is not None
 
     @property
@@ -3064,9 +3064,12 @@ class Event:
             return self.location
         return self.voice_channel.mention if self.voice_channel is not None else "(Deleted voice channel)"
 
-    def same_location(self, event) -> bool:
-        """Indicates whether this event takes place in the same voice channel or external location as the provided event."""
-        return self.location_key == event.location_key
+    def shares_voice_channel(self, event) -> bool:
+        """
+        Indicates whether this event takes place in the same voice channel as the provided event, so they can't overlap.
+        Events at the same external location can overlap, e.g. separate groups at a range.
+        """
+        return not self.is_external and self.location_key == event.location_key
 
     def get_location_kwargs(self, start_time: datetime) -> dict:
         """
@@ -5418,9 +5421,10 @@ async def create(event_name: str,
             for other_start_time in other_event.start_times:
                 other_timeblock = TimeBlock(start_time=other_start_time,
                                             end_time=other_start_time + other_event.duration)
-                if other_event.location_key == location_key:
+                # Events at the same external location can overlap
+                if location is None and other_event.location_key == location_key:
                     if timeblock.overlaps_with(other_timeblock):
-                        content = f"**Specified time overlaps with** ***{other_event}*** **in the same location.**"
+                        content = f"**Specified time overlaps with** ***{other_event}*** **in the same voice channel.**"
                         raise Exception(content)
                 for other_participant in other_event.participants:
                     if other_participant.member.id in [participant.member.id for participant in participants]:

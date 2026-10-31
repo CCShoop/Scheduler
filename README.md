@@ -141,7 +141,7 @@ The location changes how the event starts and ends:
 | **Ends** | When everyone has left the voice channel, or when at least half of 4 or more attendees (or all but 5 of more than 10) have been gone for over 5 minutes | When its duration has passed |
 | **Start Event button** | You must be in the voice channel | Any participant can press it |
 
-Either way, events at the same location can't overlap. For typed locations, "the same location" means the same text, ignoring capitalization.
+Events in the same voice or stage channel can't overlap. Events at the same typed location can, such as separate groups at a range.
 
 ### `/create`: create an event at a time you choose
 
