@@ -51,12 +51,13 @@ The bot also sends data to Discord, such as messages and server events, as part 
 - **Your settings** are kept until you leave every server the bot shares with you. They are also deleted if the bot is removed from those servers.
 - **Server settings** are kept until the bot is removed from the server.
 - **Logs** are kept until I clear them.
-- If the bot's data file is ever damaged, a copy of it is kept until I repair or delete it.
+- **Backups** of the bot's data are taken every hour. They are kept for up to 30 days, so data deleted from the bot can remain in a backup for that long. The most recent backup is kept until a newer one replaces it.
+- If one of the bot's data files is ever damaged, a copy of it is kept until I repair or delete it.
 
 ## Your choices
 
 - You can unsubscribe from an event, or decline to take part.
-- You can ask me to delete your data, or ask what data the bot has about you, by contacting me (see below). I will delete it from the bot's data and logs, and can manually remove you from any events if necessary.
+- You can ask me to delete your data, or ask what data the bot has about you, by contacting me (see below). I will delete it from the bot's data, backups, and logs, and can manually remove you from any events if necessary.
 
 ## Children
 

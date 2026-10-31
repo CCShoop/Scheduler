@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from libs.participant import DEFAULT_HOURS_PAST_MIDNIGHT_CUTOFF, TimeBlock
-from fakes import FakeGuild, at, make_member, run
+from fakes import FakeGuild, at, make_member, read_json, run, write_json
 from test_lifecycle import FakeInteraction
 
 
@@ -90,45 +90,63 @@ class TestCutoffCommand:
 
 
 class TestPersistence:
+    def save_users(self, sched, users):
+        write_json(sched.user_persist.filename, {"users": users})
+
+    def load(self, sched, monkeypatch):
+        monkeypatch.setattr(sched.client, "loaded_json", False)
+        monkeypatch.setattr(sched.client, "settings_loaded", False)
+        run(sched.client.retrieve_events())
+
     def test_saved_with_string_keys(self, sched):
         sched.participant_lib.update_user(7, "user", cutoff=3)
-        assert sched.client.events_dict["users"] == [{"id": 7, "name": "user", "cutoff": 3, "timezone": "ET"}]
+        assert sched.client.user_data["users"] == [{"id": 7, "name": "user", "cutoff": 3, "timezone": "ET"}]
+
+    def test_saved_to_the_user_data_file(self, sched, monkeypatch):
+        monkeypatch.setattr(sched.client, "settings_loaded", True)
+        sched.participant_lib.update_user(7, "user", cutoff=3)
+        sched.save()
+        assert read_json(sched.user_persist.filename)["users"][0]["cutoff"] == 3
 
     def test_loaded_on_startup(self, sched, guilds, monkeypatch):
         guild = FakeGuild()
         add_member(guild, 7)
         guilds.append(guild)
-        monkeypatch.setattr(sched.client, "loaded_json", False)
-        monkeypatch.setattr(sched.persist, "read", lambda: {"events": [], "users": [{"id": 7, "name": "user", "cutoff": 3}]})
-        run(sched.client.retrieve_events())
+        self.save_users(sched, [{"id": 7, "name": "user", "cutoff": 3}])
+        self.load(sched, monkeypatch)
         assert cutoffs(sched) == {7: 3}
 
     def test_users_who_left_while_offline_are_deleted_on_startup(self, sched, guilds, monkeypatch):
         guild = FakeGuild()
         add_member(guild, 7)
         guilds.append(guild)
-        monkeypatch.setattr(sched.client, "loaded_json", False)
-        monkeypatch.setattr(sched.persist, "read", lambda: {"events": [], "users": [{"id": 7, "name": "user", "cutoff": 3}, {"id": 8, "name": "user", "cutoff": 5}]})
-        run(sched.client.retrieve_events())
+        self.save_users(sched, [{"id": 7, "name": "user", "cutoff": 3}, {"id": 8, "name": "user", "cutoff": 5}])
+        self.load(sched, monkeypatch)
         assert cutoffs(sched) == {7: 3}
 
     @pytest.mark.parametrize("contents", ["{not json", "[]"])
     def test_unreadable_data_file_is_moved_aside(self, sched, guilds, monkeypatch, tmp_path, contents):
-        path = tmp_path / "data.json"
+        path = tmp_path / "event_data.json"
         path.write_text(contents)
-        monkeypatch.setattr(sched.persist, "filename", str(path))
-        monkeypatch.setattr(sched.persist, "last_written", None)
-        monkeypatch.setattr(sched.client, "loaded_json", False)
-        run(sched.client.retrieve_events())
+        monkeypatch.setattr(sched.event_persist, "filename", str(path))
+        self.load(sched, monkeypatch)
         assert not path.exists()
-        (backup,) = tmp_path.glob("data.json.corrupt-*")
+        (backup,) = tmp_path.glob("event_data.json.corrupt-*")
         assert backup.read_text() == contents
         assert sched.client.events == []
 
-    def test_data_without_cutoffs_loads(self, sched, guilds, monkeypatch):
-        monkeypatch.setattr(sched.client, "loaded_json", False)
-        monkeypatch.setattr(sched.persist, "read", lambda: {"events": []})
-        run(sched.client.retrieve_events())
+    def test_unreadable_event_data_keeps_users(self, sched, guilds, monkeypatch):
+        guild = FakeGuild()
+        add_member(guild, 7)
+        guilds.append(guild)
+        self.save_users(sched, [{"id": 7, "name": "user", "cutoff": 3}])
+        with open(sched.event_persist.filename, "w") as file:
+            file.write("{not json")
+        self.load(sched, monkeypatch)
+        assert cutoffs(sched) == {7: 3}
+
+    def test_no_data_files_loads(self, sched, guilds, monkeypatch):
+        self.load(sched, monkeypatch)
         assert cutoffs(sched) == {}
 
 
@@ -382,15 +400,15 @@ class TestTimezone:
 
     def test_saved_and_loaded(self, sched, guilds, monkeypatch):
         sched.participant_lib.update_user(7, "user", timezone="CT")
-        data = sched.client.events_dict
+        data = sched.client.user_data
         assert data["users"] == [{"id": 7, "name": "user", "cutoff": 0, "timezone": "CT"}]
         sched.participant_lib.users.clear()
         guild = FakeGuild()
         add_member(guild, 7)
         guilds.append(guild)
-        monkeypatch.setattr(sched.client, "loaded_json", False)
-        monkeypatch.setattr(sched.persist, "read", lambda: {"events": [], "users": data["users"]})
-        run(sched.client.retrieve_events())
+        write_json(sched.user_persist.filename, data)
+        monkeypatch.setattr(sched.client, "settings_loaded", False)
+        sched.load_settings()
         assert sched.participant_lib.get_timezone(7) == "CT"
 
 

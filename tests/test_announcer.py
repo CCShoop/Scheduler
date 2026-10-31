@@ -5,7 +5,7 @@ import pytest
 
 import libs.announcer as announcer_lib
 from libs.announcer import Announcer, ESPEAK_NG, PIPER_EN, PIPER_JP, NONE, JAPANESE, LATIN
-from fakes import FakeGuild, make_member, run
+from fakes import FakeGuild, make_member, noop, run, write_json
 from test_lifecycle import FakeInteraction, make_created_event
 
 
@@ -417,14 +417,14 @@ class TestTtsCommand:
 
 
 class TestPersistence:
-    def test_engines_are_saved(self, sched):
+    def test_engines_are_saved_by_guild(self, sched):
         announcer_lib.set_engine(5, PIPER_EN)
-        assert sched.client.events_dict["tts_engines"] == {"5": PIPER_EN}
+        assert sched.client.guild_data == {"5": {"tts_engine": PIPER_EN}}
 
-    def test_engines_are_loaded_on_startup(self, sched, monkeypatch):
-        monkeypatch.setattr(sched.client, "loaded_json", False)
-        monkeypatch.setattr(sched.persist, "read", lambda: {"events": [], "tts_engines": {"5": PIPER_EN, "6": "bogus"}})
-        run(sched.client.retrieve_events())
+    def test_engines_are_loaded_on_login(self, sched, monkeypatch):
+        monkeypatch.setattr(sched.client, "settings_loaded", False)
+        write_json(sched.guild_persist.filename, {"5": {"tts_engine": PIPER_EN}, "6": {"tts_engine": "bogus"}, "7": "bad"})
+        run(sched.client.setup_hook.__func__(SimpleNamespace(tree=SimpleNamespace(sync=noop))))
         assert announcer_lib.guild_engines == {5: PIPER_EN}
 
     def test_removed_guild_forgets_engine(self, sched):

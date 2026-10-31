@@ -402,9 +402,15 @@ with socket.create_connection(("127.0.0.1", 5000)) as s:
 
 | File | Contents |
 |------|----------|
-| `data.json` | Saved events, users' settings, and server voice settings, saved whenever they change. The bot reads it on startup to resume events. To start fresh, delete it while the bot is stopped. It's written to `data.json.tmp` first and then swapped in, so a crash can't leave it half-written. If it can't be read on startup, the bot renames it to `data.json.corrupt-<date and time>` and starts with no events, so you can fix it and put it back. |
+| `event_data.json` | Saved events and [Schedule Again](#schedule-again) buttons. The bot reads it after connecting to Discord to resume events, and only writes it once they've all loaded, so stopping the bot while it starts up can't lose any. To clear the events, delete it while the bot is stopped. |
+| `user_data.json` | Users' saved settings: their `/cutoff` and last-used timezone. Read on login, before the bot connects. |
+| `guild_data.json` | Each server's settings, by server ID: its `/tts` voice. Read on login, before the bot connects. |
+| `backups/` | Snapshots of the three data files, in folders named by date and time. One is taken on startup and every hour after that, if anything changed. All snapshots from the last 2 days are kept, then the last one of each day for 30 days, so the folder holds about 80 at most. The newest is always kept, even when nothing has changed in over 30 days. To restore one, stop the bot and copy its files over the data files. |
+| `data.json` | The single data file of older versions. On startup, it's backed up, split into the three data files above, and deleted. |
 | `scheduler.log` | The full log. The same output is printed to the console. |
-| `<event id>.png` | Each event's downloaded image, used for its Discord event. The id is the event's `id` in `data.json`. Every 10 minutes, the bot deletes `.png` files in its folder that no event or [Schedule Again](#schedule-again) button uses, if they're more than 10 minutes old. Don't keep other `.png` files in the bot's folder. |
+| `<event id>.png` | Each event's downloaded image, used for its Discord event. The id is the event's `id` in `event_data.json`. Every 10 minutes, the bot deletes `.png` files in its folder that no event or [Schedule Again](#schedule-again) button uses, if they're more than 10 minutes old. Don't keep other `.png` files in the bot's folder. |
+
+Each data file is written to `<name>.tmp` first and then swapped in, so a crash can't leave it half-written. If one can't be read on startup, the bot renames it to `<name>.corrupt-<date and time>` and starts without that file's data, so you can fix it and put it back. The other files load as usual.
 
 ## Running the tests
 

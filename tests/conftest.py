@@ -2,6 +2,7 @@
 
 import os
 import sys
+import shutil
 import signal
 import time
 import tempfile
@@ -24,7 +25,7 @@ os.environ.setdefault("HOST", "127.0.0.1")
 
 
 def _import_scheduler():
-    # scheduler.py opens scheduler.log and data.json relative to the working directory,
+    # scheduler.py opens scheduler.log and its data files relative to the working directory,
     # installs signal handlers, and calls client.run() at import
     original_cwd = os.getcwd()
     original_run = discord.Client.run
@@ -35,7 +36,10 @@ def _import_scheduler():
     try:
         module = importlib.import_module("scheduler")
         # Persistence resolves its path at read/write time, so pin it to the temp dir
-        module.persist.filename = os.path.join(temp_dir, "data.json")
+        for persist in (*module.DATA_FILES, module.legacy_persist):
+            persist.filename = os.path.join(temp_dir, os.path.basename(persist.filename))
+        module.backups.folder = os.path.join(temp_dir, "backups")
+        module.backups.filenames = [persist.filename for persist in (*module.DATA_FILES, module.legacy_persist)]
         return module
     finally:
         discord.Client.run = original_run
@@ -51,8 +55,18 @@ from fakes import FakeGuild, FakeTextChannel, make_member, next_id, noop  # noqa
 
 
 @pytest.fixture
-def sched():
-    """The scheduler module, with a clean client event list for each test."""
+def sched(monkeypatch):
+    """The scheduler module, with a clean client event list and empty data files for each test."""
+    # Loading and saving state, restored after each test
+    for flag in ("loaded_json", "events_loaded", "settings_loaded"):
+        monkeypatch.setattr(scheduler.client, flag, getattr(scheduler.client, flag))
+    for persist in (*scheduler.DATA_FILES, scheduler.legacy_persist):
+        monkeypatch.setattr(persist, "last_written", None)
+        monkeypatch.setattr(persist, "paused", False)
+        if os.path.exists(persist.filename):
+            os.remove(persist.filename)
+    shutil.rmtree(scheduler.backups.folder, ignore_errors=True)
+    monkeypatch.setattr(scheduler.backups, "last_backed_up_at", None)
     scheduler.client.events.clear()
     scheduler.client.schedule_again_events.clear()
     scheduler.participant_lib.users.clear()

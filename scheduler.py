@@ -18,6 +18,7 @@ from discord.ui import View, Button, Modal, TextInput, TextDisplay, Select, Chan
 from discord.ext import tasks
 
 from libs.persistence import Persistence
+from libs.backups import Backups
 import libs.participant as participant_lib
 import libs.announcer as announcer_lib
 from libs.announcer import Announcer
@@ -45,8 +46,15 @@ console_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
-# Persistence
-persist = Persistence('data.json')
+# Persistence, in separate files so losing one kind of data doesn't lose the others
+event_persist = Persistence('event_data.json')
+user_persist = Persistence('user_data.json')
+guild_persist = Persistence('guild_data.json')
+DATA_FILES = (event_persist, user_persist, guild_persist)
+# Everything was saved in one file before it was split, and is moved into the files above on startup
+legacy_persist = Persistence('data.json')
+# Hourly snapshots of the data files, kept for 2 days, then one a day for 30 days
+backups = Backups('backups', [persist.filename for persist in (*DATA_FILES, legacy_persist)])
 
 # Reads out events starting and ending in their voice channels
 announcer = Announcer()
@@ -156,9 +164,81 @@ def clean_up_images() -> None:
 
 def save() -> None:
     """
-    Saves the bot's status by writing the client's events to a file.
+    Saves the bot's events, users' settings, and guilds' settings to their data files.
+
+    Each file is only written once its saved data has been loaded, since until then
+    the data in memory is only part of the saved data, and writing it would delete the rest.
     """
-    persist.write(client.events_dict)
+    if client.settings_loaded:
+        user_persist.write(client.user_data)
+        guild_persist.write(client.guild_data)
+    if client.events_loaded:
+        event_persist.write(client.event_data)
+
+
+def read_data_file(persist: Persistence) -> Optional[dict]:
+    """
+    Reads a data file. If it can't be read, moves it aside so saving can't overwrite it, and returns None.
+    """
+    try:
+        data = persist.read()
+        if data is not None and not isinstance(data, dict):
+            raise ValueError("not a JSON object")
+        return data
+    except Exception as e:
+        backup = persist.quarantine()
+        logger.critical(f"{persist.filename} is unreadable ({e}); moved it to {backup} and starting without its data")
+        return None
+
+
+def migrate_legacy_data() -> None:
+    """
+    Splits the single data file used before the data was split into the event, user, and guild data files.
+    The old file is deleted, since load_settings backs it up first, and the backup is pruned like any other.
+    """
+    if not os.path.exists(legacy_persist.filename):
+        return
+    if any(os.path.exists(persist.filename) for persist in DATA_FILES):
+        logger.warning(f"Ignoring {legacy_persist.filename}, since the split data files already exist")
+        return
+    data = read_data_file(legacy_persist)
+    if data is None:
+        return
+    event_persist.write({'events': data.get('events', []),
+                         'schedule_again_events': data.get('schedule_again_events', [])})
+    user_persist.write({'users': data.get('users', [])})
+    guild_persist.write({guild_id: {'tts_engine': engine} for guild_id, engine in data.get('tts_engines', {}).items()})
+    os.remove(legacy_persist.filename)
+    logger.info(f"Split {legacy_persist.filename} into the event, user, and guild data files")
+
+
+def load_settings() -> None:
+    """
+    Loads users' and guilds' saved settings, which don't depend on anything from Discord.
+    """
+    if client.settings_loaded:
+        return
+    # Before anything on startup can change the data files
+    try:
+        backups.back_up()
+    except Exception as e:
+        logger.exception(f"Error backing up data files: {e}")
+    migrate_legacy_data()
+    saved_users = read_data_file(user_persist) or {}
+    for user_data in saved_users.get('users', []):
+        try:
+            participant_lib.users.append(participant_lib.User.from_dict(user_data))
+        except Exception as e:
+            logger.error(f"Could not load saved settings of user {user_data}: {e}")
+    saved_guilds = read_data_file(guild_persist) or {}
+    for guild_id, settings in saved_guilds.items():
+        try:
+            engine = settings.get('tts_engine')
+            if engine in announcer_lib.ENGINES:
+                announcer_lib.guild_engines[int(guild_id)] = engine
+        except Exception as e:
+            logger.error(f"Could not load saved settings of guild {guild_id}: {e}")
+    client.settings_loaded = True
 
 
 def get_time_str_from_minutes(minutes: int) -> str:
@@ -602,7 +682,11 @@ class SchedulerClient(Client):
     tree: :class:`app_commands.CommandTree`
         The command tree for slash commands.
     loaded_json: :class:`bool`
-        Whether or not the client has loaded the json file.
+        Whether or not the client has started loading the event data file.
+    events_loaded: :class:`bool`
+        Whether the client has finished loading the event data file, so saving won't lose events it hasn't loaded.
+    settings_loaded: :class:`bool`
+        Whether the client has loaded the user and guild data files, so saving won't lose settings it hasn't loaded.
     server_is_running: :class:`bool`
         Whether or not the client's server is running to accept event scheduling from json packets.
     server: :class:`Server`
@@ -617,6 +701,8 @@ class SchedulerClient(Client):
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
         self.loaded_json = False
+        self.events_loaded = False
+        self.settings_loaded = False
         self.server_is_running = False
         self.server = Server()
         self.server.callback = self.handle_packet
@@ -674,40 +760,22 @@ class SchedulerClient(Client):
 
     async def retrieve_events(self) -> None:
         """
-        Load event data from the data file to resume operations after a restart.
+        Load event data from the event data file to resume operations after a restart.
 
         If an event has an invalid field, it will receive a default value or be discarded
         dependant on which field. Availability and event control buttons are reconfigured from scratch.
         """
         if not self.loaded_json:
             self.loaded_json = True
-            try:
-                events_data = persist.read()
-                if events_data is not None and not isinstance(events_data, dict):
-                    raise ValueError("not a JSON object")
-            except Exception as e:
-                # Move the bad file aside so saving can't overwrite it with no events
-                backup = persist.quarantine()
-                logger.critical(f"Data file is unreadable ({e}); moved it to {backup} and starting with no events")
-                events_data = None
+            # Normally already loaded on login
+            load_settings()
+            # Users who left while the bot was offline
+            prune_users()
+            events_data = read_data_file(event_persist)
             if events_data:
-                # Data saved before user settings has no entry
-                for user_data in events_data.get('users', []):
-                    try:
-                        participant_lib.users.append(participant_lib.User.from_dict(user_data))
-                    except Exception as e:
-                        logger.error(f"Could not load saved settings of user {user_data}: {e}")
-                prune_users()
-                # Data saved before announcements has no entry
-                try:
-                    announcer_lib.guild_engines.update({int(guild_id): engine
-                                                        for guild_id, engine in events_data.get('tts_engines', {}).items()
-                                                        if engine in announcer_lib.ENGINES})
-                except Exception as e:
-                    logger.error(f"Could not load text-to-speech engines: {e}")
                 # Load started events first so the start buttons of events waiting on their location
                 # are built disabled, instead of enabled then disabled by the first update
-                for idx, event_data in enumerate(sorted(events_data['events'], key=lambda data: not data.get('started', False))):
+                for idx, event_data in enumerate(sorted(events_data.get('events', []), key=lambda data: not data.get('started', False))):
                     if idx != 0:
                         # Prevent rate limiting when loading data
                         await asyncio.sleep(3)
@@ -735,30 +803,37 @@ class SchedulerClient(Client):
                     except Exception as e:
                         logger.error(f"[{after_buttons_data.get('name')}] Could not restore schedule again buttons: {e}")
             else:
-                logger.info('No json data found')
+                logger.info('No saved events found')
+            self.events_loaded = True
 
     @property
-    def events_dict(self) -> dict:
+    def event_data(self) -> dict:
         """
-        Shove all events, schedule again buttons, and users' saved settings into a dictionary for writing to the data file.
+        The events and schedule again buttons, for writing to the event data file.
+        """
+        return {'events': [event.to_dict() for event in self.events],
+                'schedule_again_events': [after_buttons.to_dict() for after_buttons in self.schedule_again_events]}
 
-        Returns
-        -------
-        events_data: :class:`dict`
-            A dict containing all of the data for each event and schedule again buttons.
+    @property
+    def user_data(self) -> dict:
         """
-        events_data = {}
-        events_data['events'] = [event.to_dict() for event in self.events]
-        events_data['schedule_again_events'] = [after_buttons.to_dict() for after_buttons in self.schedule_again_events]
-        events_data['users'] = [user.to_dict() for user in participant_lib.users]
+        Users' saved settings, for writing to the user data file.
+        """
+        return {'users': [user.to_dict() for user in participant_lib.users]}
+
+    @property
+    def guild_data(self) -> dict:
+        """
+        Guilds' saved settings by guild ID, for writing to the guild data file.
+        """
         # JSON keys are strings
-        events_data['tts_engines'] = {str(guild_id): engine for guild_id, engine in announcer_lib.guild_engines.items()}
-        return events_data
+        return {str(guild_id): {'tts_engine': engine} for guild_id, engine in announcer_lib.guild_engines.items()}
 
     async def setup_hook(self):
         """
-        Syncs the command tree with the guilds the client is in.
+        Loads saved settings and syncs the command tree, on login before connecting to Discord.
         """
+        load_settings()
         await self.tree.sync()
 
 
@@ -782,9 +857,13 @@ client = SchedulerClient(intents=intents)
 def handle_signal(signum, frame):
     logger.info(f"Received signal {signum}")
     update.stop()
-    logger.info("Saving and exiting")
+    if client.events_loaded:
+        logger.info("Saving and exiting")
+    else:
+        logger.info("Saving settings and exiting, without saving events, since saved events haven't finished loading")
     save()
-    persist.pause()
+    for persist in DATA_FILES:
+        persist.pause()
     loop = asyncio.get_running_loop()
     loop.create_task(cleanup())
 
@@ -6088,6 +6167,10 @@ async def update():
         save()
     except Exception as e:
         logger.exception(f"Error saving: {e}")
+    try:
+        backups.back_up_if_due()
+    except Exception as e:
+        logger.exception(f"Error backing up data files: {e}")
 
 
 client.run(DISCORD_TOKEN)

@@ -7,7 +7,7 @@ import pytest
 from discord import ButtonStyle, DiscordServerError, EntityType, EventStatus
 
 from libs.participant import Participant, TimeBlock
-from fakes import FakeScheduledEvent, at, noop, run
+from fakes import FakeScheduledEvent, at, noop, read_json, run, write_json
 import scheduler
 
 # The env fixture stubs these out, keep the real ones for tests that check message sends
@@ -1520,7 +1520,7 @@ class TestScheduleAgain:
 
     def test_saved_like_a_normal_event(self, env):
         event, after_buttons = self.cancel_with_schedule_again(env)
-        (saved,) = env.sched.client.events_dict["schedule_again_events"]
+        (saved,) = env.sched.client.event_data["schedule_again_events"]
         assert {key: value for key, value in saved.items() if key in event.to_dict()} == event.to_dict()
         assert saved["after_buttons_message_id"] == after_buttons.message.id
         assert saved["schedule_again_expires_at"] == after_buttons.expires_at.isoformat()
@@ -1530,7 +1530,7 @@ class TestScheduleAgain:
         event, after_buttons = self.cancel_with_schedule_again(env, duration=timedelta(minutes=90), image_url="https://example.com/a.png")
         after_buttons.expires_at = at(3, 12)
         run(after_buttons.disable())
-        (saved,) = env.sched.client.events_dict["schedule_again_events"]
+        (saved,) = env.sched.client.event_data["schedule_again_events"]
         env.sched.client.schedule_again_events.clear()
         restored = self.restore(env, monkeypatch, saved)
         assert env.sched.client.schedule_again_events == [restored]
@@ -1548,7 +1548,7 @@ class TestScheduleAgain:
 
     def test_restores_legacy_tick_counter_as_deadline(self, env, monkeypatch):
         _, after_buttons = self.cancel_with_schedule_again(env)
-        (saved,) = env.sched.client.events_dict["schedule_again_events"]
+        (saved,) = env.sched.client.event_data["schedule_again_events"]
         env.sched.client.schedule_again_events.clear()
         del saved["schedule_again_expires_at"]
         saved["schedule_again_timeout"] = 2 * 60 * 60 // env.sched.UPDATE_INTERVAL
@@ -1566,7 +1566,7 @@ class TestScheduleAgain:
 
     def test_missing_message_is_dropped(self, env, monkeypatch):
         _, after_buttons = self.cancel_with_schedule_again(env)
-        (saved,) = env.sched.client.events_dict["schedule_again_events"]
+        (saved,) = env.sched.client.event_data["schedule_again_events"]
         env.sched.client.schedule_again_events.clear()
         after_buttons.message.deleted = True
         with pytest.raises(LookupError):
@@ -1589,7 +1589,7 @@ class TestScheduleAgain:
 
     def test_retrieve_events_restores_schedule_again_events(self, env, monkeypatch):
         _, after_buttons = self.cancel_with_schedule_again(env)
-        env.sched.persist.write(env.sched.client.events_dict)
+        env.sched.event_persist.write(env.sched.client.event_data)
         env.sched.client.schedule_again_events.clear()
         monkeypatch.setattr(env.sched.client, "loaded_json", False)
         monkeypatch.setattr(env.sched.client, "get_guild", lambda guild_id: env.guild)
@@ -1598,13 +1598,13 @@ class TestScheduleAgain:
         assert restored.message is after_buttons.message
 
     def test_retrieve_events_without_schedule_again_events(self, env, monkeypatch):
-        env.sched.persist.write({"events": []})
+        env.sched.event_persist.write({"events": []})
         monkeypatch.setattr(env.sched.client, "loaded_json", False)
         run(env.sched.client.retrieve_events())
         assert env.sched.client.schedule_again_events == []
 
     def test_retrieve_events_loads_started_events_first(self, env, monkeypatch):
-        env.sched.persist.write({"events": [{"name": "waiting", "started": False},
+        env.sched.event_persist.write({"events": [{"name": "waiting", "started": False},
                                             {"name": "active", "started": True},
                                             {"name": "legacy"}]})
         monkeypatch.setattr(env.sched.client, "loaded_json", False)
@@ -1617,3 +1617,64 @@ class TestScheduleAgain:
         monkeypatch.setattr(env.sched.Event, "from_dict", fake_from_dict)
         run(env.sched.client.retrieve_events())
         assert loaded == ["active", "waiting", "legacy"]
+
+
+
+class TestSavingBeforeLoading:
+    """A restart while saved events are still loading must not overwrite the ones not loaded yet."""
+    SAVED_EVENTS = {"events": [{"name": "saved"}], "schedule_again_events": []}
+
+    @pytest.fixture
+    def saved_file(self, sched, monkeypatch):
+        monkeypatch.setattr(sched.client, "loaded_json", False)
+        monkeypatch.setattr(sched.client, "events_loaded", False)
+        monkeypatch.setattr(sched.client, "settings_loaded", False)
+        write_json(sched.event_persist.filename, self.SAVED_EVENTS)
+        return sched.event_persist.filename
+
+    def signal(self, sched, monkeypatch):
+        monkeypatch.setattr(sched, "cleanup", noop)
+
+        async def send():
+            sched.handle_signal(sched.signal.SIGTERM, None)
+
+        run(send())
+
+    def test_save_before_loading_keeps_the_file(self, sched, saved_file):
+        sched.save()
+        assert read_json(saved_file) == self.SAVED_EVENTS
+
+    def test_signal_before_loading_keeps_the_file(self, sched, saved_file, monkeypatch):
+        # The bot was stopped before it connected to Discord, with no events in memory
+        self.signal(sched, monkeypatch)
+        assert read_json(saved_file) == self.SAVED_EVENTS
+
+    def test_signal_while_loading_keeps_the_file(self, sched, saved_file, monkeypatch):
+        # The bot was stopped after loading some events but not others
+        sched.client.events.append(SimpleNamespace(to_dict=lambda: {"name": "loaded"}))
+        self.signal(sched, monkeypatch)
+        assert read_json(saved_file) == self.SAVED_EVENTS
+
+    def test_signal_after_login_saves_settings_but_not_events(self, sched, saved_file, monkeypatch):
+        # Settings load on login, before connecting, so they're safe to save before events load
+        write_json(sched.user_persist.filename, {"users": [{"id": 7, "name": "user", "cutoff": 3}]})
+        sched.load_settings()
+        sched.participant_lib.update_user(8, "user", cutoff=5)
+        self.signal(sched, monkeypatch)
+        assert [user["id"] for user in read_json(sched.user_persist.filename)["users"]] == [7, 8]
+        assert read_json(saved_file) == self.SAVED_EVENTS
+
+    def test_saves_once_loaded(self, sched, saved_file, monkeypatch):
+        async def fake_from_dict(data):
+            return None
+
+        monkeypatch.setattr(sched.Event, "from_dict", fake_from_dict)
+        run(sched.client.retrieve_events())
+        assert sched.client.events_loaded
+        sched.save()
+        assert read_json(saved_file)["events"] == []
+
+    def test_signal_once_loaded_saves(self, sched, saved_file, monkeypatch):
+        monkeypatch.setattr(sched.client, "events_loaded", True)
+        self.signal(sched, monkeypatch)
+        assert read_json(saved_file)["events"] == []

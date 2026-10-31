@@ -1,6 +1,7 @@
 """Fakes standing in for discord.py objects in tests."""
 
 import asyncio
+import json
 import itertools
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -200,3 +201,13 @@ def make_member(member_id, name, bot=False):
 
 def run(coro):
     return asyncio.run(coro)
+
+
+def read_json(path):
+    with open(path, encoding="utf-8") as file:
+        return json.load(file)
+
+
+def write_json(path, data):
+    with open(path, "w", encoding="utf-8") as file:
+        json.dump(data, file)
