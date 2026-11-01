@@ -2389,10 +2389,12 @@ class Event:
 
     async def update_messages(self) -> None:
         """
-        Update the availability and event buttons messages.
+        Update the availability, event buttons, and reminder messages,
+        so the reminder keeps showing the same start time as the event buttons message.
         """
         await self.update_availability_message()
         await self.update_event_buttons_message()
+        await self.update_reminder_message()
 
     async def update_availability_message(self, rescheduler: Optional[Participant] = None) -> None:
         """

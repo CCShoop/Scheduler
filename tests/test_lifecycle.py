@@ -12,6 +12,7 @@ import scheduler
 
 # The env fixture stubs these out, keep the real ones for tests that check message sends
 REAL_UPDATE_AVAILABILITY_MESSAGE = scheduler.Event.update_availability_message
+REAL_UPDATE_MESSAGES = scheduler.Event.update_messages
 REAL_DELETE_AVAILABILITY_MESSAGE = scheduler.Event.delete_availability_message
 
 
@@ -1086,6 +1087,17 @@ class TestUpdateWhileCreated:
         assert edit["content"] == event.get_reminder_message_content()
         start_timestamp = int(event.start_times[0].timestamp())
         assert f"<t:{start_timestamp}:R>" in edit["embed"].description
+
+    def test_updating_messages_updates_the_reminder_message(self, env, monkeypatch):
+        # Like after a restart, with a reminder sent before the event was pushed back out of the reminder window
+        bot_user = SimpleNamespace(avatar=SimpleNamespace(url="https://example.invalid/avatar.png"))
+        monkeypatch.setattr(type(env.sched.client), "user", property(lambda self: bot_user))
+        event, _ = make_created_event(env, reminder_flag=True)
+        reminder = FakeMessage()
+        event.reminder_message = reminder
+        run(REAL_UPDATE_MESSAGES(event))
+        (edit,) = reminder.edits
+        assert f"<t:{int(event.start_times[0].timestamp())}:R>" in edit["embed"].description
 
     @pytest.mark.parametrize("error", [DiscordServerError.__new__(DiscordServerError), RuntimeError("boom")])
     def test_reminder_message_edit_errors_are_logged(self, env, error):
