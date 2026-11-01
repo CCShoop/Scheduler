@@ -126,8 +126,26 @@ class TestStart:
                               scheduled_events=[soon_guild_event], duration=timedelta(hours=1))
         soon.event_buttons = fake_event_buttons()
         run(event.start())
-        assert soon_guild_event.edits == [{"start_time": soon.start_times[0]}]
+        new_start = soon.start_times[0]
+        assert soon_guild_event.edits == [{"start_time": new_start, "end_time": new_start + timedelta(hours=1)}]
+        assert new_start > soon_start
+
+    def test_pushing_back_updates_the_reminder_message(self, env, monkeypatch):
+        # Reminder embeds use the bot's avatar in the footer
+        bot_user = SimpleNamespace(avatar=SimpleNamespace(url="https://example.invalid/avatar.png"))
+        monkeypatch.setattr(type(env.sched.client), "user", property(lambda self: bot_user))
+        event, _ = make_created_event(env)
+        soon_start = env.sched.now() + timedelta(minutes=5)
+        soon = env.make_event([env.make_participant("b")], created=True, start_times=[soon_start],
+                              scheduled_events=[FakeScheduledEvent(soon_start)], reminder_flag=True)
+        soon.event_buttons = fake_event_buttons()
+        reminder = FakeMessage()
+        soon.reminder_message = reminder
+        run(event.start())
         assert soon.start_times[0] > soon_start
+        (edit,) = reminder.edits
+        assert f"<t:{int(soon.start_times[0].timestamp())}:R>" in edit["embed"].description
+        assert edit["embed"].timestamp == soon.start_times[0]
 
     def test_pushing_back_an_external_event_moves_its_end_time(self, env):
         event, _ = make_created_event(env, location="The Park")
@@ -903,7 +921,8 @@ class TestUpdateWhileCreated:
         scheduled_events[0].kwargs["channel"] = new_voice_channel
         run(event.update())
         assert event.voice_channel is new_voice_channel
-        assert scheduled_events[1].edits == [{"entity_type": EntityType.voice, "channel": new_voice_channel}]
+        assert scheduled_events[1].edits == [{"entity_type": EntityType.voice, "channel": new_voice_channel,
+                                          "end_time": at(2, 22)}]
 
     def test_guild_event_moved_to_external_location_in_discord(self, env):
         event, (scheduled_event,) = make_created_event(env)

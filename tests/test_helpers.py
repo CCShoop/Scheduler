@@ -48,7 +48,9 @@ class TestParseStartTime:
     def test_clock_times_are_next_occurrence(self, sched, entered, hour, minute):
         result = sched.parse_start_time(entered)
         assert (result.hour, result.minute) == (hour, minute)
-        assert sched.now() < result <= sched.now() + timedelta(days=1)
+        assert sched.now() < result
+        # Within a day on the wall clock, which can be 25 hours of elapsed time when DST ends overnight
+        assert result.replace(tzinfo=None) <= sched.now().replace(tzinfo=None) + timedelta(days=1)
 
     def test_future_iso_is_unchanged(self, sched):
         future = sched.now() + timedelta(days=3)

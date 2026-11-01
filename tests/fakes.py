@@ -50,6 +50,10 @@ class FakeScheduledEvent:
         return self.kwargs.get("location")
 
     @property
+    def end_time(self):
+        return self.kwargs.get("end_time")
+
+    @property
     def cover_image(self):
         return self.kwargs.get("cover_image")
 

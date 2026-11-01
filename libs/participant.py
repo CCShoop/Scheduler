@@ -706,12 +706,15 @@ class Participant:
             # so that adding days past a DST change keeps the entered time of day
             start_time_string = start_time
             end_time_string = end_time
-            # Start time is now if today, midnight if not today
-            if start_time_string == '':
-                if date_is_today:
-                    start_time = wall_now()
-                else:
-                    start_time = datetime(year, month, day)
+            block_year, block_month, block_day = year, month, day
+            # Start time is now if today, midnight if not today.
+            # Now is on the entered timezone's date, which can differ from today's date in the bot's timezone,
+            # and the end time is on that date too
+            if date_is_today and (start_is_now or start_time_string == ''):
+                start_time = wall_now()
+                block_year, block_month, block_day = start_time.year, start_time.month, start_time.day
+            elif start_time_string == '':
+                start_time = datetime(year, month, day)
             # Start time is defined
             else:
                 start_hr = int(start_time_string[:2])
@@ -719,12 +722,12 @@ class Participant:
                 start_time = datetime(year, month, day, start_hr, start_min)
             # End time is midnight
             if end_time_string == '':
-                end_time = datetime(year, month, day) + timedelta(days=1)
+                end_time = datetime(block_year, block_month, block_day) + timedelta(days=1)
             # End time is defined
             else:
                 end_hr = int(end_time_string[:2])
                 end_min = int(end_time_string[2:])
-                end_time = datetime(year, month, day, end_hr, end_min)
+                end_time = datetime(block_year, block_month, block_day, end_hr, end_min)
                 while end_time < start_time:
                     end_time += timedelta(days=1)
 

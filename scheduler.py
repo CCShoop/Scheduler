@@ -1769,16 +1769,16 @@ class Event:
     async def move_first_start_time(self, start_time: datetime) -> None:
         """
         Moves the first occurrence to the start time, along with its guild event so that Discord shows it
-        and it's kept after a restart, which loads start times from guild events.
+        and it's kept after a restart, which loads start times from guild events,
+        and its reminder message so that it shows the new start.
         """
         logger.info(f"[{self}] Pushing back start to {start_time.strftime('%A, %m/%d/%Y: %H:%M %Z')}")
         self.start_times[0] = start_time
+        await self.update_reminder_message()
         if not self.scheduled_events:
             return
-        kwargs = {"start_time": start_time}
-        # External guild events have an end time, which has to stay after the start
-        if self.is_external:
-            kwargs["end_time"] = start_time + self.scheduled_duration
+        # The guild event's end time has to stay after the start
+        kwargs = {"start_time": start_time, "end_time": start_time + self.scheduled_duration}
         try:
             await self.scheduled_events[0].edit(**kwargs)
         except Exception as e:
@@ -3180,12 +3180,13 @@ class Event:
 
     def get_location_kwargs(self, start_time: datetime) -> dict:
         """
-        Gets the location arguments for creating or editing a guild event that starts at the provided time.
-        External guild events require an end time.
+        Gets the location arguments for creating or editing a guild event that starts at the provided time,
+        with an end time so that Discord shows the duration. External guild events require one.
         """
+        end_time = start_time + self.scheduled_duration
         if self.is_external:
-            return {"location": self.location, "end_time": start_time + self.scheduled_duration}
-        return {"channel": self.voice_channel}
+            return {"location": self.location, "end_time": end_time}
+        return {"channel": self.voice_channel, "end_time": end_time}
 
     @property
     def scheduled_duration(self) -> timedelta:
@@ -5150,7 +5151,7 @@ async def edit_event(event: Event,
                             inline=False)
         else:
             event.duration = new_duration
-            if event.created and event.is_external:
+            if event.created:
                 for scheduled_event, start_time in zip(event.scheduled_events, event.start_times):
                     await scheduled_event.edit(end_time=start_time + event.scheduled_duration)
             remove_times_from_availabilities_for_events()
@@ -5780,6 +5781,17 @@ async def attach_autocomplete(interaction: Interaction, current: str) -> list[ap
             for guild_event in guild_events[:25]]
 
 
+def get_guild_event_duration(guild_event: ScheduledEvent) -> timedelta:
+    """
+    Gets a guild event's length from its end time, rounded to whole minutes and kept within the allowed durations.
+    Guild events without an end time, which is optional for channel events, get the default duration.
+    """
+    if guild_event.end_time is None:
+        return timedelta(minutes=DEFAULT_EVENT_DURATION)
+    minutes = round((guild_event.end_time - guild_event.start_time).total_seconds() / 60)
+    return timedelta(minutes=min(max(minutes, 1), MAX_EVENT_DURATION))
+
+
 async def attach_guild_event(interaction: Interaction, guild_event: ScheduledEvent) -> Event:
     """
     Has the bot manage a guild event, and every other unmanaged guild event with the same name and location
@@ -5800,6 +5812,7 @@ async def attach_guild_event(interaction: Interaction, guild_event: ScheduledEve
         voice_channel, location = get_guild_event_location(guild_event)
         # Start times are filled in from the matching guild events below
         event = Event(name=guild_event.name,
+                      duration=get_guild_event_duration(guild_event),
                       voice_channel=voice_channel,
                       location=location,
                       guild=guild,

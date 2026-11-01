@@ -101,7 +101,8 @@ class TestLocation:
         event = make_created(env)
         embed = run(env.sched.edit_event(event, voice_channel=other_channel))
         assert event.voice_channel is other_channel
-        assert event.scheduled_events[0].edits == [{"entity_type": EntityType.voice, "channel": other_channel}]
+        assert event.scheduled_events[0].edits == [{"entity_type": EntityType.voice, "channel": other_channel,
+                                                   "end_time": at(1, 22)}]
         assert fields(embed) == [("Location", f"{env.voice_channel.mention} -> <#3>")]
 
     def test_same_voice_channel_is_unchanged(self, env):
@@ -254,10 +255,10 @@ class TestDuration:
         assert [(block.start_time, block.end_time) for block in other_a.availability] == \
             [(at(1, 18), at(1, 20)), (at(1, 21), at(1, 23))]
 
-    def test_shortening_created_voice_event_leaves_guild_events(self, env):
+    def test_shortening_created_voice_event_moves_guild_event_end_times(self, env):
         event = make_created(env)
         run(env.sched.edit_event(event, duration=60))
-        assert event.scheduled_events[0].edits == []
+        assert event.scheduled_events[0].edits == [{"end_time": at(1, 21)}]
 
     def test_shortening_created_external_event_moves_guild_event_end_times(self, env):
         event = make_created(env, days=(1, 2), location="Park")

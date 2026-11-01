@@ -102,10 +102,11 @@ class TestExternalEvent:
         run(event.make_scheduled_events())
         assert env.guild.created[0].kwargs["end_time"] == at(1, 20) + timedelta(minutes=env.sched.DEFAULT_EVENT_DURATION)
 
-    def test_voice_guild_event_has_channel(self, env):
-        event = env.make_event([env.make_participant("a")], start_times=[at(1, 20)])
+    def test_voice_guild_event_has_channel_and_end_time(self, env):
+        event = env.make_event([env.make_participant("a")], start_times=[at(1, 20)], duration=timedelta(minutes=24))
         run(event.make_scheduled_events())
         assert env.guild.created[0].kwargs["channel"] is env.voice_channel
+        assert env.guild.created[0].kwargs["end_time"] == at(1, 20) + timedelta(minutes=24)
         assert "location" not in env.guild.created[0].kwargs
 
     def test_external_events_never_share_a_voice_channel(self, env):
@@ -203,7 +204,8 @@ class TestEditLocation:
                                     scheduled_events=[FakeScheduledEvent(at(1, 20))])
         run(env.sched.edit_event(event, voice_channel=env.voice_channel))
         assert event.location is None and event.voice_channel is env.voice_channel
-        assert event.scheduled_events[0].edits == [{"entity_type": EntityType.voice, "channel": env.voice_channel}]
+        assert event.scheduled_events[0].edits == [{"entity_type": EntityType.voice, "channel": env.voice_channel,
+                                                   "end_time": at(1, 22)}]
 
     def test_unchanged(self, env):
         event = make_external_event(env)

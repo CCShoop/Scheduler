@@ -355,6 +355,28 @@ class TestSetSpecificAvailability:
         after = datetime.now().astimezone().replace(second=0, microsecond=0)
         assert before <= participant.availability[0].start_time <= after
 
+    @pytest.mark.parametrize("entered, length", [
+        # Until midnight Pacific, which is 03:00 Eastern
+        ("now- pt", timedelta(hours=2, minutes=30)),
+        ("now-2330 pt", timedelta(hours=2)),
+        ("-2330 pt", timedelta(hours=2)),
+    ])
+    def test_now_is_on_the_entered_timezones_date(self, entered, length, eastern, monkeypatch):
+        # 00:30 Eastern is still the day before in Pacific
+        fixed = at(0, 0, 30)
+
+        class FixedDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed.astimezone(tz) if tz else fixed
+
+        monkeypatch.setattr("libs.participant.datetime", FixedDatetime)
+        participant = make_participant()
+        participant.set_specific_availability(entered, date_string(0))
+        (timeblock,) = participant.availability
+        assert timeblock.start_time == fixed
+        assert timeblock.end_time - timeblock.start_time == length
+
     def test_date_without_year(self):
         participant = make_participant()
         participant.set_specific_availability("8-11", date_string(1, with_year=False))
@@ -498,13 +520,14 @@ class TestAvailabilityAcrossDstChange:
 def next_clock_change(forward: bool) -> date:
     """The date of the next time Eastern clocks go forward or back, with the bot running in Eastern."""
     today = date.today()
-    for days in range(1, 367):
+    # Clocks change on the first Sunday of November and the second Sunday of March, which can be up to 371 days apart
+    for days in range(1, 372):
         day = today + timedelta(days=days)
         before = datetime.combine(day, datetime.min.time()).astimezone().utcoffset()
         after = datetime.combine(day + timedelta(days=1), datetime.min.time()).astimezone().utcoffset()
         if (after > before) == forward and after != before:
             return day
-    raise AssertionError("No clock change within a year")
+    raise AssertionError("No clock change within 371 days")
 
 
 class TestAvailabilityAtClockChanges:

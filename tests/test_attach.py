@@ -1,3 +1,4 @@
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -104,6 +105,20 @@ class TestAttach:
         attach.use(str(guild_event.id))
         event = bot_event(env, "Range")
         assert (event.voice_channel, event.location) == (None, "123 Main St")
+
+    def test_uses_the_end_time_for_the_duration(self, env, attach):
+        guild_event = attach.guild_event(end_time=at(1, 20) + timedelta(minutes=24))
+        attach.use(str(guild_event.id))
+        assert bot_event(env, "Movie").duration == timedelta(minutes=24)
+
+    def test_no_end_time_uses_the_default_duration(self, env, attach):
+        attach.use(str(attach.guild_event().id))
+        assert bot_event(env, "Movie").duration == timedelta(minutes=env.sched.DEFAULT_EVENT_DURATION)
+
+    def test_long_events_are_capped_at_the_max_duration(self, env, attach):
+        guild_event = attach.guild_event(end_time=at(3, 20))
+        attach.use(str(guild_event.id))
+        assert bot_event(env, "Movie").duration == timedelta(minutes=env.sched.MAX_EVENT_DURATION)
 
     def test_uses_the_cover_image(self, env, attach):
         guild_event = attach.guild_event(cover_image=SimpleNamespace(url="https://example.com/cover.png"))
