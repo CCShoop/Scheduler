@@ -122,12 +122,12 @@ class TestStartAndEnd:
 class TestVoiceChannelPrompt:
     def test_stage_channel_can_be_selected(self, env):
         event = env.make_event([env.make_participant("a")])
+        stage_channel = add_stage_channel(env)
         env.guild.channels.pop(env.voice_channel.id)
         env.guild.voice_channels.remove(env.voice_channel)
         run(env.sched.on_guild_channel_delete(SimpleNamespace(id=env.voice_channel.id, guild=env.guild)))
-        stage_channel = add_stage_channel(env)
         prompt = event.voice_channel_prompt
         prompt.channel_select._values = [SimpleNamespace(id=stage_channel.id)]
-        run(prompt.channel_select_callback(FakeInteraction(SimpleNamespace(name="a", nick=None))))
+        run(prompt.channel_select_callback(FakeInteraction(event.participants[0].member)))
         assert event.voice_channel is stage_channel
         assert event.entity_type == EntityType.stage_instance

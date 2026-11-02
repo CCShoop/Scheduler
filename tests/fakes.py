@@ -54,6 +54,10 @@ class FakeScheduledEvent:
         return self.kwargs.get("end_time")
 
     @property
+    def description(self):
+        return self.kwargs.get("description")
+
+    @property
     def cover_image(self):
         return self.kwargs.get("cover_image")
 
@@ -145,6 +149,10 @@ class FakeSentMessage:
         pass
 
 
+class UnknownMessage(NotFound, LookupError):
+    """Raised like discord.py's NotFound for a message that doesn't exist."""
+
+
 class FakeTextChannel:
     def __init__(self, channel_id=1):
         self.id = channel_id
@@ -165,7 +173,7 @@ class FakeTextChannel:
 
     async def fetch_message(self, message_id):
         if message_id not in self.messages or self.messages[message_id].deleted:
-            raise LookupError(f"Unknown message {message_id}")
+            raise UnknownMessage(SimpleNamespace(status=404, reason="Not Found"), f"Unknown message {message_id}")
         return self.messages[message_id]
 
 

@@ -5,7 +5,8 @@ import pytest
 from discord import EntityType
 
 from libs.participant import Participant, RemovedTime, TimeBlock
-from fakes import FakeScheduledEvent, at, run
+from fakes import FakeScheduledEvent, FakeTextChannel, at, make_member, run
+from test_lifecycle import FakeInteraction
 
 
 def make_created(env, days=(1,), **kwargs):
@@ -104,6 +105,24 @@ class TestLocation:
         assert event.scheduled_events[0].edits == [{"entity_type": EntityType.voice, "channel": other_channel,
                                                    "end_time": at(1, 22)}]
         assert fields(embed) == [("Location", f"{env.voice_channel.mention} -> <#3>")]
+
+    def test_busy_voice_channel_is_refused_for_created_event(self, env):
+        busy_channel = SimpleNamespace(id=3, name="Other", members=[], mention="<#3>")
+        busy = env.make_event([env.make_participant("b")], voice_channel=busy_channel, created=True,
+                              start_times=[at(1, 21)], scheduled_events=[FakeScheduledEvent(at(1, 21))])
+        event = make_created(env)
+        embed = run(env.sched.edit_event(event, voice_channel=busy_channel))
+        assert event.voice_channel is env.voice_channel
+        assert event.scheduled_events[0].edits == []
+        assert fields(embed) == [("Location (Unchanged)", f"{busy} is in <#3> at the same time")]
+
+    def test_busy_voice_channel_is_fine_before_creation(self, env):
+        busy_channel = SimpleNamespace(id=3, name="Other", members=[], mention="<#3>")
+        env.make_event([env.make_participant("b")], voice_channel=busy_channel, created=True,
+                       start_times=[at(1, 21)], scheduled_events=[FakeScheduledEvent(at(1, 21))])
+        event = env.make_event([env.make_participant("a")])
+        run(env.sched.edit_event(event, voice_channel=busy_channel))
+        assert event.voice_channel is busy_channel
 
     def test_same_voice_channel_is_unchanged(self, env):
         event = make_created(env)
@@ -396,6 +415,99 @@ class TestDuration:
         run(env.sched.edit_event(event, duration=180))
         assert event.duration == timedelta(hours=3)
 
+    def make_started(self, env, elapsed, **kwargs):
+        start = env.sched.now() - elapsed
+        return env.make_event(kwargs.pop("participants", None) or [env.make_participant("a")], created=True, started=True,
+                              start_times=[start], scheduled_events=[FakeScheduledEvent(start)], **kwargs)
+
+    def test_started_event_running_past_availability_cannot_extend(self, env):
+        now = env.sched.now()
+        a = env.make_participant("a", [TimeBlock(now - timedelta(hours=3), now - timedelta(minutes=15))])
+        event = self.make_started(env, timedelta(hours=2, minutes=15), participants=[a])
+        embed = run(env.sched.edit_event(event, duration=240))
+        assert event.duration == timedelta(hours=2)
+        assert fields(embed)[0][0] == "Duration (Unchanged)"
+
+    def test_started_event_availability_cut_to_now_still_limits(self, env):
+        now = env.sched.now()
+        # Availability is cut to start now once confirmed, after the event started
+        a = env.make_participant("a", [TimeBlock(now, now + timedelta(hours=1))])
+        event = self.make_started(env, timedelta(hours=1), participants=[a])
+        run(env.sched.edit_event(event, duration=240))
+        assert event.duration == timedelta(hours=2)
+
+    def test_failed_guild_event_edit_is_reported(self, env):
+        class FailingScheduledEvent(FakeScheduledEvent):
+            async def edit(self, **kwargs):
+                raise RuntimeError("404 Unknown Guild Scheduled Event")
+
+        event = make_created(env, days=(1, 2))
+        event.scheduled_events = [FailingScheduledEvent(at(1, 20)), FailingScheduledEvent(at(2, 20))]
+        embed = run(env.sched.edit_event(event, duration=60))
+        assert event.duration == timedelta(hours=1)
+        assert fields(embed) == [("Duration", "2 hours -> 1 hour"
+                                  "\nThe Discord event couldn't be updated, so it may still show the old end time.")]
+
+    @pytest.mark.parametrize("location, ending", [
+        ("Park", "so it will end now."),
+        (None, "so it will end once everyone leaves the voice channel."),
+    ])
+    def test_shortening_started_event_below_elapsed_time_warns_and_skips_discord(self, env, location, ending):
+        event = self.make_started(env, timedelta(minutes=90), location=location)
+        embed = run(env.sched.edit_event(event, duration=60))
+        assert fields(embed) == [("Duration", f"2 hours -> 1 hour\nIt has already run longer than that, {ending}")]
+        assert event.scheduled_events[0].edits == []
+
+    def test_no_end_warning_otherwise(self, env):
+        event = self.make_started(env, timedelta(minutes=30), location="Park")
+        embed = run(env.sched.edit_event(event, duration=60))
+        assert fields(embed) == [("Duration", "2 hours -> 1 hour")]
+        assert len(event.scheduled_events[0].edits) == 1
+
+    def test_blocked_wording_when_next_event_already_overlaps(self, env):
+        event = make_created(env)
+        other = env.make_event([env.make_participant("b")], created=True, start_times=[at(1, 21)],
+                               scheduled_events=[FakeScheduledEvent(at(1, 21))])
+        embed = run(env.sched.edit_event(event, duration=180))
+        assert fields(embed) == [("Duration (Unchanged)", f"The duration cannot be extended because {other} "
+                                  "starts before this event ends in the same voice channel")]
+
+    def test_blocked_wording_when_participants_event_already_overlaps(self, env):
+        a = env.make_participant("a")
+        a.answered = True
+        event = make_created(env, participants=[a])
+        a.removed_times = [RemovedTime("Other", TimeBlock(at(1, 21), at(1, 23)))]
+        embed = run(env.sched.edit_event(event, duration=180))
+        assert fields(embed) == [("Duration (Unchanged)", "The duration cannot be extended because Other, which shares "
+                                  "participants with this event, starts before it ends")]
+
+    def test_blocked_wording_when_availability_already_ended(self, env):
+        a = env.make_participant("a", [TimeBlock(at(1, 18), at(1, 21))])
+        event = make_created(env, participants=[a])
+        embed = run(env.sched.edit_event(event, duration=180))
+        assert fields(embed)[0][1].startswith("The duration cannot be extended because the participants' common "
+                                              "availability ends before this event ends.")
+
+    def test_waits_for_event_creation(self, env):
+        import asyncio
+        event = env.make_event([env.make_participant("a")])
+
+        async def go():
+            await event.create_lock.acquire()
+            edit = asyncio.ensure_future(env.sched.edit_event(event, duration=180))
+            await asyncio.sleep(0)
+            assert not edit.done()
+            # Created while the edit waits, so the edit sees it as created
+            event.created = True
+            event.start_times = [at(1, 20)]
+            event.scheduled_events = [FakeScheduledEvent(at(1, 20))]
+            env.make_event([env.make_participant("b")], created=True, start_times=[at(1, 22, 30)],
+                           scheduled_events=[FakeScheduledEvent(at(1, 22, 30))])
+            event.create_lock.release()
+            return await edit
+        run(go())
+        assert event.duration == timedelta(hours=2, minutes=30)
+
     def test_cannot_make_created_event_automatic(self, env):
         event = make_created(env)
         embed = run(env.sched.edit_event(event, duration=0))
@@ -508,3 +620,134 @@ class TestTimeout:
         event = env.make_event([env.make_participant("a")], timeout_at=env.sched.now() - timedelta(days=1))
         embed = run(env.sched.edit_event(event, timeout_days=1))
         assert fields(embed) == [("Timeout", "0 minutes -> 1 day")]
+
+
+class TestEditCommand:
+    def interaction(self, env, member=None):
+        interaction = FakeInteraction(member or make_member(7, "editor"))
+        interaction.guild = env.guild
+        interaction.channel = env.text_channel
+        return interaction
+
+    def test_edits_the_only_event_in_the_channel(self, env):
+        a = env.make_participant("a")
+        event = env.make_event([a])
+        interaction = self.interaction(env, a.member)
+        run(env.sched.edit_command.callback(interaction, duration=90))
+        assert event.duration == timedelta(minutes=90)
+        (followup,) = interaction.followups
+        assert followup["embed"].footer.text == "Edited by " + str(interaction.user)
+        assert env.update_messages_calls == [event]
+
+    def test_error_is_answered(self, env, monkeypatch):
+        a = env.make_participant("a")
+        env.make_event([a])
+
+        async def failing_edit_event(**kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(env.sched, "edit_event", failing_edit_event)
+        interaction = self.interaction(env, a.member)
+        run(env.sched.edit_command.callback(interaction, duration=90))
+        assert interaction.followups == [{"content": "Error editing event: boom", "ephemeral": True}]
+
+    def test_bad_location_is_answered(self, env):
+        env.make_event([env.make_participant("a")])
+        interaction = self.interaction(env)
+        run(env.sched.edit_command.callback(interaction, location="x" * 1000))
+        (kind, kwargs), = interaction.responses
+        assert kwargs["ephemeral"] and kwargs["content"].startswith("Error editing event:")
+
+    def test_no_events_is_answered(self, env):
+        interaction = self.interaction(env)
+        run(env.sched.edit_command.callback(interaction, duration=90))
+        assert interaction.responses[0][1]["content"] == "**No events were found in this channel.**"
+
+    def test_picks_event_from_dropdown_when_channel_has_several(self, env):
+        b = env.make_participant("b")
+        env.make_event([env.make_participant("a")])
+        second = env.make_event([b])
+        interaction = self.interaction(env, b.member)
+        run(env.sched.edit_command.callback(interaction, duration=90))
+        (select,) = interaction.responses[0][1]["view"].children
+        select._values = [second.get_limited_name(25)]
+        pick = self.interaction(env, b.member)
+        run(select.callback(pick))
+        assert second.duration == timedelta(minutes=90)
+        assert "embed" in pick.followups[0]
+
+    def test_non_participant_is_offered_to_join(self, env):
+        event = env.make_event([env.make_participant("a")])
+        outsider = make_member(70, "outsider")
+        env.guild.members[outsider.id] = outsider
+        env.text_channel.members.append(outsider)
+        interaction = self.interaction(env, outsider)
+        run(env.sched.edit_command.callback(interaction, duration=90))
+        assert event.duration == timedelta(hours=2)
+        (kind, kwargs), = interaction.responses
+        assert kwargs["content"] == f"You aren't a participant of {event}. Join it, then use /edit again."
+        join = self.interaction(env, outsider)
+        run(kwargs["view"].join_button_callback(join))
+        assert event.is_participant(outsider)
+        assert join.responses[0][1]["content"] == f"You joined {event}. Use /edit again."
+        run(env.sched.edit_command.callback(self.interaction(env, outsider), duration=90))
+        assert event.duration == timedelta(minutes=90)
+
+    def test_non_participant_picking_from_dropdown_is_refused(self, env):
+        env.make_event([env.make_participant("a")])
+        second = env.make_event([env.make_participant("b")])
+        interaction = self.interaction(env)
+        run(env.sched.edit_command.callback(interaction, duration=90))
+        (select,) = interaction.responses[0][1]["view"].children
+        select._values = [second.get_limited_name(25)]
+        pick = self.interaction(env)
+        run(select.callback(pick))
+        assert second.duration == timedelta(hours=2)
+        assert "aren't a participant" in pick.responses[0][1]["content"]
+
+    def hidden_event(self, env):
+        hidden_channel = FakeTextChannel(channel_id=50)
+        env.guild.channels[hidden_channel.id] = hidden_channel
+        return env.make_event([env.make_participant("a")], text_channel=hidden_channel)
+
+    def test_events_in_other_channels_are_not_offered(self, env):
+        other_channel = FakeTextChannel(channel_id=51)
+        editor = make_member(7, "editor")
+        other_channel.members.append(editor)
+        env.guild.members[editor.id] = editor
+        event = env.make_event([env.make_participant("a")], text_channel=other_channel)
+        event.add_user_as_participant(editor)
+        interaction = self.interaction(env, editor)
+        run(env.sched.edit_command.callback(interaction, duration=90))
+        assert event.duration == timedelta(hours=2)
+        assert interaction.responses[0][1]["content"] == "**No events were found in this channel.**"
+
+    def test_hidden_channel_event_is_not_offered_to_join(self, env):
+        event = self.hidden_event(env)
+        interaction = self.interaction(env)
+        assert run(env.sched.respond_if_not_participant(event, interaction, "/edit", verb="use"))
+        (kind, kwargs), = interaction.responses
+        assert kwargs == {"content": f"You aren't a participant of {event}.", "ephemeral": True}
+
+    def test_join_refused_after_losing_access_to_the_channel(self, env):
+        event = env.make_event([env.make_participant("a")])
+        outsider = make_member(70, "outsider")
+        view = env.sched.JoinEventView(event, "/edit", verb="use")
+        join = self.interaction(env, outsider)
+        run(view.join_button_callback(join))
+        assert not event.is_participant(outsider)
+        assert join.responses[0][1]["content"] == f"You can't see {event}'s channel, so you can't join it."
+
+
+class TestListEvents:
+    def test_hides_events_in_channels_the_user_cant_see(self, env):
+        hidden_channel = FakeTextChannel(channel_id=50)
+        env.make_event([env.make_participant("a")], text_channel=hidden_channel)
+        visible = env.make_event([env.make_participant("b")])
+        viewer = make_member(7, "viewer")
+        env.text_channel.members.append(viewer)
+        interaction = FakeInteraction(viewer)
+        interaction.guild = env.guild
+        run(env.sched.listevents_command.callback(interaction))
+        (followup,) = interaction.followups
+        assert [embed.title for embed in followup["embeds"][1:]] == [visible.get_general_embed().title]

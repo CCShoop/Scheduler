@@ -87,15 +87,17 @@ _topic("commands", "Other Commands",
          "Change an event in the current channel: its name, location, image, duration, multi-event setting, or timeout."
          "\nIf the channel has more than one event, pick one from a dropdown."
          "\nChanging the image of a created event updates the Discord event. Before it's created, the image is used once it is."
-         "\nA created event's duration can be lengthened up to the end of its participants' common availability, the start of another event they're in, and the start of the next event in the same voice channel."),
+         "\nA created event's duration can be lengthened up to the end of its participants' common availability, the start of another event they're in, and the start of the next event in the same voice channel."
+         "\nOnly the event's participants can edit it. Anyone else who can see its channel is offered to join it first."
+         "\nThe bot manages its Discord events, so changes made to them in Discord, other than starting, ending, or cancelling, are undone, and deleted ones are recreated."),
         ("/attach",
          "Have the bot manage a Discord event that was created outside the bot. The event option suggests the server's events the bot isn't managing yet."
          "\nOther events with the same name and location are added as more occurrences of it."
-         " If the bot already has an event with that name and location, the Discord event is added to it. Otherwise, everyone who can see the channel is a participant."),
+         " If the bot already has an event with that name and location, the Discord event is added to it, which only its participants can do. Otherwise, everyone who can see the channel is a participant."),
         ("/availability",
          "Show everyone's availability for an event in the current channel."),
         ("/listevents",
-         "List every event the bot is managing in this server."),
+         "List every event the bot is managing in this server, in channels you can see."),
         ("/listmyevents",
          "List every event you're a participant in."),
         ("/cutoff",
@@ -107,7 +109,7 @@ _topic("commands", "Other Commands",
         ("/tts",
          "Choose the voice that announces events starting and ending in their voice channels: espeak-ng, piper-en, piper-jp, or none to turn announcements off."
          "\nThe setting is for the whole server unless you set scope to This channel, which gives events made in this channel their own voice without changing the server's."
-         " Pick server's voice with This channel to go back to the server's voice. Anyone can change it, and the bot posts who changed it in the channel."
+         " Pick server's voice with This channel to go back to the server's voice. It needs the Manage Server permission, unless the server's admins allow others in its Integrations settings. The bot posts who changed it in the channel."
          "\nSee the Voice Announcements topic."),
         ("/help",
          "Show this help. Pick a topic to read about it.")])
@@ -193,7 +195,8 @@ _topic("managing", "Managing Events",
          " It reuses the location and participants, and lets you change the name, duration, image URL, and start time."
          "\nLeave Start Time blank to collect availability again, like /schedule."
          "\nEnter a Start Time to create the event at that time, like /create. A Duration of 0 or blank then uses 30 minutes."
-         "\nPress Forget to dismiss the button.")])
+         "\nIf the event's voice channel was deleted, the server's first voice channel is used."
+         "\nPress Forget to dismiss the button. Only participants can use either button.")])
 
 _topic("announcements", "Voice Announcements",
        "When /tts is set to a voice, the bot joins an event's voice or stage channel and says \"The event *name* is starting now.\""

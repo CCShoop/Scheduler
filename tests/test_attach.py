@@ -121,7 +121,7 @@ class TestAttach:
         assert bot_event(env, "Movie").duration == timedelta(minutes=env.sched.MAX_EVENT_DURATION)
 
     def test_uses_the_cover_image(self, env, attach):
-        guild_event = attach.guild_event(cover_image=SimpleNamespace(url="https://example.com/cover.png"))
+        guild_event = attach.guild_event(cover_image=SimpleNamespace(url="https://example.com/cover.png", key="cover"))
         attach.use(str(guild_event.id))
         assert bot_event(env, "Movie").image_url == "https://example.com/cover.png"
 
@@ -138,13 +138,14 @@ class TestAttach:
     def test_matching_occurrences_get_the_events_image(self, env, attach, monkeypatch):
         monkeypatch.setattr(env.sched.Event, "has_image_saved", property(lambda self: True))
         monkeypatch.setattr(env.sched.Event, "get_image", lambda self: b"image")
-        with_cover = attach.guild_event(cover_image=SimpleNamespace(url="https://example.com/cover.png"))
+        with_cover = attach.guild_event(cover_image=SimpleNamespace(url="https://example.com/cover.png", key="cover"))
         without_cover = attach.guild_event(start=at(2, 20))
         attach.use(str(with_cover.id))
         assert with_cover.edits == [] and without_cover.edits == [{"image": b"image"}]
 
     def test_joins_a_bot_event_with_the_same_name_and_location(self, env, attach):
         existing = env.make_event([env.make_participant("a")])
+        existing.add_user_as_participant(attach.user)
         existing_name = existing.name
         guild_event = attach.guild_event(existing_name)
         attach.use(str(guild_event.id))
@@ -165,10 +166,20 @@ class TestAttach:
         existing = env.make_event([env.make_participant("a")], created=True, multi_event=True,
                                   start_times=[at(1, 20), at(2, 20), at(4, 20)], scheduled_events=[linked])
         existing.name = "Movie"
+        existing.add_user_as_participant(attach.user)
         unlinked = attach.guild_event("Movie", at(2, 20))
         attach.use(str(unlinked.id))
         assert existing.scheduled_events == [linked, unlinked]
         assert existing.start_times == [at(1, 20), at(2, 20), at(4, 20)]
+
+
+    def test_non_participant_cant_add_to_a_bot_event(self, env, attach):
+        existing = env.make_event([env.make_participant("a")])
+        guild_event = attach.guild_event(existing.name)
+        interaction = attach.use(str(guild_event.id))
+        assert existing.scheduled_events == [] and existing.text_channel is env.text_channel
+        assert interaction.responses[0][1]["content"] == \
+            f"You aren't a participant of {existing}. Join it, then use /attach again."
 
 
 class TestRejected:

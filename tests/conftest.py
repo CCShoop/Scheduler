@@ -115,7 +115,7 @@ def env(sched, monkeypatch):
         event = sched.Event(name=f"unit-test-{next_id()}",
                             voice_channel=kwargs.pop("voice_channel", voice_channel),
                             guild=guild,
-                            text_channel=text_channel,
+                            text_channel=kwargs.pop("text_channel", text_channel),
                             participants=participants,
                             duration=duration,
                             multi_event=multi_event,
