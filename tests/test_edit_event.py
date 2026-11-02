@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from discord import EntityType
 
-from libs.participant import Participant, TimeBlock
+from libs.participant import Participant, RemovedTime, TimeBlock
 from fakes import FakeScheduledEvent, at, run
 
 
@@ -345,6 +345,56 @@ class TestDuration:
         embed = run(env.sched.edit_event(event, duration=240))
         assert event.duration == timedelta(hours=2, minutes=30)
         assert fields(embed)[0][1].endswith(f"so it ends before {other} starts in the same voice channel.")
+
+    def make_invited(self, env, name):
+        """A participant invited with /create, who counts as answered without entering availability."""
+        participant = env.make_participant(name)
+        participant.answered = True
+        return participant
+
+    def test_created_participants_without_availability_do_not_limit(self, env):
+        event = make_created(env, participants=[self.make_invited(env, "a"), self.make_invited(env, "b")])
+        embed = run(env.sched.edit_event(event, duration=300))
+        assert event.duration == timedelta(hours=5)
+        assert fields(embed) == [("Duration", "2 hours -> 5 hours")]
+
+    def test_participants_other_event_limits_without_availability(self, env, monkeypatch):
+        monkeypatch.setattr(env.sched, "EVENT_BUFFER_MINUTES", 10)
+        a = self.make_invited(env, "a")
+        event = make_created(env, participants=[a, self.make_invited(env, "b")])
+        other_channel = SimpleNamespace(id=3, name="Other", members=[], mention="<#3>")
+        other = env.make_event([Participant(member=a.member)], created=True, voice_channel=other_channel,
+                               start_times=[at(1, 23)],
+                               scheduled_events=[FakeScheduledEvent(at(1, 23))])
+        env.sched.remove_times_from_availabilities_for_events()
+        embed = run(env.sched.edit_event(event, duration=300))
+        assert event.duration == timedelta(hours=2, minutes=50)
+        assert fields(embed) == [("Duration", "2 hours -> 2 hours, 50 minutes"
+                                  f"\nLimited to 2 hours, 50 minutes so it ends before {other} starts, "
+                                  "which shares participants with it.")]
+
+    def test_cannot_extend_into_participants_next_event(self, env):
+        a = env.make_participant("a", [TimeBlock(at(1, 18), at(1, 23))])
+        event = make_created(env, participants=[a])
+        other_channel = SimpleNamespace(id=3, name="Other", members=[], mention="<#3>")
+        other = env.make_event([Participant(member=a.member, availability=[TimeBlock(at(1, 18), at(1, 23))])],
+                               created=True, voice_channel=other_channel, start_times=[at(1, 22)],
+                               scheduled_events=[FakeScheduledEvent(at(1, 22))])
+        env.sched.remove_times_from_availabilities_for_events()
+        embed = run(env.sched.edit_event(event, duration=180))
+        assert event.duration == timedelta(hours=2)
+        assert fields(embed) == [("Duration (Unchanged)", f"The duration cannot be extended because {other}, which "
+                                  "shares participants with this event, starts right after it ends")]
+
+    def test_earlier_and_unsubscribed_participant_events_do_not_limit(self, env):
+        a = self.make_invited(env, "a")
+        b = self.make_invited(env, "b")
+        b.subscribed = False
+        event = make_created(env, participants=[a, b])
+        a.removed_times = [RemovedTime("earlier", TimeBlock(at(1, 18), at(1, 19)))]
+        b.removed_times = [RemovedTime("later", TimeBlock(at(1, 21), at(1, 22)))]
+        run(env.sched.edit_event(event, duration=180))
+        assert event.duration == timedelta(hours=3)
 
     def test_cannot_make_created_event_automatic(self, env):
         event = make_created(env)
