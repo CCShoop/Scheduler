@@ -3193,7 +3193,8 @@ class Event:
         """
         Gets the longest duration every occurrence can have within the common availability of subscribed participants,
         from the availability block each one has at the occurrence's start, or now if it has already started.
-        Participants without availability at that time, such as those invited with /create, don't limit it.
+        Participants without availability at that time, such as those invited with /create, don't limit it here,
+        only through their other events in get_shared_participant_duration_limit().
         Returns None when nobody limits it.
         """
         limit = None
@@ -3209,6 +3210,26 @@ class Event:
                             limit = available
                         break
         return limit
+
+    def get_shared_participant_duration_limit(self) -> tuple[Optional[timedelta], Optional[str]]:
+        """
+        Gets the longest duration every occurrence can have before the next other event of a subscribed participant,
+        leaving EVENT_BUFFER_MINUTES before it, and that event's name.
+        This also covers participants without availability, such as those invited with /create, whose other events
+        are saved as removed times. Returns (None, None) when none of them have another event after it.
+        """
+        limit, other_event_name = None, None
+        for start_time in self.start_times:
+            for participant in self.participants:
+                if not participant.subscribed or participant.is_bot:
+                    continue
+                for removed_time in participant.removed_times:
+                    if removed_time.event_name == self.name or removed_time.start_time <= start_time:
+                        continue
+                    gap = removed_time.start_time - start_time - timedelta(minutes=EVENT_BUFFER_MINUTES)
+                    if limit is None or gap < limit:
+                        limit, other_event_name = gap, removed_time.event_name
+        return limit, other_event_name
 
     def get_voice_channel_duration_limit(self) -> tuple[Optional[timedelta], Optional['Event']]:
         """
@@ -5197,8 +5218,16 @@ async def edit_event(event: Event,
             requested = get_time_str_from_minutes(duration)
             reschedule_tip = "" if event.started else (f" To make the event duration {requested}, you will need to press Reschedule Event, "
                                                        "then set the duration again to find a time that fits it.")
+            shared_limit, shared_event_name = event.get_shared_participant_duration_limit()
             availability_limit = event.get_availability_duration_limit()
             channel_limit, limiting_event = event.get_voice_channel_duration_limit()
+            # Checked first, so it's reported when a participant's availability ends because of that event
+            if shared_limit is not None and new_duration > shared_limit:
+                new_duration = timedelta(minutes=int(shared_limit.total_seconds() // 60))
+                note = (f"\nLimited to {get_time_str_from_minutes(new_duration.total_seconds() // 60)} "
+                        f"so it ends before {shared_event_name} starts, which shares participants with it.")
+                blocked = (f"The duration cannot be extended because {shared_event_name}, which shares participants "
+                           "with this event, starts right after it ends")
             if availability_limit is not None and new_duration > availability_limit:
                 new_duration = timedelta(minutes=int(availability_limit.total_seconds() // 60))
                 note = (f"\nLimited to {get_time_str_from_minutes(new_duration.total_seconds() // 60)} because "

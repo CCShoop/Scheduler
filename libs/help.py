@@ -87,7 +87,7 @@ _topic("commands", "Other Commands",
          "Change an event in the current channel: its name, location, image, duration, multi-event setting, or timeout."
          "\nIf the channel has more than one event, pick one from a dropdown."
          "\nChanging the image of a created event updates the Discord event. Before it's created, the image is used once it is."
-         "\nA created event's duration can be lengthened up to the end of its participants' common availability and the start of the next event in the same voice channel."),
+         "\nA created event's duration can be lengthened up to the end of its participants' common availability, the start of another event they're in, and the start of the next event in the same voice channel."),
         ("/attach",
          "Have the bot manage a Discord event that was created outside the bot. The event option suggests the server's events the bot isn't managing yet."
          "\nOther events with the same name and location are added as more occurrences of it."
