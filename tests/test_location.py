@@ -245,6 +245,33 @@ class TestRestoreGuildEvent:
         assert event.voice_channel is env.voice_channel and event.location is None
         assert scheduled_event.edits == [{"entity_type": EntityType.voice, "channel": env.voice_channel, "end_time": at(1, 22)}]
 
+    def test_case_change_of_typed_location_is_put_back(self, env):
+        scheduled_event = FakeScheduledEvent(at(1, 20), entity_type=EntityType.external, location="Park", end_time=at(1, 22))
+        env.guild.created.append(scheduled_event)
+        event = env.make_event([env.make_participant("a")], location="Park", created=True, start_times=[at(1, 20)],
+                               scheduled_events=[scheduled_event])
+        scheduled_event.kwargs["name"] = event.name
+        scheduled_event.kwargs["location"] = "PARK"
+        assert run(event.restore_guild_event(scheduled_event.id)) == ["entity_type", "location", "end_time"]
+
+    def test_running_long_event_moved_back_without_a_past_end_time(self, env):
+        start = env.sched.now() - timedelta(hours=3)
+        event, scheduled_event = self.make_created_voice_event(env, status=EventStatus.active)
+        event.start_times = [start]
+        scheduled_event.start_time = start
+        scheduled_event.kwargs.update(channel=SimpleNamespace(id=99), end_time=start + timedelta(hours=2))
+        assert run(event.restore_guild_event(scheduled_event.id)) == ["entity_type", "channel"]
+        assert scheduled_event.edits == [{"entity_type": EntityType.voice, "channel": env.voice_channel}]
+
+    def test_running_long_typed_location_event_is_not_moved_without_an_end_time(self, env):
+        start = env.sched.now() - timedelta(hours=3)
+        scheduled_event = FakeScheduledEvent(start, status=EventStatus.active, channel=env.voice_channel, end_time=start + timedelta(hours=2))
+        env.guild.created.append(scheduled_event)
+        event = env.make_event([env.make_participant("a")], location="Park", created=True, started=True,
+                               start_times=[start], scheduled_events=[scheduled_event])
+        scheduled_event.kwargs["name"] = event.name
+        assert run(event.restore_guild_event(scheduled_event.id)) == []
+
     def test_name_times_and_description_are_put_back(self, env):
         event, scheduled_event = self.make_created_voice_event(env, description="Bot-generated event")
         scheduled_event.kwargs.update(name="Free nitro", description="join my server", end_time=at(1, 23))

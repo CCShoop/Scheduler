@@ -1205,6 +1205,16 @@ class Event:
                 if await self.cancel_if_missed():
                     return
                 await self.sync_start_button()
+                # A guild event cancelled after its start time, e.g. by Discord for never being started,
+                # cancels the occurrence, since recreating it would move it to now
+                if self.scheduled_events[0].status == EventStatus.cancelled and self.start_times[0] <= now():
+                    reason = "Its Discord event was cancelled."
+                    logger.info(f"[{self}] Cancelling occurrence starting {self.start_times[0]}, its guild event was cancelled after its start time")
+                    if self.on_last_occurrence:
+                        await self.cancel(reason=reason, canceller="Event Scheduler", schedule_again=True)
+                    else:
+                        await self.cancel_occurrences([self.scheduled_events[0]], reason=reason, canceller="Event Scheduler")
+                    return
                 # Recreate the event if it was manually cancelled
                 if self.scheduled_events[0].status == EventStatus.cancelled:
                     # make_scheduled_events only creates trailing missing guild events,
@@ -3335,9 +3345,19 @@ class Event:
         # Discord can't end a guild event in the past
         if end_time > now() and (guild_event.end_time is None or abs(guild_event.end_time - end_time) > GUILD_EVENT_TIME_TOLERANCE):
             kwargs["end_time"] = end_time
-        if get_location_key(*get_guild_event_location(guild_event)) != self.location_key or guild_event.entity_type != self.entity_type:
-            kwargs["entity_type"] = self.entity_type
-            kwargs.update(self.get_location_kwargs(start_time))
+        guild_voice_channel, guild_location = get_guild_event_location(guild_event)
+        # Typed locations are compared exactly, so a change in case is put back too
+        moved = (get_location_key(guild_voice_channel, guild_location) != self.location_key
+                 or guild_event.entity_type != self.entity_type
+                 or (self.is_external and guild_location != self.location.strip()))
+        if moved:
+            location_kwargs = self.get_location_kwargs(start_time)
+            if end_time <= now():
+                del location_kwargs["end_time"]
+            # Discord needs an end time to move a guild event to a typed location, and can't take one in the past
+            if not self.is_external or "end_time" in location_kwargs:
+                kwargs["entity_type"] = self.entity_type
+                kwargs.update(location_kwargs)
         image_key = guild_event.cover_image.key if guild_event.cover_image is not None else None
         if image_key != self.guild_event_image_keys.get(guild_event_id, image_key):
             kwargs["image"] = self.get_image() if self.has_image_saved else None
@@ -3382,6 +3402,23 @@ class Event:
         """
         return (not self.is_external and self.voice_channel is not None
                 and self.location_key == event.location_key)
+
+    def get_voice_channel_conflict(self, voice_channel: VoiceChannel | StageChannel) -> Optional['Event']:
+        """
+        Gets a created event in the voice channel that one of this event's occurrences would overlap with if moved there.
+        Events that haven't been created yet avoid taken times when they're scheduled, so only created ones are checked.
+        """
+        location_key = get_location_key(voice_channel, None)
+        for other_event in client.events:
+            if other_event is self or not other_event.created or other_event.is_external or other_event.location_key != location_key:
+                continue
+            for start_time in self.start_times:
+                timeblock = TimeBlock(start_time=start_time, end_time=start_time + self.scheduled_duration)
+                for other_start_time in other_event.start_times:
+                    if timeblock.overlaps_with(TimeBlock(start_time=other_start_time,
+                                                         end_time=other_start_time + other_event.scheduled_duration)):
+                        return other_event
+        return None
 
     def get_availability_duration_limit(self) -> Optional[timedelta]:
         """
@@ -5006,6 +5043,11 @@ class VoiceChannelPrompt(View):
         if not self.event.voice_channel_missing:
             await interaction.response.send_message(content=f"{self.event} already has a location.", ephemeral=True)
             return
+        conflict = self.event.get_voice_channel_conflict(voice_channel) if self.event.created else None
+        if conflict is not None:
+            await interaction.response.send_message(content=f"{conflict} is in {voice_channel.mention} at the same time. Select another voice channel.",
+                                                    ephemeral=True)
+            return
         await interaction.response.defer()
         mover = interaction.user.nick if getattr(interaction.user, "nick", None) else interaction.user.name
         await self.event.move_to_voice_channel(voice_channel, mover)
@@ -5439,9 +5481,14 @@ async def edit_event(event: Event,
         # Location: an external location takes priority over a voice channel
         if location is not None or voice_channel is not None:
             old_location = event.location_string
+            conflict = event.get_voice_channel_conflict(voice_channel) if event.created and not location else None
             if get_location_key(voice_channel, location) == event.location_key:
                 embed.add_field(name="Location (Unchanged)",
                                 value=f"Location is already {old_location}",
+                                inline=False)
+            elif conflict is not None:
+                embed.add_field(name="Location (Unchanged)",
+                                value=f"{conflict} is in {voice_channel.mention} at the same time",
                                 inline=False)
             else:
                 event.location = location or None

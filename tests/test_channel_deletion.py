@@ -5,7 +5,7 @@ import pytest
 from discord import EntityType
 
 from libs.participant import TimeBlock
-from fakes import at, run
+from fakes import FakeScheduledEvent, at, run
 from test_lifecycle import FakeInteraction, make_created_event
 
 
@@ -166,6 +166,28 @@ class TestVoiceChannelDeleted:
         assert event.voice_channel_missing
         assert interaction.responses[0][1]["content"] == \
             f"You aren't a participant of {event}. Join it, then use the voice channel dropdown again."
+
+    def test_selecting_a_busy_voice_channel_is_refused(self, env):
+        event, _ = make_created_event(env)
+        busy_channel = add_voice_channel(env)
+        busy = env.make_event([env.make_participant("b")], voice_channel=busy_channel, created=True,
+                              start_times=[at(1, 21)], scheduled_events=[FakeScheduledEvent(at(1, 21))])
+        delete_channel(env, env.voice_channel)
+        prompt = event.voice_channel_prompt
+        prompt.channel_select._values = [SimpleNamespace(id=busy_channel.id)]
+        interaction = FakeInteraction(event.participants[0].member)
+        run(prompt.channel_select_callback(interaction))
+        assert event.voice_channel_missing
+        assert interaction.responses[0][1]["content"] == \
+            f"{busy} is in {busy_channel.mention} at the same time. Select another voice channel."
+
+    def test_back_to_back_and_uncreated_events_are_not_conflicts(self, env):
+        event, _ = make_created_event(env)
+        other_channel = add_voice_channel(env)
+        env.make_event([env.make_participant("b")], voice_channel=other_channel, created=True,
+                       start_times=[at(1, 22)], scheduled_events=[FakeScheduledEvent(at(1, 22))])
+        env.make_event([env.make_participant("c")], voice_channel=other_channel, start_times=[at(1, 20)])
+        assert event.get_voice_channel_conflict(other_channel) is None
 
     def test_cancel_button_opens_cancel_modal(self, env):
         participant = env.make_participant("a")

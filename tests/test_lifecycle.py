@@ -1515,6 +1515,35 @@ class TestAutoCancelWhenAllUnsubscribed:
         assert event.event_buttons_message is None
 
 
+class TestGuildEventCancelledInDiscord:
+    def test_cancelled_before_its_start_time_is_recreated(self, env):
+        event, (scheduled_event,) = make_created_event(env)
+        scheduled_event.status = EventStatus.cancelled
+        run(event.update())
+        assert event.created and not event.cancelled
+        (recreated,) = event.scheduled_events
+        assert recreated is not scheduled_event and recreated.start_time == at(1, 20)
+
+    def test_cancelled_after_its_start_time_cancels_the_event(self, env):
+        event, (scheduled_event,) = make_created_event(env)
+        late = env.sched.now() - timedelta(minutes=10)
+        event.start_times = [late]
+        scheduled_event.status = EventStatus.cancelled
+        run(event.update())
+        assert event.cancelled
+        assert env.guild.created == []
+        assert env.sched.client.schedule_again_events[-1].event is event
+
+    def test_cancelled_after_its_start_time_cancels_only_that_occurrence(self, env):
+        event, (first, second) = make_created_event(env, days=(1, 2))
+        event.start_times[0] = env.sched.now() - timedelta(minutes=10)
+        first.status = EventStatus.cancelled
+        run(event.update())
+        assert not event.cancelled
+        assert event.scheduled_events == [second]
+        assert env.guild.created == []
+
+
 class TestScheduleAgain:
     def cancel_with_schedule_again(self, env, **kwargs):
         event = env.make_event([env.make_participant("a")], **kwargs)

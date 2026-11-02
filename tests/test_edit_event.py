@@ -106,6 +106,24 @@ class TestLocation:
                                                    "end_time": at(1, 22)}]
         assert fields(embed) == [("Location", f"{env.voice_channel.mention} -> <#3>")]
 
+    def test_busy_voice_channel_is_refused_for_created_event(self, env):
+        busy_channel = SimpleNamespace(id=3, name="Other", members=[], mention="<#3>")
+        busy = env.make_event([env.make_participant("b")], voice_channel=busy_channel, created=True,
+                              start_times=[at(1, 21)], scheduled_events=[FakeScheduledEvent(at(1, 21))])
+        event = make_created(env)
+        embed = run(env.sched.edit_event(event, voice_channel=busy_channel))
+        assert event.voice_channel is env.voice_channel
+        assert event.scheduled_events[0].edits == []
+        assert fields(embed) == [("Location (Unchanged)", f"{busy} is in <#3> at the same time")]
+
+    def test_busy_voice_channel_is_fine_before_creation(self, env):
+        busy_channel = SimpleNamespace(id=3, name="Other", members=[], mention="<#3>")
+        env.make_event([env.make_participant("b")], voice_channel=busy_channel, created=True,
+                       start_times=[at(1, 21)], scheduled_events=[FakeScheduledEvent(at(1, 21))])
+        event = env.make_event([env.make_participant("a")])
+        run(env.sched.edit_event(event, voice_channel=busy_channel))
+        assert event.voice_channel is busy_channel
+
     def test_same_voice_channel_is_unchanged(self, env):
         event = make_created(env)
         embed = run(env.sched.edit_event(event, voice_channel=env.voice_channel))
