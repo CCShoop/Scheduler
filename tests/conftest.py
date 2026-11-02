@@ -71,11 +71,13 @@ def sched(monkeypatch):
     scheduler.client.schedule_again_events.clear()
     scheduler.participant_lib.users.clear()
     scheduler.announcer_lib.guild_engines.clear()
+    scheduler.announcer_lib.channel_engines.clear()
     yield scheduler
     scheduler.client.events.clear()
     scheduler.client.schedule_again_events.clear()
     scheduler.participant_lib.users.clear()
     scheduler.announcer_lib.guild_engines.clear()
+    scheduler.announcer_lib.channel_engines.clear()
 
 
 @pytest.fixture

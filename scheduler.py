@@ -236,6 +236,9 @@ def load_settings() -> None:
             engine = settings.get('tts_engine')
             if engine in announcer_lib.ENGINES:
                 announcer_lib.guild_engines[int(guild_id)] = engine
+            for text_channel_id, channel_engine in settings.get('channel_tts_engines', {}).items():
+                if channel_engine in announcer_lib.ENGINES:
+                    announcer_lib.set_channel_engine(int(guild_id), int(text_channel_id), channel_engine)
         except Exception as e:
             logger.error(f"Could not load saved settings of guild {guild_id}: {e}")
     client.settings_loaded = True
@@ -827,7 +830,13 @@ class SchedulerClient(Client):
         Guilds' saved settings by guild ID, for writing to the guild data file.
         """
         # JSON keys are strings
-        return {str(guild_id): {'tts_engine': engine} for guild_id, engine in announcer_lib.guild_engines.items()}
+        data = {}
+        for guild_id, engine in announcer_lib.guild_engines.items():
+            data.setdefault(str(guild_id), {})['tts_engine'] = engine
+        for guild_id, overrides in announcer_lib.channel_engines.items():
+            data.setdefault(str(guild_id), {})['channel_tts_engines'] = {str(text_channel_id): engine
+                                                                         for text_channel_id, engine in overrides.items()}
+        return data
 
     async def setup_hook(self):
         """
@@ -1673,10 +1682,10 @@ class Event:
         await update_changed_availability_messages(availability_states, exclude=self)
 
     def announce(self, action: str) -> None:
-        """Reads out that the event is starting or ending now in its voice channel, if its guild has announcements on."""
+        """Reads out that the event is starting or ending now in its voice channel, if announcements are on for its text channel."""
         if self.is_external or self.voice_channel is None:
             return
-        announcer.announce(self.guild, self.voice_channel, self.name, action)
+        announcer.announce(self.guild, self.voice_channel, self.name, action, text_channel_id=self.text_channel.id)
 
     @property
     def earliest_usable_end(self) -> datetime:
@@ -3179,6 +3188,46 @@ class Event:
         Events at the same external location can overlap, e.g. separate groups at a range.
         """
         return not self.is_external and self.location_key == event.location_key
+
+    def get_availability_duration_limit(self) -> Optional[timedelta]:
+        """
+        Gets the longest duration every occurrence can have within the common availability of subscribed participants,
+        from the availability block each one has at the occurrence's start, or now if it has already started.
+        Participants without availability at that time, such as those invited with /create, don't limit it.
+        Returns None when nobody limits it.
+        """
+        limit = None
+        for start_time in self.start_times:
+            anchor = max(start_time, now())
+            for participant in self.participants:
+                if not participant.subscribed or participant.is_bot or not participant.answered:
+                    continue
+                for timeblock in participant.availability:
+                    if timeblock.start_time <= anchor < timeblock.end_time:
+                        available = timeblock.end_time - start_time
+                        if limit is None or available < limit:
+                            limit = available
+                        break
+        return limit
+
+    def get_voice_channel_duration_limit(self) -> tuple[Optional[timedelta], Optional['Event']]:
+        """
+        Gets the longest duration every occurrence can have before reaching the next created event in the same voice channel,
+        including this event's own later occurrences, leaving EVENT_BUFFER_MINUTES before it, and the event that sets the limit.
+        Returns (None, None) when nothing follows, such as for an external location.
+        """
+        limit, limiting_event = None, None
+        for start_time in self.start_times:
+            for event in client.events:
+                if not event.created or not event.shares_voice_channel(self):
+                    continue
+                for other_start_time in event.start_times:
+                    if other_start_time <= start_time:
+                        continue
+                    gap = other_start_time - start_time - timedelta(minutes=EVENT_BUFFER_MINUTES)
+                    if limit is None or gap < limit:
+                        limit, limiting_event = gap, event
+        return limit, limiting_event
 
     def get_location_kwargs(self, start_time: datetime) -> dict:
         """
@@ -5141,15 +5190,38 @@ async def edit_event(event: Event,
     if duration is not None:
         old_duration = event.duration
         new_duration = timedelta(minutes=duration)
-        # An automatic duration has no set end, so it extends the event too
-        extends = duration == 0 or new_duration > event.scheduled_duration
-        if old_duration == new_duration:
+        note = ""
+        blocked = ""
+        if event.created and duration != 0 and new_duration > event.scheduled_duration:
+            # Extending stops at the end of the common availability and at the next event in the same voice channel
+            requested = get_time_str_from_minutes(duration)
+            reschedule_tip = "" if event.started else (f" To make the event duration {requested}, you will need to press Reschedule Event, "
+                                                       "then set the duration again to find a time that fits it.")
+            availability_limit = event.get_availability_duration_limit()
+            channel_limit, limiting_event = event.get_voice_channel_duration_limit()
+            if availability_limit is not None and new_duration > availability_limit:
+                new_duration = timedelta(minutes=int(availability_limit.total_seconds() // 60))
+                note = (f"\nLimited to {get_time_str_from_minutes(new_duration.total_seconds() // 60)} because "
+                        f"{requested} is longer than the participants' common availability.{reschedule_tip}")
+                blocked = (f"The duration cannot be extended because the participants' common availability "
+                           f"ends when this event ends.{reschedule_tip}")
+            if channel_limit is not None and new_duration > channel_limit:
+                new_duration = timedelta(minutes=int(channel_limit.total_seconds() // 60))
+                note = (f"\nLimited to {get_time_str_from_minutes(new_duration.total_seconds() // 60)} "
+                        f"so it ends before {limiting_event} starts in the same voice channel.")
+                blocked = (f"The duration cannot be extended because {limiting_event} "
+                           "starts right after this event ends in the same voice channel")
+        if blocked and new_duration <= event.scheduled_duration:
+            embed.add_field(name="Duration (Unchanged)",
+                            value=blocked,
+                            inline=False)
+        elif old_duration == new_duration:
             embed.add_field(name="Duration (Unchanged)",
                             value="The new duration is the same as the old duration",
                             inline=False)
-        elif event.created and extends:
+        elif event.created and duration == 0:
             embed.add_field(name="Duration (Unchanged)",
-                            value="The duration of a created event cannot be extended",
+                            value="The duration of a created event cannot be made automatic",
                             inline=False)
         else:
             event.duration = new_duration
@@ -5159,7 +5231,7 @@ async def edit_event(event: Event,
             remove_times_from_availabilities_for_events()
             embed.add_field(name="Duration",
                             value=f"{get_time_str_from_minutes(old_duration.total_seconds() // 60)}"
-                            f" -> {get_time_str_from_minutes(event.duration.total_seconds() // 60)}",
+                            f" -> {get_time_str_from_minutes(event.duration.total_seconds() // 60)}{note}",
                             inline=False)
     # Multi event
     if multi_event is not None:
@@ -5233,7 +5305,7 @@ async def on_guild_remove(guild: Guild):
             client.schedule_again_events.remove(after_buttons)
             logger.info(f"[{after_buttons.event}] Forgot schedule again buttons of removed guild")
     prune_users()
-    announcer_lib.set_engine(guild.id, announcer_lib.NONE)
+    announcer_lib.forget_guild(guild.id)
 
 
 @client.event
@@ -5244,6 +5316,7 @@ async def on_raw_member_remove(payload):
 
 @client.event
 async def on_guild_channel_delete(channel):
+    announcer_lib.set_channel_engine(channel.guild.id, channel.id, None)
     for event in client.events.copy():
         if event.guild.id != channel.guild.id:
             continue
@@ -5961,26 +6034,58 @@ async def cutoff_command(interaction: Interaction,
     await interaction.response.send_message(content=f"Your Full Availability now extends to {participant_lib.format_cutoff(hours)}.", ephemeral=True)
 
 
-@client.tree.command(name='tts', description='Set the voice that announces events starting and ending in this server.')
-@app_commands.describe(engine='The text-to-speech engine to read out announcements with, or none to turn them off.')
+# Only for the channel scope, goes back to the server's engine
+TTS_SERVER_ENGINE = "server"
+TTS_SCOPE_GUILD = "guild"
+TTS_SCOPE_CHANNEL = "channel"
+
+
+@client.tree.command(name='tts', description='Set the voice that announces events starting and ending.')
+@app_commands.describe(engine='The text-to-speech engine to read out announcements with, or none to turn them off.',
+                       scope="Set the server's voice (default), or a voice for events made in this channel instead.")
 # Labeled with each piper slot's language, read when the bot starts
 @app_commands.choices(engine=[app_commands.Choice(name=announcer_lib.get_engine_label(engine), value=engine)
-                              for engine in announcer_lib.ENGINES])
-async def tts_command(interaction: Interaction, engine: str):
+                              for engine in announcer_lib.ENGINES]
+                      + [app_commands.Choice(name="server's voice (this channel only)", value=TTS_SERVER_ENGINE)],
+                      scope=[app_commands.Choice(name="Server", value=TTS_SCOPE_GUILD),
+                             app_commands.Choice(name="This channel", value=TTS_SCOPE_CHANNEL)])
+async def tts_command(interaction: Interaction, engine: str, scope: str = TTS_SCOPE_GUILD):
     if interaction.guild is None:
         await interaction.response.send_message(content="Announcements can only be set in a server.", ephemeral=True)
         return
+    name = interaction.user.display_name
+    if scope == TTS_SCOPE_CHANNEL:
+        if engine == TTS_SERVER_ENGINE:
+            announcer_lib.set_channel_engine(interaction.guild.id, interaction.channel.id, None)
+            logger.info(f"[{interaction.guild.name}] {interaction.user.name} set the text-to-speech engine of "
+                        f"#{interaction.channel.name} back to the server's")
+            label = announcer_lib.get_engine_label(announcer_lib.get_engine(interaction.guild.id))
+            await interaction.response.send_message(content=f"**{name}** set voice announcements of events made in this channel "
+                                                    f"back to the server's voice, **{label}**.")
+            return
+        where = " made in this channel"
+    elif engine == TTS_SERVER_ENGINE:
+        await interaction.response.send_message(content="The server's voice can only be picked for a channel. Pick a voice for the server.",
+                                                ephemeral=True)
+        return
+    else:
+        where = ""
     missing = announcer_lib.missing_requirements(engine)
     if missing:
         await interaction.response.send_message(content=f"{engine} can't be used, the bot's host is missing {', '.join(missing)}.",
                                                 ephemeral=True)
         return
-    announcer_lib.set_engine(interaction.guild.id, engine)
-    logger.info(f"[{interaction.guild.name}] {interaction.user.name} set the text-to-speech engine to {engine}")
-    if engine == announcer_lib.NONE:
-        content = f"**{interaction.user.display_name}** turned off voice announcements of events starting and ending."
+    if scope == TTS_SCOPE_CHANNEL:
+        announcer_lib.set_channel_engine(interaction.guild.id, interaction.channel.id, engine)
+        logger.info(f"[{interaction.guild.name}] {interaction.user.name} set the text-to-speech engine of "
+                    f"#{interaction.channel.name} to {engine}")
     else:
-        content = f"**{interaction.user.display_name}** set voice announcements of events starting and ending to **{announcer_lib.get_engine_label(engine)}**."
+        announcer_lib.set_engine(interaction.guild.id, engine)
+        logger.info(f"[{interaction.guild.name}] {interaction.user.name} set the text-to-speech engine to {engine}")
+    if engine == announcer_lib.NONE:
+        content = f"**{name}** turned off voice announcements of events{where} starting and ending."
+    else:
+        content = f"**{name}** set voice announcements of events{where} starting and ending to **{announcer_lib.get_engine_label(engine)}**."
     await interaction.response.send_message(content=content)
 
 

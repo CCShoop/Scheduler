@@ -86,7 +86,8 @@ _topic("commands", "Other Commands",
        [("/edit",
          "Change an event in the current channel: its name, location, image, duration, multi-event setting, or timeout."
          "\nIf the channel has more than one event, pick one from a dropdown."
-         "\nChanging the image of a created event updates the Discord event. Before it's created, the image is used once it is."),
+         "\nChanging the image of a created event updates the Discord event. Before it's created, the image is used once it is."
+         "\nA created event's duration can be lengthened up to the end of its participants' common availability and the start of the next event in the same voice channel."),
         ("/attach",
          "Have the bot manage a Discord event that was created outside the bot. The event option suggests the server's events the bot isn't managing yet."
          "\nOther events with the same name and location are added as more occurrences of it."
@@ -105,7 +106,8 @@ _topic("commands", "Other Commands",
          "\nLeave the number blank to go back to the default. The setting is yours alone and applies in every server."),
         ("/tts",
          "Choose the voice that announces events starting and ending in their voice channels: espeak-ng, piper-en, piper-jp, or none to turn announcements off."
-         "\nThe setting is for the whole server. Anyone can change it, and the bot posts who changed it in the channel."
+         "\nThe setting is for the whole server unless you set scope to This channel, which gives events made in this channel their own voice without changing the server's."
+         " Pick server's voice with This channel to go back to the server's voice. Anyone can change it, and the bot posts who changed it in the channel."
          "\nSee the Voice Announcements topic."),
         ("/help",
          "Show this help. Pick a topic to read about it.")])

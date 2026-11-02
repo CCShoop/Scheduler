@@ -66,6 +66,7 @@ def voice(monkeypatch):
     monkeypatch.setattr(announcer_lib, "FFmpegPCMAudio", lambda path: "audio")
     yield SimpleNamespace(guild=guild, log=log)
     announcer_lib.guild_engines.clear()
+    announcer_lib.channel_engines.clear()
 
 
 def announce_all(announcer, guild, *announcements):
@@ -90,6 +91,36 @@ class TestAnnounce:
         assert voice.log == [("synthesize", ESPEAK_NG, "The event one is starting now."), ("connect", 1), ("play", 1, "audio"),
                              ("synthesize", ESPEAK_NG, "The event two is ending now."), ("move", 2), ("play", 2, "audio"),
                              ("disconnect", 2)]
+
+    def test_text_channel_engine_is_used(self, voice):
+        announcer_lib.set_channel_engine(voice.guild.id, 30, PIPER_EN)
+        channel = make_voice_channel(voice.guild, 1, voice.log)
+        announcer = Announcer()
+
+        async def go():
+            announcer.announce(voice.guild, channel, "game", "starting", text_channel_id=30)
+            announcer.announce(voice.guild, channel, "other", "starting", text_channel_id=31)
+            await announcer.workers[voice.guild.id]
+        run(go())
+        assert [entry[1] for entry in voice.log if entry[0] == "synthesize"] == [PIPER_EN, ESPEAK_NG]
+
+    def test_text_channel_turned_off_skips_while_server_is_on(self, voice):
+        announcer_lib.set_channel_engine(voice.guild.id, 30, NONE)
+        announcer = Announcer()
+        announcer.announce(voice.guild, make_voice_channel(voice.guild, 1, voice.log), "game", "starting", text_channel_id=30)
+        assert voice.guild.id not in announcer.workers
+
+    def test_text_channel_on_while_server_is_off(self, voice):
+        announcer_lib.set_engine(voice.guild.id, NONE)
+        announcer_lib.set_channel_engine(voice.guild.id, 30, PIPER_JP)
+        channel = make_voice_channel(voice.guild, 1, voice.log)
+        announcer = Announcer()
+
+        async def go():
+            announcer.announce(voice.guild, channel, "game", "starting", text_channel_id=30)
+            await announcer.workers[voice.guild.id]
+        run(go())
+        assert [entry[1] for entry in voice.log if entry[0] == "synthesize"] == [PIPER_JP]
 
     def test_announcements_off_does_nothing(self, voice):
         announcer_lib.set_engine(voice.guild.id, NONE)
@@ -354,16 +385,17 @@ class TestErrorLine:
 class TestEventAnnouncements:
     def test_start_and_end_are_announced(self, env, monkeypatch):
         announced = []
-        monkeypatch.setattr(env.sched.announcer, "announce", lambda guild, channel, name, action: announced.append((guild, channel, name, action)))
+        monkeypatch.setattr(env.sched.announcer, "announce",
+                            lambda guild, channel, name, action, text_channel_id: announced.append((guild, channel, name, action, text_channel_id)))
         event, _ = make_created_event(env)
         run(event.start())
         run(event.end())
-        assert announced == [(env.guild, env.voice_channel, event.name, "starting"),
-                             (env.guild, env.voice_channel, event.name, "ending")]
+        assert announced == [(env.guild, env.voice_channel, event.name, "starting", env.text_channel.id),
+                             (env.guild, env.voice_channel, event.name, "ending", env.text_channel.id)]
 
     def test_external_locations_are_not_announced(self, env, monkeypatch):
         announced = []
-        monkeypatch.setattr(env.sched.announcer, "announce", lambda guild, channel, name, action: announced.append(name))
+        monkeypatch.setattr(env.sched.announcer, "announce", lambda guild, channel, name, action, text_channel_id: announced.append(name))
         event, _ = make_created_event(env)
         event.location = "Park"
         event.announce("starting")
@@ -375,6 +407,7 @@ class TestTtsCommand:
         interaction = FakeInteraction(make_member(7, "a"))
         interaction.user.display_name = "a"
         interaction.guild = guild
+        interaction.channel = SimpleNamespace(id=30, name="events")
         return interaction
 
     def test_sets_engine_with_public_confirmation(self, sched, monkeypatch):
@@ -411,9 +444,65 @@ class TestTtsCommand:
         run(sched.tts_command.callback(interaction, ESPEAK_NG))
         assert interaction.responses[0][1]["ephemeral"]
 
-    def test_offers_each_engine(self, sched):
-        (engine,) = sched.tts_command.parameters
-        assert [choice.value for choice in engine.choices] == list(announcer_lib.ENGINES)
+    def test_offers_each_engine_and_scope(self, sched):
+        engine, scope = sched.tts_command.parameters
+        assert [choice.value for choice in engine.choices] == [*announcer_lib.ENGINES, sched.TTS_SERVER_ENGINE]
+        assert [choice.value for choice in scope.choices] == [sched.TTS_SCOPE_GUILD, sched.TTS_SCOPE_CHANNEL]
+        assert not scope.required
+
+    def test_channel_scope_keeps_server_engine(self, sched, monkeypatch):
+        monkeypatch.setattr(announcer_lib, "missing_requirements", lambda engine: [])
+        guild = FakeGuild()
+        guild.name = "guild"
+        announcer_lib.set_engine(guild.id, ESPEAK_NG)
+        interaction = self.interaction(guild)
+        run(sched.tts_command.callback(interaction, PIPER_JP, sched.TTS_SCOPE_CHANNEL))
+        assert announcer_lib.get_engine(guild.id) == ESPEAK_NG
+        assert announcer_lib.get_engine(guild.id, 30) == PIPER_JP
+        assert announcer_lib.get_engine(guild.id, 31) == ESPEAK_NG
+        (kind, kwargs), = interaction.responses
+        assert not kwargs.get("ephemeral")
+        assert kwargs["content"] == "**a** set voice announcements of events made in this channel starting and ending to **piper-jp**."
+
+    def test_channel_scope_can_turn_off_while_server_is_on(self, sched):
+        guild = FakeGuild()
+        guild.name = "guild"
+        announcer_lib.set_engine(guild.id, ESPEAK_NG)
+        interaction = self.interaction(guild)
+        run(sched.tts_command.callback(interaction, NONE, sched.TTS_SCOPE_CHANNEL))
+        assert announcer_lib.get_engine(guild.id, 30) == NONE
+        assert announcer_lib.get_engine(guild.id) == ESPEAK_NG
+        assert interaction.responses[0][1]["content"] == \
+            "**a** turned off voice announcements of events made in this channel starting and ending."
+
+    def test_server_voice_resets_channel(self, sched):
+        guild = FakeGuild()
+        guild.name = "guild"
+        announcer_lib.set_engine(guild.id, ESPEAK_NG)
+        announcer_lib.set_channel_engine(guild.id, 30, NONE)
+        interaction = self.interaction(guild)
+        run(sched.tts_command.callback(interaction, sched.TTS_SERVER_ENGINE, sched.TTS_SCOPE_CHANNEL))
+        assert announcer_lib.channel_engines == {}
+        assert announcer_lib.get_engine(guild.id, 30) == ESPEAK_NG
+        assert interaction.responses[0][1]["content"] == \
+            "**a** set voice announcements of events made in this channel back to the server's voice, **espeak-ng**."
+
+    def test_server_voice_is_refused_for_the_server(self, sched):
+        guild = FakeGuild()
+        announcer_lib.set_engine(guild.id, ESPEAK_NG)
+        interaction = self.interaction(guild)
+        run(sched.tts_command.callback(interaction, sched.TTS_SERVER_ENGINE))
+        assert announcer_lib.get_engine(guild.id) == ESPEAK_NG
+        (kind, kwargs), = interaction.responses
+        assert kwargs["ephemeral"]
+
+    def test_channel_scope_refuses_engine_the_host_is_missing(self, sched, monkeypatch):
+        monkeypatch.setattr(announcer_lib, "missing_requirements", lambda engine: ["model"])
+        guild = FakeGuild()
+        interaction = self.interaction(guild)
+        run(sched.tts_command.callback(interaction, PIPER_EN, sched.TTS_SCOPE_CHANNEL))
+        assert announcer_lib.channel_engines == {}
+        assert interaction.responses[0][1]["ephemeral"]
 
 
 class TestPersistence:
@@ -430,8 +519,32 @@ class TestPersistence:
     def test_removed_guild_forgets_engine(self, sched):
         guild = FakeGuild()
         announcer_lib.set_engine(guild.id, ESPEAK_NG)
+        announcer_lib.set_channel_engine(guild.id, 30, PIPER_EN)
         run(sched.on_guild_remove(guild))
         assert guild.id not in announcer_lib.guild_engines
+        assert announcer_lib.channel_engines == {}
+
+    def test_channel_engines_are_saved_by_guild(self, sched):
+        announcer_lib.set_engine(5, PIPER_EN)
+        announcer_lib.set_channel_engine(5, 30, NONE)
+        announcer_lib.set_channel_engine(6, 31, PIPER_JP)
+        assert sched.client.guild_data == {"5": {"tts_engine": PIPER_EN, "channel_tts_engines": {"30": NONE}},
+                                           "6": {"channel_tts_engines": {"31": PIPER_JP}}}
+
+    def test_channel_engines_are_loaded_on_login(self, sched, monkeypatch):
+        monkeypatch.setattr(sched.client, "settings_loaded", False)
+        write_json(sched.guild_persist.filename, {"5": {"tts_engine": PIPER_EN, "channel_tts_engines": {"30": NONE, "31": "bogus"}},
+                                                  "6": {"channel_tts_engines": {"32": PIPER_JP}}})
+        run(sched.client.setup_hook.__func__(SimpleNamespace(tree=SimpleNamespace(sync=noop))))
+        assert announcer_lib.guild_engines == {5: PIPER_EN}
+        assert announcer_lib.channel_engines == {5: {30: NONE}, 6: {32: PIPER_JP}}
+
+    def test_deleted_text_channel_forgets_its_engine(self, sched):
+        guild = FakeGuild()
+        announcer_lib.set_channel_engine(guild.id, 30, PIPER_EN)
+        announcer_lib.set_channel_engine(guild.id, 31, NONE)
+        run(sched.on_guild_channel_delete(SimpleNamespace(id=30, guild=guild)))
+        assert announcer_lib.channel_engines == {guild.id: {31: NONE}}
 
 
 class TestIsReady:

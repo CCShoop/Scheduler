@@ -160,13 +160,13 @@ Use this command when you already know the time. It takes the same options as `/
 
 | Command         | What it does |
 |-----------------|--------------|
-| `/edit`         | Change an event in the current channel. You can change its name, location, image, duration, multi-event setting, or timeout. If the channel has more than one event, pick one from a dropdown. |
+| `/edit`         | Change an event in the current channel. You can change its name, location, image, duration, multi-event setting, or timeout. If the channel has more than one event, pick one from a dropdown. A created event's duration can be lengthened up to the end of its participants' common availability and the start of the next event in the same voice channel, and the bot tells you if it was cut short. |
 | `/attach`       | Have the bot manage a Discord event that was created outside the bot. The `event` option suggests the server's events the bot isn't managing yet. Other events with the same name and location are added as more occurrences of it. If the bot already has an event with that name and location, the Discord event is added to it. Otherwise, everyone who can see the channel is a participant. |
 | `/availability` | Show everyone's availability for an event in the current channel. |
 | `/listevents`   | List every event the bot is managing in this server. |
 | `/listmyevents` | List every event you're a participant in. |
 | `/cutoff`       | Set how many hours past midnight your **Full Availability** extends to, from -6 to 23. Negative numbers end it before midnight to match an earlier bedtime, so `-2` means 10 PM. The default is 0, which means midnight. Hours are counted from midnight Eastern Time, the bot's timezone, because Discord doesn't tell bots what timezone you're in. If you live somewhere else, add your offset from Eastern Time so it ends at your midnight: `1` for Central, `2` for Mountain, `3` for Pacific, or `-1` for Atlantic. Leave the number blank to go back to the default. The setting is yours alone and applies in every server. It's deleted if you no longer share a server with the bot. |
-| `/tts`          | Choose the text-to-speech engine for this server's [voice announcements](#voice-announcements): `espeak-ng`, `piper-en`, `piper-jp`, or `none` to turn them off. The piper options show their voice's language. Anyone can change it, and the bot posts who changed it in the channel. |
+| `/tts`          | Choose the text-to-speech engine for this server's [voice announcements](#voice-announcements): `espeak-ng`, `piper-en`, `piper-jp`, or `none` to turn them off. The piper options show their voice's language. Set `scope` to **This channel** to give events made in the current text channel their own voice, or turn them off, without changing the server's voice; pick **server's voice** with that scope to go back to the server's. Anyone can change it, and the bot posts who changed it in the channel. |
 | `/help`         | Show the built-in help. Pick a `topic` to read about scheduling, locations, other commands, the availability buttons, entering availability, managing events, or voice announcements. Leave it blank for an overview. |
 
 ### Voice announcements
@@ -404,7 +404,7 @@ with socket.create_connection(("127.0.0.1", 5000)) as s:
 |------|----------|
 | `event_data.json` | Saved events and [Schedule Again](#schedule-again) buttons. The bot reads it after connecting to Discord to resume events, and only writes it once they've all loaded, so stopping the bot while it starts up can't lose any. To clear the events, delete it while the bot is stopped. |
 | `user_data.json` | Users' saved settings: their `/cutoff` and last-used timezone. Read on login, before the bot connects. |
-| `guild_data.json` | Each server's settings, by server ID: its `/tts` voice. Read on login, before the bot connects. |
+| `guild_data.json` | Each server's settings, by server ID: its `/tts` voice, and the voices of text channels that chose their own. Read on login, before the bot connects. |
 | `backups/` | Snapshots of the three data files, in folders named by date and time. One is taken on startup and every hour after that, if anything changed. All snapshots from the last 2 days are kept, then the last one of each day for 30 days, so the folder holds about 80 at most. The newest is always kept, even when nothing has changed in over 30 days. To restore one, stop the bot and copy its files over the data files. |
 | `data.json` | The single data file of older versions. On startup, it's backed up, split into the three data files above, and deleted. |
 | `scheduler.log` | The full log. The same output is printed to the console. |

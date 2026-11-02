@@ -46,9 +46,16 @@ SETTLE_SECONDS: float = 0.5
 
 # Engine each guild chose, guilds without one don't get announcements
 guild_engines: dict[int, str] = {}
+# Engines that text channels chose over their guild's, by guild ID then text channel ID.
+# One can be none to turn announcements off for events made in that channel.
+channel_engines: dict[int, dict[int, str]] = {}
 
 
-def get_engine(guild_id: int) -> str:
+def get_engine(guild_id: int, text_channel_id: Optional[int] = None) -> str:
+    """Gets the engine for events made in the text channel, which is the guild's unless the channel chose its own."""
+    overrides = channel_engines.get(guild_id, {})
+    if text_channel_id in overrides:
+        return overrides[text_channel_id]
     return guild_engines.get(guild_id, NONE)
 
 
@@ -58,6 +65,23 @@ def set_engine(guild_id: int, engine: str) -> None:
         guild_engines.pop(guild_id, None)
     else:
         guild_engines[guild_id] = engine
+
+
+def set_channel_engine(guild_id: int, text_channel_id: int, engine: Optional[str]) -> None:
+    """Sets the engine for events made in the text channel, or None to go back to the guild's."""
+    overrides = channel_engines.setdefault(guild_id, {})
+    if engine is None:
+        overrides.pop(text_channel_id, None)
+    else:
+        overrides[text_channel_id] = engine
+    if not overrides:
+        channel_engines.pop(guild_id, None)
+
+
+def forget_guild(guild_id: int) -> None:
+    """Forgets the engines of a guild the bot is no longer in, and of its text channels."""
+    guild_engines.pop(guild_id, None)
+    channel_engines.pop(guild_id, None)
 
 
 def get_piper_model(engine: str) -> Optional[str]:
@@ -356,7 +380,8 @@ class Announcer:
         self.queues: dict[int, asyncio.Queue] = {}
         self.workers: dict[int, asyncio.Task] = {}
 
-    def announce(self, guild: Guild, channel: Union[VoiceChannel, StageChannel], name: str, action: str) -> None:
+    def announce(self, guild: Guild, channel: Union[VoiceChannel, StageChannel], name: str, action: str,
+                 text_channel_id: Optional[int] = None) -> None:
         """
         Queues reading out that the event is starting or ending in the guild's channel,
         unless announcements are off or nobody is there to hear it.
@@ -367,11 +392,13 @@ class Announcer:
             The event's name.
         action: :class:`str`
             "starting" or "ending".
+        text_channel_id: :class:`Optional[int]`
+            The ID of the text channel the event was made in, whose engine is used if it chose one.
         """
-        if get_engine(guild.id) == NONE or not has_listeners(channel):
+        if get_engine(guild.id, text_channel_id) == NONE or not has_listeners(channel):
             return
         queue = self.queues.setdefault(guild.id, asyncio.Queue())
-        queue.put_nowait((channel, name, action))
+        queue.put_nowait((channel, name, action, text_channel_id))
         worker = self.workers.get(guild.id)
         if worker is None or worker.done():
             self.workers[guild.id] = asyncio.create_task(self.work(guild))
@@ -381,9 +408,9 @@ class Announcer:
         queue = self.queues[guild.id]
         while True:
             while not queue.empty():
-                channel, name, action = queue.get_nowait()
+                channel, name, action, text_channel_id = queue.get_nowait()
                 try:
-                    await self.read_out(guild, channel, name, action)
+                    await self.read_out(guild, channel, name, action, text_channel_id)
                 except Exception as e:
                     logger.error(f'[{guild.name}] Could not announce {name} {action} in {channel.name}: {e!r}')
             await self.disconnect(guild)
@@ -392,10 +419,11 @@ class Announcer:
             if queue.empty():
                 break
 
-    async def read_out(self, guild: Guild, channel: Union[VoiceChannel, StageChannel], name: str, action: str) -> None:
+    async def read_out(self, guild: Guild, channel: Union[VoiceChannel, StageChannel], name: str, action: str,
+                       text_channel_id: Optional[int] = None) -> None:
         """Joins the guild's channel and reads out that the event is starting or ending."""
         # The engine may have changed while the announcement was queued
-        engine = get_engine(guild.id)
+        engine = get_engine(guild.id, text_channel_id)
         # Turned off, or everyone left, while the announcement was queued
         if engine == NONE or not has_listeners(channel):
             return

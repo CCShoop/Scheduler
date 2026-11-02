@@ -225,18 +225,137 @@ class TestDuration:
         assert event.duration == timedelta(hours=3)
         assert fields(embed) == [("Duration", "2 hours -> 3 hours")]
 
-    @pytest.mark.parametrize("duration", [121, 0])
-    def test_cannot_extend_created_event(self, env, duration):
-        event = make_created(env)
-        embed = run(env.sched.edit_event(event, duration=duration))
-        assert event.duration == timedelta(hours=2)
-        assert fields(embed) == [("Duration (Unchanged)", "The duration of a created event cannot be extended")]
+    def test_extends_created_event(self, env):
+        event = make_created(env, days=(1, 2))
+        embed = run(env.sched.edit_event(event, duration=180))
+        assert event.duration == timedelta(hours=3)
+        assert fields(embed) == [("Duration", "2 hours -> 3 hours")]
+        assert [scheduled_event.edits for scheduled_event in event.scheduled_events] == \
+            [[{"end_time": at(1, 23)}], [{"end_time": at(2, 23)}]]
 
-    def test_cannot_extend_created_automatic_event_past_default(self, env):
+    def test_extension_stops_at_next_event_in_voice_channel(self, env):
+        event = make_created(env)
+        other = env.make_event([env.make_participant("b")], created=True, start_times=[at(1, 22, 30)],
+                               scheduled_events=[FakeScheduledEvent(at(1, 22, 30))])
+        embed = run(env.sched.edit_event(event, duration=240))
+        assert event.duration == timedelta(hours=2, minutes=30)
+        assert event.scheduled_events[0].edits == [{"end_time": at(1, 22, 30)}]
+        assert fields(embed) == [("Duration", "2 hours -> 2 hours, 30 minutes"
+                                  f"\nLimited to 2 hours, 30 minutes so it ends before {other} starts in the same voice channel.")]
+
+    def test_extension_leaves_buffer_before_next_event(self, env, monkeypatch):
+        monkeypatch.setattr(env.sched, "EVENT_BUFFER_MINUTES", 10)
+        event = make_created(env)
+        env.make_event([env.make_participant("b")], created=True, start_times=[at(1, 22, 30)],
+                       scheduled_events=[FakeScheduledEvent(at(1, 22, 30))])
+        run(env.sched.edit_event(event, duration=240))
+        assert event.duration == timedelta(hours=2, minutes=20)
+        assert event.scheduled_events[0].edits == [{"end_time": at(1, 22, 20)}]
+
+    def test_cannot_extend_into_buffer(self, env, monkeypatch):
+        monkeypatch.setattr(env.sched, "EVENT_BUFFER_MINUTES", 10)
+        event = make_created(env)
+        env.make_event([env.make_participant("b")], created=True, start_times=[at(1, 22, 10)],
+                       scheduled_events=[FakeScheduledEvent(at(1, 22, 10))])
+        embed = run(env.sched.edit_event(event, duration=180))
+        assert event.duration == timedelta(hours=2)
+        assert fields(embed)[0][0] == "Duration (Unchanged)"
+
+    def test_extension_stops_at_own_next_occurrence(self, env):
+        event = make_created(env, days=(1, 2))
+        run(env.sched.edit_event(event, duration=24 * 60))
+        assert event.duration == timedelta(hours=24)
+
+    def test_cannot_extend_when_next_event_starts_at_end(self, env):
+        event = make_created(env)
+        other = env.make_event([env.make_participant("b")], created=True, start_times=[at(1, 22)],
+                               scheduled_events=[FakeScheduledEvent(at(1, 22))])
+        embed = run(env.sched.edit_event(event, duration=180))
+        assert event.duration == timedelta(hours=2)
+        assert event.scheduled_events[0].edits == []
+        assert fields(embed) == [("Duration (Unchanged)", f"The duration cannot be extended because {other} "
+                                  "starts right after this event ends in the same voice channel")]
+
+    def test_uncreated_and_other_channel_events_do_not_limit(self, env):
+        event = make_created(env)
+        env.make_event([env.make_participant("b")], start_times=[at(1, 21)])
+        other_channel = SimpleNamespace(id=3, name="Other", members=[], mention="<#3>")
+        env.make_event([env.make_participant("c")], created=True, voice_channel=other_channel,
+                       start_times=[at(1, 21)], scheduled_events=[FakeScheduledEvent(at(1, 21))])
+        run(env.sched.edit_event(event, duration=180))
+        assert event.duration == timedelta(hours=3)
+
+    def test_external_event_is_not_limited(self, env):
+        event = make_created(env, location="Park")
+        env.make_event([env.make_participant("b")], location="Park", created=True, start_times=[at(1, 21)],
+                       scheduled_events=[FakeScheduledEvent(at(1, 21))])
+        run(env.sched.edit_event(event, duration=180))
+        assert event.duration == timedelta(hours=3)
+
+    def test_extension_stops_at_end_of_common_availability(self, env):
+        a = env.make_participant("a", [TimeBlock(at(1, 18), at(1, 23))])
+        b = env.make_participant("b", [TimeBlock(at(1, 20), at(1, 22, 45))])
+        event = make_created(env, participants=[a, b, env.make_participant("unanswered")])
+        embed = run(env.sched.edit_event(event, duration=240))
+        assert event.duration == timedelta(hours=2, minutes=45)
+        assert event.scheduled_events[0].edits == [{"end_time": at(1, 22, 45)}]
+        assert fields(embed) == [("Duration", "2 hours -> 2 hours, 45 minutes"
+                                  "\nLimited to 2 hours, 45 minutes because 4 hours is longer than the participants' "
+                                  "common availability. To make the event duration 4 hours, you will need to press "
+                                  "Reschedule Event, then set the duration again to find a time that fits it.")]
+
+    def test_unsubscribed_participants_do_not_limit(self, env):
+        a = env.make_participant("a", [TimeBlock(at(1, 18), at(1, 23))])
+        b = env.make_participant("b", [TimeBlock(at(1, 20), at(1, 22))])
+        b.subscribed = False
+        event = make_created(env, participants=[a, b])
+        run(env.sched.edit_event(event, duration=180))
+        assert event.duration == timedelta(hours=3)
+
+    def test_multi_event_uses_shortest_occurrence_availability(self, env):
+        a = env.make_participant("a", [TimeBlock(at(1, 18), at(1, 23)), TimeBlock(at(2, 19), at(2, 22, 30))])
+        event = make_created(env, days=(1, 2), participants=[a])
+        run(env.sched.edit_event(event, duration=240))
+        assert event.duration == timedelta(hours=2, minutes=30)
+
+    def test_cannot_extend_when_common_availability_ends_with_event(self, env):
+        a = env.make_participant("a", [TimeBlock(at(1, 18), at(1, 22))])
+        event = make_created(env, participants=[a])
+        embed = run(env.sched.edit_event(event, duration=180))
+        assert event.duration == timedelta(hours=2)
+        assert event.scheduled_events[0].edits == []
+        assert fields(embed) == [("Duration (Unchanged)", "The duration cannot be extended because the participants' "
+                                  "common availability ends when this event ends. To make the event duration 3 hours, "
+                                  "you will need to press Reschedule Event, then set the duration again to find a "
+                                  "time that fits it.")]
+
+    def test_started_event_does_not_suggest_rescheduling(self, env):
+        a = env.make_participant("a", [TimeBlock(at(1, 18), at(1, 23))])
+        event = make_created(env, participants=[a], started=True)
+        embed = run(env.sched.edit_event(event, duration=240))
+        assert event.duration == timedelta(hours=3)
+        assert fields(embed) == [("Duration", "2 hours -> 3 hours\nLimited to 3 hours because 4 hours is longer "
+                                  "than the participants' common availability.")]
+
+    def test_earlier_voice_channel_limit_is_reported(self, env):
+        a = env.make_participant("a", [TimeBlock(at(1, 18), at(1, 23))])
+        event = make_created(env, participants=[a])
+        other = env.make_event([env.make_participant("b")], created=True, start_times=[at(1, 22, 30)],
+                               scheduled_events=[FakeScheduledEvent(at(1, 22, 30))])
+        embed = run(env.sched.edit_event(event, duration=240))
+        assert event.duration == timedelta(hours=2, minutes=30)
+        assert fields(embed)[0][1].endswith(f"so it ends before {other} starts in the same voice channel.")
+
+    def test_cannot_make_created_event_automatic(self, env):
+        event = make_created(env)
+        embed = run(env.sched.edit_event(event, duration=0))
+        assert event.duration == timedelta(hours=2)
+        assert fields(embed) == [("Duration (Unchanged)", "The duration of a created event cannot be made automatic")]
+
+    def test_extends_created_automatic_event_past_default(self, env):
         event = make_created(env, duration=timedelta(0))
-        embed = run(env.sched.edit_event(event, duration=env.sched.DEFAULT_EVENT_DURATION + 1))
-        assert event.duration == timedelta(0)
-        assert fields(embed) == [("Duration (Unchanged)", "The duration of a created event cannot be extended")]
+        run(env.sched.edit_event(event, duration=env.sched.DEFAULT_EVENT_DURATION + 1))
+        assert event.duration == timedelta(minutes=env.sched.DEFAULT_EVENT_DURATION + 1)
 
     def test_sets_created_automatic_event_within_default(self, env):
         event = make_created(env, duration=timedelta(0))
