@@ -3192,7 +3192,8 @@ class Event:
     def get_availability_duration_limit(self) -> Optional[timedelta]:
         """
         Gets the longest duration every occurrence can have within the common availability of subscribed participants,
-        from the availability block each one has at the occurrence's start, or now if it has already started.
+        from the availability block each one has during the occurrence. Once it has started, the block may start
+        after it, since availability is cut to start now, or have ended already if the occurrence is running long.
         Participants without availability at that time, such as those invited with /create, don't limit it here,
         only through their other events in get_shared_participant_duration_limit().
         Returns None when nobody limits it.
@@ -3204,7 +3205,7 @@ class Event:
                 if not participant.subscribed or participant.is_bot or not participant.answered:
                     continue
                 for timeblock in participant.availability:
-                    if timeblock.start_time <= anchor < timeblock.end_time:
+                    if timeblock.start_time <= anchor and start_time < timeblock.end_time:
                         available = timeblock.end_time - start_time
                         if limit is None or available < limit:
                             limit = available
@@ -5255,8 +5256,17 @@ async def edit_event(event: Event,
         else:
             event.duration = new_duration
             if event.created:
+                failed = False
                 for scheduled_event, start_time in zip(event.scheduled_events, event.start_times):
-                    await scheduled_event.edit(end_time=start_time + event.scheduled_duration)
+                    try:
+                        await scheduled_event.edit(end_time=start_time + event.scheduled_duration)
+                    except Exception as e:
+                        logger.error(f"[{event}] Error changing guild event end time: {e}")
+                        failed = True
+                if failed:
+                    note += "\nThe Discord event couldn't be updated, so it may still show the old end time."
+            if event.started and event.is_external and now() >= event.start_times[0] + event.scheduled_duration:
+                note += "\nIt has already run longer than that, so it will end now."
             remove_times_from_availabilities_for_events()
             embed.add_field(name="Duration",
                             value=f"{get_time_str_from_minutes(old_duration.total_seconds() // 60)}"
@@ -5804,18 +5814,22 @@ async def edit_command(interaction: Interaction,
             await interaction.followup.send("**No events were found in this guild.**",
                                             ephemeral=True)
             return
-    # Only one event in this text channel/guild, edit it
-    if len(events) == 1:
-        event = events[0]
+    async def edit(interaction: Interaction, event: Event) -> None:
         availability_states = get_availability_states()
-        embed = await edit_event(event=event,
-                                 name=name,
-                                 voice_channel=voice_channel,
-                                 location=location,
-                                 image_url=image_url,
-                                 duration=duration,
-                                 multi_event=multi_event,
-                                 timeout_days=timeout)
+        try:
+            embed = await edit_event(event=event,
+                                     name=name,
+                                     voice_channel=voice_channel,
+                                     location=location,
+                                     image_url=image_url,
+                                     duration=duration,
+                                     multi_event=multi_event,
+                                     timeout_days=timeout)
+        except Exception as e:
+            # Answer anyway, so the command doesn't wait forever
+            logger.exception(f"[{event}] Error editing event: {e}")
+            await interaction.followup.send(content=f"Error editing event: {e}", ephemeral=True)
+            return
         if interaction.user.avatar:
             embed.set_footer(text=f"Edited by {interaction.user}", icon_url=interaction.user.avatar.url)
         else:
@@ -5824,6 +5838,10 @@ async def edit_command(interaction: Interaction,
         await event.update_messages()
         await update_changed_availability_messages(availability_states, exclude=event)
         await interaction.followup.send(embed=embed)
+
+    # Only one event in this text channel/guild, edit it
+    if len(events) == 1:
+        await edit(interaction, events[0])
     # Multiple events in text channel/guild, select one to edit from a dropdown
     else:
         options = [SelectOption(label=event.get_limited_name(25), value=event.get_limited_name(25)) for event in events]
@@ -5833,23 +5851,7 @@ async def edit_command(interaction: Interaction,
             await interaction.response.defer(ephemeral=True, thinking=True)
             for event in events:
                 if event.get_limited_name(25) == select.values[0]:
-                    availability_states = get_availability_states()
-                    embed = await edit_event(event=event,
-                                             name=name,
-                                             voice_channel=voice_channel,
-                                             location=location,
-                                             image_url=image_url,
-                                             duration=duration,
-                                             multi_event=multi_event,
-                                             timeout_days=timeout)
-                    if interaction.user.avatar:
-                        embed.set_footer(text=f"Edited by {interaction.user}", icon_url=interaction.user.avatar.url)
-                    else:
-                        embed.set_footer(text=f"Edited by {interaction.user}")
-                    remove_times_from_availabilities_for_events()
-                    await event.update_messages()
-                    await update_changed_availability_messages(availability_states, exclude=event)
-                    await interaction.followup.send(embed=embed)
+                    await edit(interaction, event)
                     return
 
         select.callback = select_callback
