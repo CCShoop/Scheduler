@@ -128,6 +128,6 @@ class TestVoiceChannelPrompt:
         run(env.sched.on_guild_channel_delete(SimpleNamespace(id=env.voice_channel.id, guild=env.guild)))
         prompt = event.voice_channel_prompt
         prompt.channel_select._values = [SimpleNamespace(id=stage_channel.id)]
-        run(prompt.channel_select_callback(FakeInteraction(SimpleNamespace(name="a", nick=None))))
+        run(prompt.channel_select_callback(FakeInteraction(event.participants[0].member)))
         assert event.voice_channel is stage_channel
         assert event.entity_type == EntityType.stage_instance

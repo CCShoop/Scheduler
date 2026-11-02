@@ -160,13 +160,13 @@ Use this command when you already know the time. It takes the same options as `/
 
 | Command         | What it does |
 |-----------------|--------------|
-| `/edit`         | Change an event in the current channel. You can change its name, location, image, duration, multi-event setting, or timeout. If the channel has more than one event, pick one from a dropdown. A created event's duration can be lengthened up to the end of its participants' common availability, the start of another event they're in, and the start of the next event in the same voice channel, and the bot tells you if it was cut short. |
-| `/attach`       | Have the bot manage a Discord event that was created outside the bot. The `event` option suggests the server's events the bot isn't managing yet. Other events with the same name and location are added as more occurrences of it. If the bot already has an event with that name and location, the Discord event is added to it. Otherwise, everyone who can see the channel is a participant. |
+| `/edit`         | Change an event in the current channel. You can change its name, location, image, duration, multi-event setting, or timeout. If the channel has more than one event, pick one from a dropdown. A created event's duration can be lengthened up to the end of its participants' common availability, the start of another event they're in, and the start of the next event in the same voice channel, and the bot tells you if it was cut short. Only the event's participants can edit it; anyone else who can see its channel is offered to join it first. The bot manages its Discord events, so changes made to them in Discord (other than starting, ending, or cancelling) are undone and deleted ones are recreated; use `/edit` instead. |
+| `/attach`       | Have the bot manage a Discord event that was created outside the bot. The `event` option suggests the server's events the bot isn't managing yet. Other events with the same name and location are added as more occurrences of it. If the bot already has an event with that name and location, the Discord event is added to it, which only its participants can do. Otherwise, everyone who can see the channel is a participant. |
 | `/availability` | Show everyone's availability for an event in the current channel. |
-| `/listevents`   | List every event the bot is managing in this server. |
+| `/listevents`   | List every event the bot is managing in this server, in channels you can see. |
 | `/listmyevents` | List every event you're a participant in. |
 | `/cutoff`       | Set how many hours past midnight your **Full Availability** extends to, from -6 to 23. Negative numbers end it before midnight to match an earlier bedtime, so `-2` means 10 PM. The default is 0, which means midnight. Hours are counted from midnight Eastern Time, the bot's timezone, because Discord doesn't tell bots what timezone you're in. If you live somewhere else, add your offset from Eastern Time so it ends at your midnight: `1` for Central, `2` for Mountain, `3` for Pacific, or `-1` for Atlantic. Leave the number blank to go back to the default. The setting is yours alone and applies in every server. It's deleted if you no longer share a server with the bot. |
-| `/tts`          | Choose the text-to-speech engine for this server's [voice announcements](#voice-announcements): `espeak-ng`, `piper-en`, `piper-jp`, or `none` to turn them off. The piper options show their voice's language. Set `scope` to **This channel** to give events made in the current text channel their own voice, or turn them off, without changing the server's voice; pick **server's voice** with that scope to go back to the server's. Anyone can change it, and the bot posts who changed it in the channel. |
+| `/tts`          | Choose the text-to-speech engine for this server's [voice announcements](#voice-announcements): `espeak-ng`, `piper-en`, `piper-jp`, or `none` to turn them off. The piper options show their voice's language. Set `scope` to **This channel** to give events made in the current text channel their own voice, or turn them off, without changing the server's voice; pick **server's voice** with that scope to go back to the server's. It needs the **Manage Server** permission, unless the server's admins allow other roles or members under **Server Settings → Integrations**. The bot posts who changed it in the channel. |
 | `/help`         | Show the built-in help. Pick a `topic` to read about scheduling, locations, other commands, the availability buttons, entering availability, managing events, or voice announcements. Leave it blank for an overview. |
 
 ### Voice announcements
@@ -249,7 +249,9 @@ When an event ends or is cancelled, the bot shows a **Schedule Again** button fo
 - Leave **Start Time** blank to start collecting availability again, as with `/schedule`.
 - Enter a **Start Time** to create the event at that time, as with `/create`. A **Duration** of `0` or blank uses 30 minutes, since an automatic length only works when collecting availability.
 
-Click **Forget** to dismiss the button.
+If the event's voice channel was deleted, the server's first voice channel is used instead.
+
+Click **Forget** to dismiss the button. Only the event's participants can use either button.
 
 ---
 

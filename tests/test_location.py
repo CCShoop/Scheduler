@@ -213,49 +213,220 @@ class TestEditLocation:
         assert embed.fields[0].name == "Location (Unchanged)"
 
 
-class TestSyncLocationFromGuildEvent:
-    def make_created_voice_event(self, env):
-        scheduled_event = FakeScheduledEvent(at(1, 20), channel=env.voice_channel)
+class TestRestoreGuildEvent:
+    @pytest.fixture(autouse=True)
+    def no_delay(self, env, monkeypatch):
+        monkeypatch.setattr(env.sched, "GUILD_EVENT_RESTORE_DELAY_SECONDS", 0)
+
+    def make_created_voice_event(self, env, **kwargs):
+        scheduled_event = FakeScheduledEvent(at(1, 20), channel=env.voice_channel, end_time=at(1, 22), **kwargs)
         env.guild.created.append(scheduled_event)
         event = env.make_event([env.make_participant("a")], created=True, start_times=[at(1, 20)],
                                scheduled_events=[scheduled_event])
+        scheduled_event.kwargs["name"] = event.name
+        event.remember_guild_event(scheduled_event)
         return event, scheduled_event
 
-    def test_applies_a_change_made_in_discord(self, env):
-        event, scheduled_event = self.make_created_voice_event(env)
-        run(event.sync_location_from_guild_event())
-        scheduled_event.kwargs = {"entity_type": EntityType.external, "location": "Park"}
-        run(event.sync_location_from_guild_event())
-        assert event.location == "Park" and event.voice_channel is None
-        assert env.update_messages_calls == [event]
+    def restore(self, env, event, scheduled_event):
+        async def go():
+            await env.sched.on_scheduled_event_update(scheduled_event, scheduled_event)
+            await event.guild_event_restores[scheduled_event.id]
+        run(go())
 
-    def test_applies_a_change_made_while_offline(self, env):
+    def test_unchanged_guild_event_is_left_alone(self, env):
         event, scheduled_event = self.make_created_voice_event(env)
-        scheduled_event.kwargs = {"entity_type": EntityType.external, "location": "Park"}
-        run(event.sync_location_from_guild_event())
-        assert event.location == "Park"
+        assert run(event.restore_guild_event(scheduled_event.id)) == []
+        assert scheduled_event.edits == []
 
-    def test_edit_is_not_undone_before_discord_catches_up(self, env):
+    def test_location_moved_in_discord_is_moved_back(self, env):
         event, scheduled_event = self.make_created_voice_event(env)
-        run(event.sync_location_from_guild_event())
-        # Like discord.py, the fake guild event keeps its old location until Discord sends the update
-        run(env.sched.edit_event(event, location="Park"))
-        run(event.sync_location_from_guild_event())
-        assert event.location == "Park"
-        scheduled_event.kwargs = {"entity_type": EntityType.external, "location": "Park"}
-        run(event.sync_location_from_guild_event())
-        assert event.location == "Park"
-        assert env.update_messages_calls == []
+        scheduled_event.kwargs.update(entity_type=EntityType.external, location="Park", channel=None)
+        self.restore(env, event, scheduled_event)
+        assert event.voice_channel is env.voice_channel and event.location is None
+        assert scheduled_event.edits == [{"entity_type": EntityType.voice, "channel": env.voice_channel, "end_time": at(1, 22)}]
 
-    def test_reads_the_guilds_copy_of_the_guild_event(self, env):
+    def test_name_times_and_description_are_put_back(self, env):
+        event, scheduled_event = self.make_created_voice_event(env, description="Bot-generated event")
+        scheduled_event.kwargs.update(name="Free nitro", description="join my server", end_time=at(1, 23))
+        scheduled_event.start_time = at(1, 21)
+        restored = run(event.restore_guild_event(scheduled_event.id))
+        assert restored == ["name", "description", "start_time", "end_time"]
+        assert scheduled_event.edits == [{"name": event.name, "description": "Bot-generated event",
+                                          "start_time": at(1, 20), "end_time": at(1, 22)}]
+
+    def test_small_time_differences_count_as_unchanged(self, env):
         event, scheduled_event = self.make_created_voice_event(env)
-        run(event.sync_location_from_guild_event())
-        # The guild event returned on creation is a separate object from the guild's, which Discord updates
-        guild_copy = FakeScheduledEvent(at(1, 20), entity_type=EntityType.external, location="Park")
-        guild_copy.id = scheduled_event.id
-        env.guild.created = [guild_copy]
-        run(event.sync_location_from_guild_event())
-        assert event.location == "Park"
+        scheduled_event.start_time = at(1, 20) + timedelta(seconds=30)
+        assert run(event.restore_guild_event(scheduled_event.id)) == []
+
+    def test_started_guild_event_keeps_its_start_time(self, env):
+        event, scheduled_event = self.make_created_voice_event(env, status=EventStatus.active)
+        scheduled_event.start_time = at(1, 21)
+        assert run(event.restore_guild_event(scheduled_event.id)) == []
+
+    def test_end_time_in_the_past_is_left_alone(self, env):
+        start = env.sched.now() - timedelta(hours=3)
+        event, scheduled_event = self.make_created_voice_event(env, status=EventStatus.active)
+        event.start_times = [start]
+        scheduled_event.start_time = start
+        scheduled_event.kwargs["end_time"] = start + timedelta(hours=4)
+        assert run(event.restore_guild_event(scheduled_event.id)) == []
+
+    def test_image_change_is_put_back(self, env, monkeypatch):
+        event, scheduled_event = self.make_created_voice_event(env, cover_image=SimpleNamespace(key="bot"))
+        monkeypatch.setattr(env.sched.Event, "has_image_saved", property(lambda self: True))
+        monkeypatch.setattr(env.sched.Event, "get_image", lambda self: b"bot image")
+        scheduled_event.kwargs["cover_image"] = SimpleNamespace(key="spam")
+        assert run(event.restore_guild_event(scheduled_event.id)) == ["image"]
+        assert scheduled_event.edits == [{"image": b"bot image"}]
+
+    def test_added_image_is_removed(self, env):
+        event, scheduled_event = self.make_created_voice_event(env)
+        scheduled_event.kwargs["cover_image"] = SimpleNamespace(key="spam")
+        assert run(event.restore_guild_event(scheduled_event.id)) == ["image"]
+        assert scheduled_event.edits == [{"image": None}]
+
+    def test_restore_remembers_what_it_set(self, env):
+        event, scheduled_event = self.make_created_voice_event(env)
+        scheduled_event.kwargs["cover_image"] = SimpleNamespace(key="spam")
+
+        async def edit(**kwargs):
+            scheduled_event.edits.append(kwargs)
+            edited = FakeScheduledEvent(at(1, 20), cover_image=SimpleNamespace(key="new"))
+            edited.id = scheduled_event.id
+            return edited
+
+        scheduled_event.edit = edit
+        run(event.restore_guild_event(scheduled_event.id))
+        assert event.guild_event_image_keys[scheduled_event.id] == "new"
+
+    @pytest.mark.parametrize("status", [EventStatus.ended, EventStatus.cancelled])
+    def test_ended_or_cancelled_guild_event_is_left_to_update(self, env, status):
+        event, scheduled_event = self.make_created_voice_event(env, status=status)
+        scheduled_event.kwargs["name"] = "renamed"
+        assert run(event.restore_guild_event(scheduled_event.id)) == []
+
+    def test_missing_voice_channel_or_unknown_guild_event_is_left_alone(self, env):
+        event, scheduled_event = self.make_created_voice_event(env)
+        scheduled_event.kwargs["name"] = "renamed"
+        assert run(event.restore_guild_event(12345)) == []
+        event.location = env.sched.DELETED_VOICE_CHANNEL_LOCATION
+        assert run(event.restore_guild_event(scheduled_event.id)) == []
+
+    def test_unmanaged_guild_event_is_ignored(self, env):
+        event, scheduled_event = self.make_created_voice_event(env)
+        other = FakeScheduledEvent(at(1, 20))
+        run(env.sched.on_scheduled_event_update(other, other))
+        assert event.guild_event_restores == {}
+
+    def test_several_updates_restore_once(self, env):
+        event, scheduled_event = self.make_created_voice_event(env)
+        scheduled_event.kwargs["name"] = "renamed"
+
+        async def go():
+            await env.sched.on_scheduled_event_update(scheduled_event, scheduled_event)
+            task = event.guild_event_restores[scheduled_event.id]
+            await env.sched.on_scheduled_event_update(scheduled_event, scheduled_event)
+            assert event.guild_event_restores[scheduled_event.id] is task
+            await task
+        run(go())
+        assert scheduled_event.edits == [{"name": event.name}]
+
+    def test_restore_errors_are_logged(self, env, caplog):
+        event, scheduled_event = self.make_created_voice_event(env)
+        scheduled_event.kwargs["name"] = "renamed"
+
+        async def edit(**kwargs):
+            raise RuntimeError("403 Missing Permissions")
+
+        scheduled_event.edit = edit
+        self.restore(env, event, scheduled_event)
+        assert "403 Missing Permissions" in caplog.text
+
+
+class TestRecreateDeletedGuildEvent:
+    @pytest.fixture(autouse=True)
+    def no_delay(self, env, monkeypatch):
+        monkeypatch.setattr(env.sched, "GUILD_EVENT_RESTORE_DELAY_SECONDS", 0)
+
+    def make_created(self, env, days=(1,), **kwargs):
+        scheduled_events = [FakeScheduledEvent(at(day, 20), channel=env.voice_channel) for day in days]
+        env.guild.created.extend(scheduled_events)
+        event = env.make_event([env.make_participant("a")], created=True, multi_event=len(days) > 1,
+                               start_times=[at(day, 20) for day in days], scheduled_events=list(scheduled_events), **kwargs)
+        return event, scheduled_events
+
+    def delete_in_discord(self, env, scheduled_event):
+        async def go():
+            scheduled_event.deleted = True
+            await env.sched.on_scheduled_event_delete(scheduled_event)
+            # Lets the queued recreation run
+            for _ in range(5):
+                await asyncio.sleep(0.02)
+        run(go())
+
+    def test_deleted_guild_event_is_recreated(self, env):
+        event, (scheduled_event,) = self.make_created(env)
+        self.delete_in_discord(env, scheduled_event)
+        (recreated,) = event.scheduled_events
+        assert recreated is not scheduled_event and not recreated.deleted
+        assert recreated.start_time == at(1, 20) and recreated.kwargs["channel"] is env.voice_channel
+
+    def test_middle_occurrence_is_recreated_with_later_ones(self, env):
+        event, (first, second, third) = self.make_created(env, days=(1, 2, 3))
+        self.delete_in_discord(env, second)
+        assert event.scheduled_events[0] is first
+        assert third.deleted
+        assert [se.start_time for se in event.scheduled_events] == [at(1, 20), at(2, 20), at(3, 20)]
+        assert not any(se.deleted for se in event.scheduled_events)
+
+    def test_guild_events_deleted_by_the_bot_are_not_recreated(self, env):
+        event, (scheduled_event,) = self.make_created(env)
+        run(event.delete_guild_event(scheduled_event, reason="test"))
+        self.delete_in_discord(env, scheduled_event)
+        assert event.scheduled_events == [scheduled_event]
+        assert env.guild.created == [scheduled_event]
+        assert event.bot_deleted_guild_event_ids == set()
+
+    def test_bot_deletion_noticed_after_it_stopped_tracking(self, env):
+        event, (scheduled_event,) = self.make_created(env)
+        run(event.delete_guild_event(scheduled_event, reason="test"))
+        event.scheduled_events.clear()
+        self.delete_in_discord(env, scheduled_event)
+        assert event.bot_deleted_guild_event_ids == set()
+
+    def test_started_guild_event_deleted_ends_the_event(self, env, monkeypatch):
+        event, (scheduled_event,) = self.make_created(env, started=True)
+        ended = []
+
+        async def fake_end(self, reason=None, forget=False):
+            ended.append(reason)
+
+        monkeypatch.setattr(env.sched.Event, "end", fake_end)
+        assert run(event.recreate_guild_event(scheduled_event.id))
+        assert ended == ["Event ended manually."]
+
+    def test_waiting_for_a_voice_channel_is_left_alone(self, env):
+        event, (scheduled_event,) = self.make_created(env)
+        event.location = env.sched.DELETED_VOICE_CHANNEL_LOCATION
+        assert not run(event.recreate_guild_event(scheduled_event.id))
+        assert not run(event.recreate_guild_event(12345))
+
+    def test_recreate_errors_are_logged(self, env, monkeypatch, caplog):
+        event, (scheduled_event,) = self.make_created(env)
+
+        async def failing(self):
+            raise RuntimeError("403 Missing Permissions")
+
+        monkeypatch.setattr(env.sched.Event, "make_scheduled_events", failing)
+        self.delete_in_discord(env, scheduled_event)
+        assert "403 Missing Permissions" in caplog.text
+
+    def test_unmanaged_guild_event_is_ignored(self, env):
+        event, _ = self.make_created(env)
+        other = FakeScheduledEvent(at(1, 20))
+        self.delete_in_discord(env, other)
+        assert len(env.guild.created) == 1
 
 
 class TestUpdateChangedAvailabilityMessages:

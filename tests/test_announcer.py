@@ -450,6 +450,10 @@ class TestTtsCommand:
         assert [choice.value for choice in scope.choices] == [sched.TTS_SCOPE_GUILD, sched.TTS_SCOPE_CHANNEL]
         assert not scope.required
 
+    def test_requires_manage_server_by_default(self, sched):
+        assert sched.tts_command.default_permissions.manage_guild
+        assert sched.tts_command.guild_only
+
     def test_channel_scope_keeps_server_engine(self, sched, monkeypatch):
         monkeypatch.setattr(announcer_lib, "missing_requirements", lambda engine: [])
         guild = FakeGuild()

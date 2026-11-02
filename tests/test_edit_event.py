@@ -5,7 +5,7 @@ import pytest
 from discord import EntityType
 
 from libs.participant import Participant, RemovedTime, TimeBlock
-from fakes import FakeScheduledEvent, at, make_member, run
+from fakes import FakeScheduledEvent, FakeTextChannel, at, make_member, run
 from test_lifecycle import FakeInteraction
 
 
@@ -605,15 +605,16 @@ class TestTimeout:
 
 
 class TestEditCommand:
-    def interaction(self, env):
-        interaction = FakeInteraction(make_member(7, "editor"))
+    def interaction(self, env, member=None):
+        interaction = FakeInteraction(member or make_member(7, "editor"))
         interaction.guild = env.guild
         interaction.channel = env.text_channel
         return interaction
 
     def test_edits_the_only_event_in_the_channel(self, env):
-        event = env.make_event([env.make_participant("a")])
-        interaction = self.interaction(env)
+        a = env.make_participant("a")
+        event = env.make_event([a])
+        interaction = self.interaction(env, a.member)
         run(env.sched.edit_command.callback(interaction, duration=90))
         assert event.duration == timedelta(minutes=90)
         (followup,) = interaction.followups
@@ -621,24 +622,114 @@ class TestEditCommand:
         assert env.update_messages_calls == [event]
 
     def test_error_is_answered(self, env, monkeypatch):
-        env.make_event([env.make_participant("a")])
+        a = env.make_participant("a")
+        env.make_event([a])
 
         async def failing_edit_event(**kwargs):
             raise RuntimeError("boom")
 
         monkeypatch.setattr(env.sched, "edit_event", failing_edit_event)
-        interaction = self.interaction(env)
+        interaction = self.interaction(env, a.member)
         run(env.sched.edit_command.callback(interaction, duration=90))
         assert interaction.followups == [{"content": "Error editing event: boom", "ephemeral": True}]
 
+    def test_bad_location_is_answered(self, env):
+        env.make_event([env.make_participant("a")])
+        interaction = self.interaction(env)
+        run(env.sched.edit_command.callback(interaction, location="x" * 1000))
+        (kind, kwargs), = interaction.responses
+        assert kwargs["ephemeral"] and kwargs["content"].startswith("Error editing event:")
+
+    def test_no_events_is_answered(self, env):
+        interaction = self.interaction(env)
+        run(env.sched.edit_command.callback(interaction, duration=90))
+        assert interaction.responses[0][1]["content"] == "**No events were found in this channel.**"
+
     def test_picks_event_from_dropdown_when_channel_has_several(self, env):
+        b = env.make_participant("b")
+        env.make_event([env.make_participant("a")])
+        second = env.make_event([b])
+        interaction = self.interaction(env, b.member)
+        run(env.sched.edit_command.callback(interaction, duration=90))
+        (select,) = interaction.responses[0][1]["view"].children
+        select._values = [second.get_limited_name(25)]
+        pick = self.interaction(env, b.member)
+        run(select.callback(pick))
+        assert second.duration == timedelta(minutes=90)
+        assert "embed" in pick.followups[0]
+
+    def test_non_participant_is_offered_to_join(self, env):
+        event = env.make_event([env.make_participant("a")])
+        outsider = make_member(70, "outsider")
+        env.guild.members[outsider.id] = outsider
+        env.text_channel.members.append(outsider)
+        interaction = self.interaction(env, outsider)
+        run(env.sched.edit_command.callback(interaction, duration=90))
+        assert event.duration == timedelta(hours=2)
+        (kind, kwargs), = interaction.responses
+        assert kwargs["content"] == f"You aren't a participant of {event}. Join it, then use /edit again."
+        join = self.interaction(env, outsider)
+        run(kwargs["view"].join_button_callback(join))
+        assert event.is_participant(outsider)
+        assert join.responses[0][1]["content"] == f"You joined {event}. Use /edit again."
+        run(env.sched.edit_command.callback(self.interaction(env, outsider), duration=90))
+        assert event.duration == timedelta(minutes=90)
+
+    def test_non_participant_picking_from_dropdown_is_refused(self, env):
         env.make_event([env.make_participant("a")])
         second = env.make_event([env.make_participant("b")])
         interaction = self.interaction(env)
         run(env.sched.edit_command.callback(interaction, duration=90))
-        (select,) = interaction.followups[0]["view"].children
+        (select,) = interaction.responses[0][1]["view"].children
         select._values = [second.get_limited_name(25)]
         pick = self.interaction(env)
         run(select.callback(pick))
-        assert second.duration == timedelta(minutes=90)
-        assert "embed" in pick.followups[0]
+        assert second.duration == timedelta(hours=2)
+        assert "aren't a participant" in pick.responses[0][1]["content"]
+
+    def hidden_event(self, env):
+        hidden_channel = FakeTextChannel(channel_id=50)
+        env.guild.channels[hidden_channel.id] = hidden_channel
+        return env.make_event([env.make_participant("a")], text_channel=hidden_channel)
+
+    def test_events_in_other_channels_are_not_offered(self, env):
+        other_channel = FakeTextChannel(channel_id=51)
+        editor = make_member(7, "editor")
+        other_channel.members.append(editor)
+        env.guild.members[editor.id] = editor
+        event = env.make_event([env.make_participant("a")], text_channel=other_channel)
+        event.add_user_as_participant(editor)
+        interaction = self.interaction(env, editor)
+        run(env.sched.edit_command.callback(interaction, duration=90))
+        assert event.duration == timedelta(hours=2)
+        assert interaction.responses[0][1]["content"] == "**No events were found in this channel.**"
+
+    def test_hidden_channel_event_is_not_offered_to_join(self, env):
+        event = self.hidden_event(env)
+        interaction = self.interaction(env)
+        assert run(env.sched.respond_if_not_participant(event, interaction, "/edit", verb="use"))
+        (kind, kwargs), = interaction.responses
+        assert kwargs == {"content": f"You aren't a participant of {event}.", "ephemeral": True}
+
+    def test_join_refused_after_losing_access_to_the_channel(self, env):
+        event = env.make_event([env.make_participant("a")])
+        outsider = make_member(70, "outsider")
+        view = env.sched.JoinEventView(event, "/edit", verb="use")
+        join = self.interaction(env, outsider)
+        run(view.join_button_callback(join))
+        assert not event.is_participant(outsider)
+        assert join.responses[0][1]["content"] == f"You can't see {event}'s channel, so you can't join it."
+
+
+class TestListEvents:
+    def test_hides_events_in_channels_the_user_cant_see(self, env):
+        hidden_channel = FakeTextChannel(channel_id=50)
+        env.make_event([env.make_participant("a")], text_channel=hidden_channel)
+        visible = env.make_event([env.make_participant("b")])
+        viewer = make_member(7, "viewer")
+        env.text_channel.members.append(viewer)
+        interaction = FakeInteraction(viewer)
+        interaction.guild = env.guild
+        run(env.sched.listevents_command.callback(interaction))
+        (followup,) = interaction.followups
+        assert [embed.title for embed in followup["embeds"][1:]] == [visible.get_general_embed().title]

@@ -916,21 +916,21 @@ class TestUpdateWhileCreated:
         assert active.ended
         assert active_scheduled_event.deleted
 
-    def test_guild_event_moved_in_discord_moves_event(self, env):
+    def test_guild_event_moved_in_discord_keeps_event_location(self, env):
         event, scheduled_events = make_created_event(env, days=(1, 2))
-        new_voice_channel = SimpleNamespace(id=99, members=[], mention="<#99>")
-        scheduled_events[0].kwargs["channel"] = new_voice_channel
+        scheduled_events[0].kwargs["channel"] = SimpleNamespace(id=99, members=[], mention="<#99>")
         run(event.update())
-        assert event.voice_channel is new_voice_channel
-        assert scheduled_events[1].edits == [{"entity_type": EntityType.voice, "channel": new_voice_channel,
-                                          "end_time": at(2, 22)}]
+        assert event.voice_channel is env.voice_channel
+        assert scheduled_events[1].edits == []
 
-    def test_guild_event_moved_to_external_location_in_discord(self, env):
-        event, (scheduled_event,) = make_created_event(env)
-        scheduled_event.kwargs.update(entity_type=EntityType.external, location="Park")
+    def test_status_change_in_discord_is_seen_on_the_guilds_copy(self, env):
+        # discord.py returns a separate copy when a guild event is created, and Discord only updates the guild's
+        event, (returned,) = make_created_event(env)
+        guild_copy = FakeScheduledEvent(at(1, 20), status=EventStatus.ended)
+        guild_copy.id = returned.id
+        env.guild.created.append(guild_copy)
         run(event.update())
-        assert event.location == "Park"
-        assert event.voice_channel is None
+        assert event.ended or event not in env.sched.client.events
 
     def test_bots_alone_do_not_keep_an_event_going(self, env):
         a = env.make_participant("a")
@@ -1649,6 +1649,66 @@ class TestScheduleAgain:
         run(env.sched.client.retrieve_events())
         assert loaded == ["active", "waiting", "legacy"]
 
+
+
+class TestScheduleAgainParticipantsOnly:
+    def cancel_with_schedule_again(self, env):
+        event = env.make_event([env.make_participant("a")])
+        run(event.cancel(schedule_again=True))
+        (after_buttons,) = env.sched.client.schedule_again_events
+        return event, after_buttons
+
+    def outsider(self, env):
+        member = SimpleNamespace(id=70, name="outsider", nick=None, mention="<@70>", bot=False)
+        env.guild.members[member.id] = member
+        env.text_channel.members.append(member)
+        return member
+
+    def test_participant_opens_the_modal(self, env):
+        event, after_buttons = self.cancel_with_schedule_again(env)
+        interaction = FakeInteraction(event.participants[0].member)
+        run(after_buttons.schedule_again_button.callback(interaction))
+        assert interaction.responses[0][0] == "send_modal"
+
+    def test_non_participant_is_offered_to_join_without_reposting_messages(self, env):
+        event, after_buttons = self.cancel_with_schedule_again(env)
+        outsider = self.outsider(env)
+        interaction = FakeInteraction(outsider)
+        run(after_buttons.schedule_again_button.callback(interaction))
+        (kind, kwargs), = interaction.responses
+        assert kwargs["content"] == f"You aren't a participant of {event}. Join it, then press Schedule Again again."
+        sent_before = len(env.text_channel.sent)
+        join = FakeInteraction(outsider)
+        run(kwargs["view"].join_button_callback(join))
+        assert event.is_participant(outsider)
+        assert join.responses[0][1]["content"] == f"You joined {event}. Press Schedule Again again."
+        assert len(env.text_channel.sent) == sent_before
+        assert env.update_availability_message_calls == []
+
+    def test_join_after_buttons_expired_says_so(self, env):
+        event, after_buttons = self.cancel_with_schedule_again(env)
+        outsider = self.outsider(env)
+        interaction = FakeInteraction(outsider)
+        run(after_buttons.schedule_again_button.callback(interaction))
+        env.sched.client.schedule_again_events.clear()
+        join = FakeInteraction(outsider)
+        run(interaction.responses[0][1]["view"].join_button_callback(join))
+        assert join.responses[0][1]["content"] == f"You joined {event}. Schedule Again can't be used anymore."
+
+    def test_non_participant_forgetting_is_blocked(self, env):
+        event, after_buttons = self.cancel_with_schedule_again(env)
+        outsider = self.outsider(env)
+        interaction = FakeInteraction(outsider)
+        run(after_buttons.forget_button.callback(interaction))
+        assert env.sched.client.schedule_again_events == [after_buttons]
+        assert event.is_blocked(outsider)
+        assert "blocked" in interaction.responses[0][1]["content"]
+
+    def test_participant_forgets(self, env):
+        event, after_buttons = self.cancel_with_schedule_again(env)
+        interaction = FakeInteraction(event.participants[0].member)
+        run(after_buttons.forget_button.callback(interaction))
+        assert env.sched.client.schedule_again_events == []
 
 
 class TestSavingBeforeLoading:

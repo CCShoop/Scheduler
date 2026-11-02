@@ -132,7 +132,7 @@ class TestVoiceChannelDeleted:
         delete_channel(env, env.voice_channel)
         prompt = event.voice_channel_prompt
         prompt.channel_select._values = [SimpleNamespace(id=new_voice_channel.id)]
-        interaction = FakeInteraction(SimpleNamespace(name="a", nick=None))
+        interaction = FakeInteraction(event.participants[0].member)
         run(prompt.channel_select_callback(interaction))
         assert event.voice_channel is new_voice_channel
         assert event.voice_channel_prompt is None
@@ -148,10 +148,24 @@ class TestVoiceChannelDeleted:
         delete_channel(env, env.voice_channel)
         prompt = event.voice_channel_prompt
         prompt.channel_select._values = [SimpleNamespace(id=12345)]
-        interaction = FakeInteraction(SimpleNamespace(name="a", nick=None))
+        interaction = FakeInteraction(event.participants[0].member)
         run(prompt.channel_select_callback(interaction))
         assert event.voice_channel_missing
         assert interaction.responses[0][0] == "send_message"
+
+    def test_non_participant_selecting_a_voice_channel_is_offered_to_join(self, env):
+        event = env.make_event([env.make_participant("a")])
+        new_voice_channel = add_voice_channel(env)
+        delete_channel(env, env.voice_channel)
+        prompt = event.voice_channel_prompt
+        prompt.channel_select._values = [SimpleNamespace(id=new_voice_channel.id)]
+        outsider = SimpleNamespace(id=70, name="outsider", nick=None)
+        env.text_channel.members.append(outsider)
+        interaction = FakeInteraction(outsider)
+        run(prompt.channel_select_callback(interaction))
+        assert event.voice_channel_missing
+        assert interaction.responses[0][1]["content"] == \
+            f"You aren't a participant of {event}. Join it, then use the voice channel dropdown again."
 
     def test_cancel_button_opens_cancel_modal(self, env):
         participant = env.make_participant("a")
@@ -318,6 +332,160 @@ class TestVoiceChannelPromptDropdown:
         delete_channel(env, other)
         run(event.update())
         assert event.voice_channel_prompt.channel_select is None
+
+
+class TestDeletedVoiceChannelPromptMessage:
+    def prompts(self, env):
+        return [sent for sent in env.text_channel.sent
+                if sent.get("embed") is not None and sent["embed"].title == "Voice Channel Deleted"]
+
+    def make_waiting(self, env):
+        event = env.make_event([env.make_participant("a")])
+        add_voice_channel(env)
+        delete_channel(env, env.voice_channel)
+        return event
+
+    def test_first_prompt_mentions_participants(self, env):
+        event = self.make_waiting(env)
+        (prompt,) = self.prompts(env)
+        assert prompt["content"] == event.get_names_string(subscribed_only=True, mention=True)
+
+    def test_deleted_message_is_resent_quietly_at_the_next_check(self, env, monkeypatch):
+        event = self.make_waiting(env)
+        old_message = event.voice_channel_prompt.message
+        old_message.deleted = True
+        # Not checked again until the interval passes
+        run(event.update())
+        assert len(self.prompts(env)) == 1
+        event.voice_channel_prompt_checked_at -= env.sched.VOICE_CHANNEL_PROMPT_CHECK_INTERVAL
+        run(event.update())
+        prompts = self.prompts(env)
+        assert len(prompts) == 2 and prompts[-1]["content"] is None
+        assert event.voice_channel_prompt.message is not old_message
+
+    def test_existing_message_is_kept(self, env):
+        event = self.make_waiting(env)
+        message = event.voice_channel_prompt.message
+        event.voice_channel_prompt_checked_at -= env.sched.VOICE_CHANNEL_PROMPT_CHECK_INTERVAL
+        run(event.update())
+        assert event.voice_channel_prompt.message is message
+        assert len(self.prompts(env)) == 1
+
+    def test_failed_check_keeps_the_prompt(self, env, monkeypatch):
+        event = self.make_waiting(env)
+        prompt = event.voice_channel_prompt
+        event.voice_channel_prompt_checked_at -= env.sched.VOICE_CHANNEL_PROMPT_CHECK_INTERVAL
+
+        async def failing_fetch(message_id):
+            raise RuntimeError("503 Service Unavailable")
+
+        monkeypatch.setattr(env.text_channel, "fetch_message", failing_fetch)
+        assert not run(event.voice_channel_prompt_deleted())
+        assert event.voice_channel_prompt is prompt
+
+    def test_channel_change_resends_quietly(self, env):
+        event = env.make_event([env.make_participant("a")])
+        delete_channel(env, env.voice_channel)
+        add_voice_channel(env)
+        run(event.update())
+        assert self.prompts(env)[-1]["content"] is None
+
+
+class TestMissedWhileWaitingForAVoiceChannel:
+    def test_missed_occurrences_are_dropped(self, env):
+        event, _ = make_created_event(env, days=(1, 2, 3))
+        other = add_voice_channel(env)
+        delete_channel(env, env.voice_channel)
+        now = env.sched.now()
+        upcoming = now + timedelta(days=1)
+        event.start_times = [now - timedelta(days=3), now - timedelta(days=2), upcoming]
+        env.update_messages_calls.clear()
+        run(event.update())
+        assert event.start_times == [upcoming]
+        assert env.update_messages_calls == [event]
+        run(event.move_to_voice_channel(other, "a"))
+        run(event.update())
+        assert [se.start_time for se in event.scheduled_events] == [upcoming]
+
+    def test_event_is_cancelled_once_every_occurrence_is_missed(self, env):
+        event, _ = make_created_event(env, days=(1, 2))
+        add_voice_channel(env)
+        delete_channel(env, env.voice_channel)
+        now = env.sched.now()
+        event.start_times = [now - timedelta(days=2), now - timedelta(days=1)]
+        run(event.update())
+        assert event.cancelled
+        assert env.sched.client.schedule_again_events[-1].event is event
+
+    def test_occurrence_within_the_grace_period_is_kept(self, env):
+        event, _ = make_created_event(env)
+        add_voice_channel(env)
+        delete_channel(env, env.voice_channel)
+        recent = env.sched.now() - timedelta(minutes=10)
+        event.start_times = [recent]
+        run(event.update())
+        assert event.start_times == [recent] and not event.cancelled
+
+
+class TestScheduleAgainAfterVoiceChannelDeleted:
+    def submit(self, env, monkeypatch, event, start_time=""):
+        calls = []
+
+        async def fake_schedule(**kwargs):
+            calls.append(kwargs)
+
+        monkeypatch.setattr(env.sched, "schedule", fake_schedule)
+        monkeypatch.setattr(env.sched, "create", fake_schedule)
+
+        async def go():
+            modal = env.sched.ScheduleAgainModal(event=event, title="Schedule Again")
+            modal.event_duration._value = "60"
+            modal.event_start_time._value = start_time
+            interaction = FakeInteraction(event.participants[0].member)
+            await modal.on_submit(interaction)
+            return interaction
+
+        return run(go()), calls
+
+    @pytest.mark.parametrize("start_time", ["", "tomorrow 8pm"])
+    def test_uses_the_first_voice_channel_once_deleted(self, env, monkeypatch, start_time):
+        event = env.make_event([env.make_participant("a")])
+        other = add_voice_channel(env)
+        delete_channel(env, env.voice_channel)
+        assert event.voice_channel_missing
+        monkeypatch.setattr(env.sched, "parse_start_time", lambda text: at(2, 20))
+        _, (call,) = self.submit(env, monkeypatch, event, start_time)
+        assert call["voice_channel"] is other and call["location"] is None
+
+    def test_voice_channel_deleted_after_the_event_ended(self, env, monkeypatch):
+        event = env.make_event([env.make_participant("a")])
+        other = add_voice_channel(env)
+        # Finished events aren't told about deleted channels, so they keep the old one
+        env.guild.voice_channels.remove(env.voice_channel)
+        _, (call,) = self.submit(env, monkeypatch, event)
+        assert call["voice_channel"] is other
+
+    def test_without_voice_channels_it_says_so(self, env, monkeypatch):
+        event = env.make_event([env.make_participant("a")])
+        delete_channel(env, env.voice_channel)
+        interaction, calls = self.submit(env, monkeypatch, event)
+        assert calls == []
+        assert "there are no voice channels in the server" in interaction.followups[0]["content"]
+
+    def test_typed_location_is_kept(self, env, monkeypatch):
+        event = env.make_event([env.make_participant("a")], location="Park")
+        _, (call,) = self.submit(env, monkeypatch, event)
+        assert call["location"] == "Park" and call["voice_channel"] is None
+
+    def test_buttons_load_after_voice_channel_deleted_while_offline(self, env, monkeypatch):
+        event = env.make_event([env.make_participant("a")])
+        run(event.cancel(schedule_again=True))
+        (saved,) = env.sched.client.event_data["schedule_again_events"]
+        env.sched.client.schedule_again_events.clear()
+        env.guild.channels.pop(env.voice_channel.id)
+        monkeypatch.setattr(env.sched.client, "get_guild", lambda guild_id: env.guild)
+        restored = run(env.sched.AfterButtons.from_dict(saved))
+        assert restored.event.voice_channel_missing
 
 
 class TestVoiceChannelDeletedWhileOffline:
