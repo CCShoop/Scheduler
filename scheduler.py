@@ -88,9 +88,10 @@ MAX_EVENT_NAME_LENGTH: int = 100
 
 # Default time between events in minutes
 EVENT_BUFFER_MINUTES: int = 0
-# Typed locations of events whose voice or stage channel was deleted, until a new one is chosen
-DELETED_VOICE_CHANNEL_LOCATION: str = "Deleted Voice Channel"
-DELETED_STAGE_CHANNEL_LOCATION: str = "Deleted Stage Channel"
+# Typed locations of events whose voice or stage channel was deleted, until a new one is chosen.
+# The trailing space keeps typed locations from matching them, since those are stripped.
+DELETED_VOICE_CHANNEL_LOCATION: str = "Deleted Voice Channel "
+DELETED_STAGE_CHANNEL_LOCATION: str = "Deleted Stage Channel "
 DELETED_CHANNEL_LOCATIONS: tuple = (DELETED_VOICE_CHANNEL_LOCATION, DELETED_STAGE_CHANNEL_LOCATION)
 
 # Seconds to wait before deleting a followup message
@@ -632,7 +633,8 @@ def get_location_start_lock(location_key: tuple) -> asyncio.Lock:
 def get_guild_event_location(guild_event: ScheduledEvent) -> tuple[Optional[VoiceChannel], Optional[str]]:
     """Gets the (voice_channel, location) of a guild event, like :func:`resolve_location`."""
     if guild_event.entity_type == EntityType.external:
-        return None, guild_event.location
+        # Stripped like typed locations, so it can't match the location of an event whose voice channel was deleted
+        return None, (guild_event.location or "").strip() or None
     return guild_event.channel, None
 
 
@@ -1128,6 +1130,10 @@ class Event:
             self.participants = keep_participants
         # Wait for a new voice channel to be chosen or the event to be cancelled
         if self.voice_channel_missing:
+            prompt = self.voice_channel_prompt
+            # Resent when voice channels were made or deleted so that it shows the dropdown only when there's one to pick
+            if prompt is not None and (prompt.channel_select is not None) != bool(get_voice_channels(self.guild)):
+                await self.delete_voice_channel_prompt()
             if self.voice_channel_prompt is None:
                 await self.send_voice_channel_prompt()
             if not self.created:
@@ -2802,9 +2808,13 @@ class Event:
     async def send_voice_channel_prompt(self) -> None:
         """Sends a message asking participants to choose a new voice channel or cancel the event."""
         prompt = VoiceChannelPrompt(self)
+        kind = "stage channel" if self.location == DELETED_STAGE_CHANNEL_LOCATION else "voice channel"
+        if prompt.channel_select is not None:
+            instructions = "Please select a voice channel from the dropdown, or cancel the event."
+        else:
+            instructions = "There are no voice channels in the server. Once one is made, you can select it here, or cancel the event."
         embed = Embed(title="Voice Channel Deleted",
-                      description=f"The voice channel for **{self}** was deleted.\n"
-                                  "Select a different voice channel in the server for it, or cancel the event.",
+                      description=f"The {kind} for **{self}** has been deleted.\n{instructions}",
                       color=Color.orange())
         prompt.message = await self.text_channel.send(content=self.get_names_string(subscribed_only=True, mention=True),
                                                       embed=embed,
@@ -3188,7 +3198,7 @@ class Event:
     def location_string(self) -> str:
         """The voice channel mention, or the external location."""
         if self.is_external:
-            return self.location
+            return self.location.strip()
         return self.voice_channel.mention if self.voice_channel is not None else "(Deleted voice channel)"
 
     def shares_voice_channel(self, event) -> bool:
@@ -4719,8 +4729,8 @@ class VoiceChannelPrompt(View):
     ----------
     event: :class:`Event`
         The event that needs a new voice channel.
-    channel_select: :class:`ChannelSelect`
-        The dropdown of the guild's voice channels.
+    channel_select: :class:`Optional[ChannelSelect]`
+        The dropdown of the guild's voice and stage channels, left out when it has none.
     cancel_button: :class:`Button`
         The Cancel Event button.
     message: :class:`Optional[Message]`
@@ -4731,12 +4741,15 @@ class VoiceChannelPrompt(View):
         super().__init__(timeout=None)
         self.event = event
         self.message = None
-        self.channel_select = ChannelSelect(channel_types=[ChannelType.voice, ChannelType.stage_voice],
-                                            placeholder="Select a new voice channel",
-                                            min_values=1,
-                                            max_values=1)
-        self.channel_select.callback = self.channel_select_callback
-        self.add_item(self.channel_select)
+        self.channel_select = None
+        # Discord lists the channels and lets users search them, so it isn't limited to 25 like other dropdowns
+        if get_voice_channels(event.guild):
+            self.channel_select = ChannelSelect(channel_types=[ChannelType.voice, ChannelType.stage_voice],
+                                                placeholder="Select a new voice channel",
+                                                min_values=1,
+                                                max_values=1)
+            self.channel_select.callback = self.channel_select_callback
+            self.add_item(self.channel_select)
         self.cancel_button = Button(label="Cancel Event", style=ButtonStyle.red)
         self.cancel_button.callback = self.cancel_button_callback
         self.add_item(self.cancel_button)
@@ -4763,7 +4776,8 @@ class VoiceChannelPrompt(View):
 
     async def disable(self) -> None:
         """Disables the prompt on its message while the bot is offline."""
-        self.channel_select.disabled = True
+        if self.channel_select is not None:
+            self.channel_select.disabled = True
         self.cancel_button.disabled = True
         if self.message:
             try:

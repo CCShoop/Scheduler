@@ -128,9 +128,9 @@ class TestVoiceChannelDeleted:
 
     def test_selecting_a_voice_channel_recreates_guild_events(self, env):
         event, _ = make_created_event(env, days=(1, 2))
+        new_voice_channel = add_voice_channel(env)
         delete_channel(env, env.voice_channel)
         prompt = event.voice_channel_prompt
-        new_voice_channel = add_voice_channel(env)
         prompt.channel_select._values = [SimpleNamespace(id=new_voice_channel.id)]
         interaction = FakeInteraction(SimpleNamespace(name="a", nick=None))
         run(prompt.channel_select_callback(interaction))
@@ -144,6 +144,7 @@ class TestVoiceChannelDeleted:
 
     def test_selecting_a_missing_voice_channel_is_rejected(self, env):
         event = env.make_event([env.make_participant("a")])
+        add_voice_channel(env)
         delete_channel(env, env.voice_channel)
         prompt = event.voice_channel_prompt
         prompt.channel_select._values = [SimpleNamespace(id=12345)]
@@ -212,7 +213,7 @@ class TestDeletedChannelLocation:
     def test_becomes_a_typed_location(self, env):
         event, _ = make_created_event(env)
         delete_channel(env, env.voice_channel)
-        assert event.location == "Deleted Voice Channel"
+        assert event.location == env.sched.DELETED_VOICE_CHANNEL_LOCATION
         assert event.voice_channel is None
         assert event.location_string == "Deleted Voice Channel"
 
@@ -221,7 +222,7 @@ class TestDeletedChannelLocation:
         stage_channel = add_stage_channel(env)
         event, _ = make_stage_event(env, stage_channel)
         delete_channel(env, stage_channel)
-        assert event.location == "Deleted Stage Channel"
+        assert event.location == env.sched.DELETED_STAGE_CHANNEL_LOCATION
         assert event.voice_channel_missing
 
     def test_events_of_deleted_channels_do_not_conflict(self, env):
@@ -245,11 +246,78 @@ class TestDeletedChannelLocation:
         assert not event.voice_channel_missing
         assert event.location_string == new_voice_channel.mention
 
+    @pytest.mark.parametrize("typed", ["Deleted Voice Channel", " Deleted Stage Channel ", "Deleted Voice Channel\t"])
+    def test_typed_location_never_counts_as_deleted(self, env, typed):
+        voice_channel, location = env.sched.resolve_location(env.guild, typed)
+        event = env.make_event([env.make_participant("a")], location=location)
+        assert not event.voice_channel_missing
+
+    def test_discord_event_location_is_stripped(self, env):
+        guild_event = SimpleNamespace(entity_type=EntityType.external, location="Deleted Voice Channel ")
+        assert env.sched.get_guild_event_location(guild_event) == (None, "Deleted Voice Channel")
+        guild_event.location = "   "
+        assert env.sched.get_guild_event_location(guild_event) == (None, None)
+
     def test_old_data_without_a_location_loads_as_deleted(self, env):
         event = env.sched.Event(name="old", voice_channel=None, guild=env.guild, text_channel=env.text_channel,
                                 voice_channel_deleted=True)
-        assert event.location == "Deleted Voice Channel"
+        assert event.location == env.sched.DELETED_VOICE_CHANNEL_LOCATION
         assert event.voice_channel_missing
+
+
+class TestVoiceChannelPromptDropdown:
+    def prompt_embeds(self, env):
+        return [sent["embed"] for sent in env.text_channel.sent
+                if sent.get("embed") is not None and sent["embed"].title == "Voice Channel Deleted"]
+
+    def test_dropdown_when_a_voice_channel_remains(self, env):
+        event = env.make_event([env.make_participant("a")])
+        add_voice_channel(env)
+        delete_channel(env, env.voice_channel)
+        assert event.voice_channel_prompt.channel_select is not None
+        (embed,) = self.prompt_embeds(env)
+        assert embed.description == (f"The voice channel for **{event}** has been deleted.\n"
+                                     "Please select a voice channel from the dropdown, or cancel the event.")
+
+    def test_no_dropdown_without_voice_channels(self, env):
+        event = env.make_event([env.make_participant("a")])
+        delete_channel(env, env.voice_channel)
+        prompt = event.voice_channel_prompt
+        assert prompt.channel_select is None
+        assert prompt.children == [prompt.cancel_button]
+        (embed,) = self.prompt_embeds(env)
+        assert embed.description.endswith("There are no voice channels in the server. "
+                                          "Once one is made, you can select it here, or cancel the event.")
+        run(prompt.disable())
+        assert prompt.cancel_button.disabled
+
+    def test_stage_channel_is_named(self, env):
+        from test_stage_channels import add_stage_channel, make_stage_event
+        stage_channel = add_stage_channel(env)
+        event, _ = make_stage_event(env, stage_channel)
+        delete_channel(env, stage_channel)
+        (embed,) = self.prompt_embeds(env)
+        assert embed.description.startswith(f"The stage channel for **{event}** has been deleted.")
+
+    def test_resent_with_dropdown_once_a_voice_channel_is_made(self, env):
+        event = env.make_event([env.make_participant("a")])
+        delete_channel(env, env.voice_channel)
+        old_message = event.voice_channel_prompt.message
+        run(event.update())
+        assert event.voice_channel_prompt.message is old_message
+        add_voice_channel(env)
+        run(event.update())
+        assert old_message.deleted
+        assert event.voice_channel_prompt.channel_select is not None
+        assert len(self.prompt_embeds(env)) == 2
+
+    def test_resent_without_dropdown_once_every_voice_channel_is_gone(self, env):
+        event = env.make_event([env.make_participant("a")])
+        other = add_voice_channel(env)
+        delete_channel(env, env.voice_channel)
+        delete_channel(env, other)
+        run(event.update())
+        assert event.voice_channel_prompt.channel_select is None
 
 
 class TestVoiceChannelDeletedWhileOffline:
@@ -269,7 +337,7 @@ class TestVoiceChannelDeletedWhileOffline:
         assert loaded.start_times == event.start_times
         assert loaded.scheduled_events == []
         assert all(se.deleted for se in scheduled_events)
-        assert loaded.location == "Deleted Voice Channel"
+        assert loaded.location == env.sched.DELETED_VOICE_CHANNEL_LOCATION
 
     def test_reattaches_existing_prompt(self, env, monkeypatch):
         event = env.make_event([env.make_participant("a")])
