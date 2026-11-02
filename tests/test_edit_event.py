@@ -430,16 +430,65 @@ class TestDuration:
         assert fields(embed) == [("Duration", "2 hours -> 1 hour"
                                   "\nThe Discord event couldn't be updated, so it may still show the old end time.")]
 
-    def test_shortening_started_external_event_below_elapsed_time_warns(self, env):
-        event = self.make_started(env, timedelta(minutes=90), location="Park")
+    @pytest.mark.parametrize("location, ending", [
+        ("Park", "so it will end now."),
+        (None, "so it will end once everyone leaves the voice channel."),
+    ])
+    def test_shortening_started_event_below_elapsed_time_warns_and_skips_discord(self, env, location, ending):
+        event = self.make_started(env, timedelta(minutes=90), location=location)
         embed = run(env.sched.edit_event(event, duration=60))
-        assert fields(embed) == [("Duration", "2 hours -> 1 hour\nIt has already run longer than that, so it will end now.")]
+        assert fields(embed) == [("Duration", f"2 hours -> 1 hour\nIt has already run longer than that, {ending}")]
+        assert event.scheduled_events[0].edits == []
 
-    @pytest.mark.parametrize("location, elapsed", [("Park", timedelta(minutes=30)), (None, timedelta(minutes=90))])
-    def test_no_end_warning_otherwise(self, env, location, elapsed):
-        event = self.make_started(env, elapsed, location=location)
+    def test_no_end_warning_otherwise(self, env):
+        event = self.make_started(env, timedelta(minutes=30), location="Park")
         embed = run(env.sched.edit_event(event, duration=60))
         assert fields(embed) == [("Duration", "2 hours -> 1 hour")]
+        assert len(event.scheduled_events[0].edits) == 1
+
+    def test_blocked_wording_when_next_event_already_overlaps(self, env):
+        event = make_created(env)
+        other = env.make_event([env.make_participant("b")], created=True, start_times=[at(1, 21)],
+                               scheduled_events=[FakeScheduledEvent(at(1, 21))])
+        embed = run(env.sched.edit_event(event, duration=180))
+        assert fields(embed) == [("Duration (Unchanged)", f"The duration cannot be extended because {other} "
+                                  "starts before this event ends in the same voice channel")]
+
+    def test_blocked_wording_when_participants_event_already_overlaps(self, env):
+        a = env.make_participant("a")
+        a.answered = True
+        event = make_created(env, participants=[a])
+        a.removed_times = [RemovedTime("Other", TimeBlock(at(1, 21), at(1, 23)))]
+        embed = run(env.sched.edit_event(event, duration=180))
+        assert fields(embed) == [("Duration (Unchanged)", "The duration cannot be extended because Other, which shares "
+                                  "participants with this event, starts before it ends")]
+
+    def test_blocked_wording_when_availability_already_ended(self, env):
+        a = env.make_participant("a", [TimeBlock(at(1, 18), at(1, 21))])
+        event = make_created(env, participants=[a])
+        embed = run(env.sched.edit_event(event, duration=180))
+        assert fields(embed)[0][1].startswith("The duration cannot be extended because the participants' common "
+                                              "availability ends before this event ends.")
+
+    def test_waits_for_event_creation(self, env):
+        import asyncio
+        event = env.make_event([env.make_participant("a")])
+
+        async def go():
+            await event.create_lock.acquire()
+            edit = asyncio.ensure_future(env.sched.edit_event(event, duration=180))
+            await asyncio.sleep(0)
+            assert not edit.done()
+            # Created while the edit waits, so the edit sees it as created
+            event.created = True
+            event.start_times = [at(1, 20)]
+            event.scheduled_events = [FakeScheduledEvent(at(1, 20))]
+            env.make_event([env.make_participant("b")], created=True, start_times=[at(1, 22, 30)],
+                           scheduled_events=[FakeScheduledEvent(at(1, 22, 30))])
+            event.create_lock.release()
+            return await edit
+        run(go())
+        assert event.duration == timedelta(hours=2, minutes=30)
 
     def test_cannot_make_created_event_automatic(self, env):
         event = make_created(env)

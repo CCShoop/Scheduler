@@ -88,6 +88,10 @@ MAX_EVENT_NAME_LENGTH: int = 100
 
 # Default time between events in minutes
 EVENT_BUFFER_MINUTES: int = 0
+# Typed locations of events whose voice or stage channel was deleted, until a new one is chosen
+DELETED_VOICE_CHANNEL_LOCATION: str = "Deleted Voice Channel"
+DELETED_STAGE_CHANNEL_LOCATION: str = "Deleted Stage Channel"
+DELETED_CHANNEL_LOCATIONS: tuple = (DELETED_VOICE_CHANNEL_LOCATION, DELETED_STAGE_CHANNEL_LOCATION)
 
 # Seconds to wait before deleting a followup message
 FOLLOWUP_DELAY_SECONDS: int = 3
@@ -1043,6 +1047,7 @@ class Event:
             self.voice_channel: VoiceChannel = voice_channel
         elif voice_channel_deleted:
             # Waits for a new voice channel to be chosen through the voice channel prompt
+            self.location = DELETED_VOICE_CHANNEL_LOCATION
             self.voice_channel: Optional[VoiceChannel] = None
         else:
             try:
@@ -2768,10 +2773,13 @@ class Event:
         if self.is_external or self.cancelled:
             return
         logger.info(f"[{self}] Voice channel was deleted")
+        was_stage = self.is_stage
         if self.started:
             await self.end(reason=f"Event ended by {client.user} because its voice channel was deleted.")
             if self not in client.events:
                 return
+        # A typed location, so it can't conflict with other events while it waits for a new voice channel
+        self.location = DELETED_STAGE_CHANNEL_LOCATION if was_stage else DELETED_VOICE_CHANNEL_LOCATION
         self.voice_channel = None
         await self.delete_scheduled_events_for_missing_voice_channel()
         await self.send_voice_channel_prompt()
@@ -2830,6 +2838,7 @@ class Event:
             The name of whoever chose the new voice channel.
         """
         self.voice_channel = voice_channel
+        self.location = None
         await self.delete_voice_channel_prompt()
         logger.info(f"[{self}] Moved to voice channel {voice_channel.name} by {mover}")
         await self.text_channel.send(embed=Embed(title="Voice Channel Changed",
@@ -2887,7 +2896,7 @@ class Event:
     @property
     def voice_channel_missing(self) -> bool:
         """Indicates whether the event's voice channel was deleted and a new one hasn't been chosen yet."""
-        return not self.is_external and self.voice_channel is None
+        return self.location in DELETED_CHANNEL_LOCATIONS
 
     def remove(self) -> None:
         """
@@ -3187,7 +3196,8 @@ class Event:
         Indicates whether this event takes place in the same voice channel as the provided event, so they can't overlap.
         Events at the same external location can overlap, e.g. separate groups at a range.
         """
-        return not self.is_external and self.location_key == event.location_key
+        return (not self.is_external and self.voice_channel is not None
+                and self.location_key == event.location_key)
 
     def get_availability_duration_limit(self) -> Optional[timedelta]:
         """
@@ -3350,7 +3360,7 @@ class Event:
         # Location: an external location, otherwise a voice channel
         event_location = data.get("location") or None
         event_voice_channel = None
-        event_voice_channel_deleted = False
+        event_voice_channel_deleted = event_location in DELETED_CHANNEL_LOCATIONS
         if event_location is None:
             event_voice_channel = utils.get(get_voice_channels(event_guild), id=data["voice_channel_id"])
             if not event_voice_channel:
@@ -5147,131 +5157,143 @@ async def edit_event(event: Event,
     embed = Embed(title=f"{event} Edited",
                   description=f"{event} has been edited.",
                   color=Color.orange())
-    # Name
-    if name is not None:
-        old_name = event.name
-        if old_name == name:
-            embed.add_field(name="Name (Unchanged)",
-                            value="The new name is the same as the old name",
-                            inline=False)
-        else:
-            # Restore under the old name before renaming, then re-remove under the new name
-            for other_event in client.events:
-                if other_event is not event:
-                    other_event.restore_availabilities(event)
-            event.name = name
-            remove_times_from_availabilities_for_events()
-            if event.created:
-                for scheduled_event in event.scheduled_events:
-                    await scheduled_event.edit(name=event.name)
-            embed.add_field(name="Name",
-                            value=f"{old_name[:20]} -> {event.get_limited_name(20)}",
-                            inline=False)
-    # Location: an external location takes priority over a voice channel
-    if location is not None or voice_channel is not None:
-        old_location = event.location_string
-        if get_location_key(voice_channel, location) == event.location_key:
-            embed.add_field(name="Location (Unchanged)",
-                            value=f"Location is already {old_location}",
-                            inline=False)
-        else:
-            event.location = location or None
-            event.voice_channel = voice_channel if event.location is None else None
-            if event.created:
-                for scheduled_event, start_time in zip(event.scheduled_events, event.start_times):
-                    await scheduled_event.edit(entity_type=event.entity_type, **event.get_location_kwargs(start_time))
-            embed.add_field(name="Location",
-                            value=f"{old_location} -> {event.location_string}",
-                            inline=False)
-    # Image URL
-    if image_url is not None:
-        old_image_url = event.image_url
-        if image_url == old_image_url:
-            embed.add_field(name="Image (Unchanged)",
-                            value=f"image is already {event.image_url}",
-                            inline=False)
-        else:
-            event.delete_image_file()
-            event.image_url = image_url
-            if event.created:
-                # Clears image_url if the image can't be downloaded
-                await event.save_image_to_file()
-            if event.image_url:
-                if event.has_image_saved:
-                    for scheduled_event in event.scheduled_events:
-                        await scheduled_event.edit(image=event.get_image())
-                embed.add_field(name="Image",
-                                value=f"{old_image_url} -> {event.image_url}",
+    # Waits for the event to finish being created, otherwise it would still look uncreated
+    # and a duration could be extended past what's allowed. Multi event is left out, since it creates the event itself.
+    async with event.create_lock:
+        # Name
+        if name is not None:
+            old_name = event.name
+            if old_name == name:
+                embed.add_field(name="Name (Unchanged)",
+                                value="The new name is the same as the old name",
                                 inline=False)
             else:
-                event.image_url = old_image_url
-                embed.add_field(name="Image (Unchanged)",
-                                value="The new image could not be downloaded",
+                # Restore under the old name before renaming, then re-remove under the new name
+                for other_event in client.events:
+                    if other_event is not event:
+                        other_event.restore_availabilities(event)
+                event.name = name
+                remove_times_from_availabilities_for_events()
+                if event.created:
+                    for scheduled_event in event.scheduled_events:
+                        await scheduled_event.edit(name=event.name)
+                embed.add_field(name="Name",
+                                value=f"{old_name[:20]} -> {event.get_limited_name(20)}",
                                 inline=False)
-    # Duration
-    if duration is not None:
-        old_duration = event.duration
-        new_duration = timedelta(minutes=duration)
-        note = ""
-        blocked = ""
-        if event.created and duration != 0 and new_duration > event.scheduled_duration:
-            # Extending stops at the end of the common availability and at the next event in the same voice channel
-            requested = get_time_str_from_minutes(duration)
-            reschedule_tip = "" if event.started else (f" To make the event duration {requested}, you will need to press Reschedule Event, "
-                                                       "then set the duration again to find a time that fits it.")
-            shared_limit, shared_event_name = event.get_shared_participant_duration_limit()
-            availability_limit = event.get_availability_duration_limit()
-            channel_limit, limiting_event = event.get_voice_channel_duration_limit()
-            # Checked first, so it's reported when a participant's availability ends because of that event
-            if shared_limit is not None and new_duration > shared_limit:
-                new_duration = timedelta(minutes=int(shared_limit.total_seconds() // 60))
-                note = (f"\nLimited to {get_time_str_from_minutes(new_duration.total_seconds() // 60)} "
-                        f"so it ends before {shared_event_name} starts, which shares participants with it.")
-                blocked = (f"The duration cannot be extended because {shared_event_name}, which shares participants "
-                           "with this event, starts right after it ends")
-            if availability_limit is not None and new_duration > availability_limit:
-                new_duration = timedelta(minutes=int(availability_limit.total_seconds() // 60))
-                note = (f"\nLimited to {get_time_str_from_minutes(new_duration.total_seconds() // 60)} because "
-                        f"{requested} is longer than the participants' common availability.{reschedule_tip}")
-                blocked = (f"The duration cannot be extended because the participants' common availability "
-                           f"ends when this event ends.{reschedule_tip}")
-            if channel_limit is not None and new_duration > channel_limit:
-                new_duration = timedelta(minutes=int(channel_limit.total_seconds() // 60))
-                note = (f"\nLimited to {get_time_str_from_minutes(new_duration.total_seconds() // 60)} "
-                        f"so it ends before {limiting_event} starts in the same voice channel.")
-                blocked = (f"The duration cannot be extended because {limiting_event} "
-                           "starts right after this event ends in the same voice channel")
-        if blocked and new_duration <= event.scheduled_duration:
-            embed.add_field(name="Duration (Unchanged)",
-                            value=blocked,
-                            inline=False)
-        elif old_duration == new_duration:
-            embed.add_field(name="Duration (Unchanged)",
-                            value="The new duration is the same as the old duration",
-                            inline=False)
-        elif event.created and duration == 0:
-            embed.add_field(name="Duration (Unchanged)",
-                            value="The duration of a created event cannot be made automatic",
-                            inline=False)
-        else:
-            event.duration = new_duration
-            if event.created:
-                failed = False
-                for scheduled_event, start_time in zip(event.scheduled_events, event.start_times):
-                    try:
-                        await scheduled_event.edit(end_time=start_time + event.scheduled_duration)
-                    except Exception as e:
-                        logger.error(f"[{event}] Error changing guild event end time: {e}")
-                        failed = True
-                if failed:
-                    note += "\nThe Discord event couldn't be updated, so it may still show the old end time."
-            if event.started and event.is_external and now() >= event.start_times[0] + event.scheduled_duration:
-                note += "\nIt has already run longer than that, so it will end now."
-            remove_times_from_availabilities_for_events()
-            embed.add_field(name="Duration",
-                            value=f"{get_time_str_from_minutes(old_duration.total_seconds() // 60)}"
-                            f" -> {get_time_str_from_minutes(event.duration.total_seconds() // 60)}{note}",
-                            inline=False)
+        # Location: an external location takes priority over a voice channel
+        if location is not None or voice_channel is not None:
+            old_location = event.location_string
+            if get_location_key(voice_channel, location) == event.location_key:
+                embed.add_field(name="Location (Unchanged)",
+                                value=f"Location is already {old_location}",
+                                inline=False)
+            else:
+                event.location = location or None
+                event.voice_channel = voice_channel if event.location is None else None
+                if event.created:
+                    for scheduled_event, start_time in zip(event.scheduled_events, event.start_times):
+                        await scheduled_event.edit(entity_type=event.entity_type, **event.get_location_kwargs(start_time))
+                embed.add_field(name="Location",
+                                value=f"{old_location} -> {event.location_string}",
+                                inline=False)
+        # Image URL
+        if image_url is not None:
+            old_image_url = event.image_url
+            if image_url == old_image_url:
+                embed.add_field(name="Image (Unchanged)",
+                                value=f"image is already {event.image_url}",
+                                inline=False)
+            else:
+                event.delete_image_file()
+                event.image_url = image_url
+                if event.created:
+                    # Clears image_url if the image can't be downloaded
+                    await event.save_image_to_file()
+                if event.image_url:
+                    if event.has_image_saved:
+                        for scheduled_event in event.scheduled_events:
+                            await scheduled_event.edit(image=event.get_image())
+                    embed.add_field(name="Image",
+                                    value=f"{old_image_url} -> {event.image_url}",
+                                    inline=False)
+                else:
+                    event.image_url = old_image_url
+                    embed.add_field(name="Image (Unchanged)",
+                                    value="The new image could not be downloaded",
+                                    inline=False)
+        # Duration
+        if duration is not None:
+            old_duration = event.duration
+            new_duration = timedelta(minutes=duration)
+            note = ""
+            blocked = ""
+            if event.created and duration != 0 and new_duration > event.scheduled_duration:
+                # Extending stops at the end of the common availability and at the next event in the same voice channel
+                requested = get_time_str_from_minutes(duration)
+                reschedule_tip = "" if event.started else (f" To make the event duration {requested}, you will need to press Reschedule Event, "
+                                                           "then set the duration again to find a time that fits it.")
+                shared_limit, shared_event_name = event.get_shared_participant_duration_limit()
+                availability_limit = event.get_availability_duration_limit()
+                channel_limit, limiting_event = event.get_voice_channel_duration_limit()
+                # Checked first, so it's reported when a participant's availability ends because of that event
+                if shared_limit is not None and new_duration > shared_limit:
+                    new_duration = timedelta(minutes=int(shared_limit.total_seconds() // 60))
+                    note = (f"\nLimited to {get_time_str_from_minutes(new_duration.total_seconds() // 60)} "
+                            f"so it ends before {shared_event_name} starts, which shares participants with it.")
+                    when = "right after" if new_duration == event.scheduled_duration else "before"
+                    blocked = (f"The duration cannot be extended because {shared_event_name}, which shares participants "
+                               f"with this event, starts {when} it ends")
+                if availability_limit is not None and new_duration > availability_limit:
+                    new_duration = timedelta(minutes=int(availability_limit.total_seconds() // 60))
+                    note = (f"\nLimited to {get_time_str_from_minutes(new_duration.total_seconds() // 60)} because "
+                            f"{requested} is longer than the participants' common availability.{reschedule_tip}")
+                    when = "when" if new_duration == event.scheduled_duration else "before"
+                    blocked = (f"The duration cannot be extended because the participants' common availability "
+                               f"ends {when} this event ends.{reschedule_tip}")
+                if channel_limit is not None and new_duration > channel_limit:
+                    new_duration = timedelta(minutes=int(channel_limit.total_seconds() // 60))
+                    note = (f"\nLimited to {get_time_str_from_minutes(new_duration.total_seconds() // 60)} "
+                            f"so it ends before {limiting_event} starts in the same voice channel.")
+                    when = "right after" if new_duration == event.scheduled_duration else "before"
+                    blocked = (f"The duration cannot be extended because {limiting_event} "
+                               f"starts {when} this event ends in the same voice channel")
+            if blocked and new_duration <= event.scheduled_duration:
+                embed.add_field(name="Duration (Unchanged)",
+                                value=blocked,
+                                inline=False)
+            elif old_duration == new_duration:
+                embed.add_field(name="Duration (Unchanged)",
+                                value="The new duration is the same as the old duration",
+                                inline=False)
+            elif event.created and duration == 0:
+                embed.add_field(name="Duration (Unchanged)",
+                                value="The duration of a created event cannot be made automatic",
+                                inline=False)
+            else:
+                event.duration = new_duration
+                if event.created:
+                    failed = False
+                    for scheduled_event, start_time in zip(event.scheduled_events, event.start_times):
+                        # Discord can't end a guild event in the past, the bot ends it instead
+                        if start_time + event.scheduled_duration <= now():
+                            continue
+                        try:
+                            await scheduled_event.edit(end_time=start_time + event.scheduled_duration)
+                        except Exception as e:
+                            logger.error(f"[{event}] Error changing guild event end time: {e}")
+                            failed = True
+                    if failed:
+                        note += "\nThe Discord event couldn't be updated, so it may still show the old end time."
+                if event.started and now() >= event.start_times[0] + event.scheduled_duration:
+                    if event.is_external:
+                        note += "\nIt has already run longer than that, so it will end now."
+                    else:
+                        note += "\nIt has already run longer than that, so it will end once everyone leaves the voice channel."
+                remove_times_from_availabilities_for_events()
+                embed.add_field(name="Duration",
+                                value=f"{get_time_str_from_minutes(old_duration.total_seconds() // 60)}"
+                                f" -> {get_time_str_from_minutes(event.duration.total_seconds() // 60)}{note}",
+                                inline=False)
     # Multi event
     if multi_event is not None:
         if event.started:
