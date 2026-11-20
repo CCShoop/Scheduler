@@ -741,3 +741,10 @@ class TestOtherEventLookups:
         event = env.make_event([b])
         assert not event.copy_availability(b, source)
         assert not source.is_participant(b.member)
+
+    def test_copy_note_doesnt_add_to_source(self, env):
+        b = env.make_participant("b")
+        source = env.make_event([env.make_participant("c")])
+        event = env.make_event([b])
+        assert not event.copy_note(b, source)
+        assert not source.is_participant(b.member)

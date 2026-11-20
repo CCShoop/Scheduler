@@ -759,6 +759,98 @@ class TestReuseAvailability:
         assert interaction.followups[0]["content"] == "You haven't entered availability for any other events."
 
 
+
+class TestReuseNote:
+    def setup_events(self, env, monkeypatch, notes: list[str]):
+        """A target event and an answered source event for each note, with "" for no note."""
+        target, participant, source_events, inputs = TestReuseAvailability().setup_events(env, monkeypatch, sources=len(notes))
+        for source_event, note in zip(source_events, notes):
+            source_event.find_participant(participant.member.id).note = note
+        return target, participant, source_events, inputs
+
+    def open_selects(self, env, target, participant):
+        interaction = press(availability_buttons(env, target).reuse_button.callback, participant.member)
+        return interaction, interaction.followups[0]
+
+    def choose_note(self, select, participant, chosen):
+        select._values = [chosen.id]
+        return press(select.callback, participant.member)
+
+    def test_no_note_select_without_notes(self, env, monkeypatch):
+        target, participant, _, _ = self.setup_events(env, monkeypatch, ["", ""])
+        _, followup = self.open_selects(env, target, participant)
+        assert followup["content"] == "Select another event from which to grab your availability."
+        (select,) = followup["view"].children
+        assert isinstance(select, env.sched.ExistingAvailabilitiesSelect)
+
+    def test_note_select_lists_only_events_with_notes(self, env, monkeypatch):
+        target, participant, (first, second, third), _ = self.setup_events(env, monkeypatch, ["late", "", "n" * 150])
+        _, followup = self.open_selects(env, target, participant)
+        assert followup["content"] == "Select another event from which to grab your availability or note."
+        availability_select, note_select = followup["view"].children
+        assert [option.value for option in availability_select.options] == [first.id, second.id, third.id]
+        assert isinstance(note_select, env.sched.ExistingNotesSelect)
+        assert [option.value for option in note_select.options] == [first.id, third.id]
+        assert note_select.options[0].description == "late"
+        assert len(note_select.options[1].description) == 100 and note_select.options[1].description.endswith("...")
+        assert note_select.placeholder == "Choose an event to copy your note from"
+
+    def test_chosen_note_is_copied_without_changing_availability(self, env, monkeypatch):
+        target, participant, (first, second), inputs = self.setup_events(env, monkeypatch, ["late", "early"])
+        participant.note = "old"
+        _, followup = self.open_selects(env, target, participant)
+        _, note_select = followup["view"].children
+        self.choose_note(note_select, participant, second)
+        assert participant.note == "early"
+        assert blocks_of(participant) == [] and not participant.answered
+        assert inputs == [target]
+
+    def test_single_source_copies_availability_and_offers_note(self, env, monkeypatch):
+        target, participant, (source,), inputs = self.setup_events(env, monkeypatch, ["late"])
+        participant.note = "old"
+        _, followup = self.open_selects(env, target, participant)
+        assert blocks_of(participant) == [(at(1, 8), at(1, 12))]
+        # The note isn't copied until it's chosen
+        assert participant.note == "old"
+        assert followup["content"] == "Select another event from which to grab your note."
+        (note_select,) = followup["view"].children
+        assert isinstance(note_select, env.sched.ExistingNotesSelect)
+        self.choose_note(note_select, participant, source)
+        assert participant.note == "late"
+
+    def test_single_source_without_note_offers_nothing(self, env, monkeypatch):
+        target, participant, (source,), _ = self.setup_events(env, monkeypatch, [""])
+        interaction = press(availability_buttons(env, target).reuse_button.callback, participant.member)
+        assert blocks_of(participant) == [(at(1, 8), at(1, 12))]
+        assert all("view" not in sent for sent in interaction.followups)
+
+    def test_source_note_removed_since_opening(self, env, monkeypatch):
+        target, participant, (first, second), inputs = self.setup_events(env, monkeypatch, ["late", "early"])
+        _, followup = self.open_selects(env, target, participant)
+        _, note_select = followup["view"].children
+        second.find_participant(participant.member.id).note = ""
+        interaction = self.choose_note(note_select, participant, second)
+        assert interaction.followups[0]["content"] == f"You no longer have a note in {second}."
+        assert participant.note == "" and inputs == []
+
+    def test_source_event_gone_since_opening(self, env, monkeypatch):
+        target, participant, (first, second), inputs = self.setup_events(env, monkeypatch, ["late", "early"])
+        _, followup = self.open_selects(env, target, participant)
+        _, note_select = followup["view"].children
+        env.sched.client.events.remove(second)
+        interaction = self.choose_note(note_select, participant, second)
+        assert interaction.followups[0]["content"] == f"{second} has ended or been cancelled, so its note can't be copied."
+        assert participant.note == "" and inputs == []
+
+    def test_target_event_created_since_opening(self, env, monkeypatch):
+        target, participant, (first, second), inputs = self.setup_events(env, monkeypatch, ["late", "early"])
+        _, followup = self.open_selects(env, target, participant)
+        _, note_select = followup["view"].children
+        target.created = True
+        interaction = self.choose_note(note_select, participant, second)
+        assert "already been created" in interaction.followups[0]["content"]
+        assert participant.note == "" and inputs == []
+
 def blocks_of(participant):
     return [(tb.start_time, tb.end_time) for tb in participant.availability]
 

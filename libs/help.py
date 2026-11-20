@@ -126,7 +126,8 @@ _topic("buttons", "Availability Buttons",
          "\nIf that time has already passed today, or is too soon to fit the event starting at least 30 minutes from now, the bot tells you instead."
          "\nIf someone else enters availability later than that, yours is extended to match."),
         ("Copy From Other Event",
-         "Copies your availability from another event you're in. If you're in more than one, choose which event to copy from."),
+         "Copies your availability from another event you're in. If you're in more than one, choose which event to copy from."
+         "\nIf you left a note in any of those events, you can also choose one to copy your note from."),
         ("Unsubscribe / Resubscribe",
          "Stops the bot from mentioning you, and you no longer need to answer for the event to be created."
          " You're still a participant. Press it again to resubscribe. Your status shows in the availability message."),

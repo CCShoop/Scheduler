@@ -2296,6 +2296,28 @@ class Event:
         participant.subscribed = True
         return True
 
+    def copy_note(self, participant: Participant, source_event: 'Event') -> bool:
+        """
+        Copies a participant's note from another event, as it is now.
+
+        Arguments
+        ---------
+        participant: :class:`Participant`
+            The participant of this event to copy the note to.
+        source_event: :class:`Event`
+            The event to copy the note from.
+
+        Returns
+        -------
+        copied: :class:`bool`
+            False if the participant has no note in the source event, so nothing was copied.
+        """
+        source_participant = source_event.find_participant(participant.member.id)
+        if source_participant is None or source_participant.note == "":
+            return False
+        participant.note = source_participant.note
+        return True
+
     def reset_timeout(self) -> None:
         """
         Resets the timeout to the default length from now.
@@ -4443,12 +4465,21 @@ class AvailabilityButtons(View):
                     content = "You aren't in any other events."
                 await interaction.followup.send(content=content, ephemeral=True)
                 return
+            note_source_events = [source_event for source_event in source_events
+                                  if source_event.find_participant(participant.member.id).note != ""]
             if len(source_events) == 1:
                 self.event.copy_availability(participant, source_events[0])
                 await self.event.handle_input_received(exclude=[participant])
+                # Notes are often specific to an event, so one is only copied when chosen
+                if note_source_events:
+                    await interaction.followup.send(content="Select another event from which to grab your note.",
+                                                    view=ExistingAvailabilitiesSelectView(self.event, [], note_source_events, participant.member.id),
+                                                    ephemeral=True)
             else:
-                await interaction.followup.send(content="Select another event from which to grab your availability.",
-                                                view=ExistingAvailabilitiesSelectView(self.event, source_events),
+                content = "Select another event from which to grab your availability"
+                content += " or note." if note_source_events else "."
+                await interaction.followup.send(content=content,
+                                                view=ExistingAvailabilitiesSelectView(self.event, source_events, note_source_events, participant.member.id),
                                                 ephemeral=True)
             embed = get_participants_other_unanswered_events_embed(self.event, participant)
             if embed:
@@ -5075,24 +5106,35 @@ def get_limited_text(text: str, length: int) -> str:
     return text if len(text) <= length else f"{text[:length - 3]}..."
 
 
-class ExistingAvailabilitiesSelect(Select):
+class CopyFromEventSelect(Select):
     """
-    Represents a dropdown to allow a user to copy their availability from another event.
+    Represents a dropdown to allow a user to copy something of theirs from another event.
     The events are looked up again when one is chosen, since they can change while the dropdown is open.
+    Subclasses set what is copied and how.
     """
 
-    def __init__(self, event: Event, source_events: list[Event]):
-        # The event the availability is copied to, while source_event_names hold the events it can come from
+    # What is copied, for messages
+    copied = ""
+
+    def __init__(self, event: Event, source_events: list[Event], descriptions: list[str]):
+        # The event that is copied to, while source_event_names hold the events it can come from
         self.event = event
         # Event IDs and names, so a source event that ended while the dropdown was open can still be named
         self.source_event_names = {source_event.id: str(source_event) for source_event in source_events[:25]}
         options = [SelectOption(label=source_event.get_limited_name(99),
                                 value=source_event.id,
-                                description=get_limited_text(f"#{source_event.text_channel.name} in {source_event.guild.name}", 100))
-                   for source_event in source_events[:25]]
-        super().__init__(placeholder="Choose an event to copy your availability from", options=options)
+                                description=get_limited_text(description, 100))
+                   for source_event, description in zip(source_events[:25], descriptions)]
+        super().__init__(placeholder=f"Choose an event to copy your {self.copied} from", options=options)
 
-    # Select an availability to attach
+    def copy(self, participant: Participant, source_event: Event) -> bool:
+        """Copies from the source event, returning False if there was nothing to copy."""
+        raise NotImplementedError
+
+    def get_nothing_to_copy_message(self, source_event: Event) -> str:
+        """The message for when the source event no longer has anything to copy."""
+        raise NotImplementedError
+
     async def callback(self, interaction: Interaction):
         if await respond_if_cancelled(self.event, interaction):
             return
@@ -5110,25 +5152,67 @@ class ExistingAvailabilitiesSelect(Select):
         source_event_name = self.source_event_names[source_event_id]
         source_event = next((other_event for other_event in client.events if other_event.id == source_event_id), None)
         if source_event is None:
-            await interaction.followup.send(content=f"{source_event_name} has ended or been cancelled, so its availability can't be copied.",
+            await interaction.followup.send(content=f"{source_event_name} has ended or been cancelled, so its {self.copied} can't be copied.",
                                             ephemeral=True)
             return
-        if not self.event.copy_availability(participant, source_event):
-            await interaction.followup.send(content=f"You no longer have availability in {source_event}.",
+        if not self.copy(participant, source_event):
+            await interaction.followup.send(content=self.get_nothing_to_copy_message(source_event),
                                             ephemeral=True)
             return
-        logger.info(f'{interaction.user.name} reused availability from {source_event}')
+        logger.info(f'{interaction.user.name} reused {self.copied} from {source_event}')
         await self.event.handle_input_received(exclude=[participant])
+
+
+class ExistingAvailabilitiesSelect(CopyFromEventSelect):
+    """
+    Represents a dropdown to allow a user to copy their availability from another event.
+    Options show each event's channel and server.
+    """
+
+    copied = "availability"
+
+    def __init__(self, event: Event, source_events: list[Event]):
+        super().__init__(event, source_events,
+                         [f"#{source_event.text_channel.name} in {source_event.guild.name}" for source_event in source_events])
+
+    def copy(self, participant: Participant, source_event: Event) -> bool:
+        return self.event.copy_availability(participant, source_event)
+
+    def get_nothing_to_copy_message(self, source_event: Event) -> str:
+        return f"You no longer have availability in {source_event}."
+
+
+class ExistingNotesSelect(CopyFromEventSelect):
+    """
+    Represents a dropdown to allow a user to copy their note from another event.
+    Options show the note in each event.
+    """
+
+    copied = "note"
+
+    def __init__(self, event: Event, source_events: list[Event], user_id: int):
+        super().__init__(event, source_events,
+                         [source_event.find_participant(user_id).note for source_event in source_events])
+
+    def copy(self, participant: Participant, source_event: Event) -> bool:
+        return self.event.copy_note(participant, source_event)
+
+    def get_nothing_to_copy_message(self, source_event: Event) -> str:
+        return f"You no longer have a note in {source_event}."
 
 
 class ExistingAvailabilitiesSelectView(View):
     """
-    Represents a view to house the existing availability dropdown.
+    Represents a view to house the existing availability and note dropdowns.
+    Each dropdown is only added if it has events to choose from.
     """
 
-    def __init__(self, event: Event, source_events: list[Event]):
+    def __init__(self, event: Event, source_events: list[Event], note_source_events: list[Event], user_id: int):
         super().__init__()
-        self.add_item(ExistingAvailabilitiesSelect(event, source_events))
+        if source_events:
+            self.add_item(ExistingAvailabilitiesSelect(event, source_events))
+        if note_source_events:
+            self.add_item(ExistingNotesSelect(event, note_source_events, user_id))
 
 
 class ParticipantsSelectView(View):
