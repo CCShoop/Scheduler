@@ -851,6 +851,42 @@ class TestReuseNote:
         assert "already been created" in interaction.followups[0]["content"]
         assert participant.note == "" and inputs == []
 
+    def make_unanswered_event_with_note(self, env, participant, note):
+        source_participant = Participant(member=participant.member)
+        source_participant.note = note
+        return env.make_event([source_participant])
+
+    def test_note_without_availability_can_be_copied(self, env, monkeypatch):
+        target, participant, _, inputs = self.setup_events(env, monkeypatch, [])
+        source = self.make_unanswered_event_with_note(env, participant, "late")
+        _, followup = self.open_selects(env, target, participant)
+        assert followup["content"] == "Select another event from which to grab your note."
+        (note_select,) = followup["view"].children
+        assert isinstance(note_select, env.sched.ExistingNotesSelect)
+        assert [option.value for option in note_select.options] == [source.id]
+        self.choose_note(note_select, participant, source)
+        assert participant.note == "late"
+        assert blocks_of(participant) == [] and not participant.answered
+        assert inputs == [target]
+
+    def test_note_without_availability_offered_with_availability(self, env, monkeypatch):
+        target, participant, (first, second), _ = self.setup_events(env, monkeypatch, ["", ""])
+        note_only = self.make_unanswered_event_with_note(env, participant, "late")
+        _, followup = self.open_selects(env, target, participant)
+        assert followup["content"] == "Select another event from which to grab your availability or note."
+        availability_select, note_select = followup["view"].children
+        assert [option.value for option in availability_select.options] == [first.id, second.id]
+        assert [option.value for option in note_select.options] == [note_only.id]
+
+    def test_single_availability_source_offers_note_from_another_event(self, env, monkeypatch):
+        target, participant, (source,), _ = self.setup_events(env, monkeypatch, [""])
+        note_only = self.make_unanswered_event_with_note(env, participant, "late")
+        _, followup = self.open_selects(env, target, participant)
+        assert blocks_of(participant) == [(at(1, 8), at(1, 12))]
+        (note_select,) = followup["view"].children
+        assert [option.value for option in note_select.options] == [note_only.id]
+
+
 def blocks_of(participant):
     return [(tb.start_time, tb.end_time) for tb in participant.availability]
 

@@ -2256,8 +2256,28 @@ class Event:
         events: :class:`list[Event]`
             The other events the participant has answered.
         """
-        events = [other_event for other_event in client.events
-                  if other_event != self and other_event.has_answered(participant.member.id)]
+        return self.get_other_events_preferring_guild(lambda other_event: other_event.has_answered(participant.member.id))
+
+    def get_events_to_copy_note_from(self, participant: Participant) -> list:
+        """
+        Gets the other events that a participant has a note in, preferring those in the same guild.
+        A note can be left without entering availability, so these don't have to be answered.
+
+        Arguments
+        ---------
+        participant: :class:`Participant`
+            The participant to find events for.
+
+        Returns
+        -------
+        events: :class:`list[Event]`
+            The other events the participant has a note in.
+        """
+        return self.get_other_events_preferring_guild(lambda other_event: other_event.has_note(participant.member.id))
+
+    def get_other_events_preferring_guild(self, matches: Callable[['Event'], bool]) -> list:
+        """Gets the other events that match, only keeping those in the same guild if there are any."""
+        events = [other_event for other_event in client.events if other_event != self and matches(other_event)]
         same_guild_events = [other_event for other_event in events if other_event.guild == self.guild]
         return same_guild_events or events
 
@@ -2269,6 +2289,11 @@ class Event:
         """Whether the user is a participant who has answered the event."""
         other_participant = self.find_participant(user_id)
         return other_participant is not None and other_participant.answered
+
+    def has_note(self, user_id: int) -> bool:
+        """Whether the user is a participant with a note in the event."""
+        other_participant = self.find_participant(user_id)
+        return other_participant is not None and other_participant.note != ""
 
     def copy_availability(self, participant: Participant, source_event: 'Event') -> bool:
         """
@@ -4458,16 +4483,19 @@ class AvailabilityButtons(View):
                                                 ephemeral=True)
                 return
             source_events = self.event.get_events_to_copy_availability_from(participant)
-            if not source_events:
+            note_source_events = self.event.get_events_to_copy_note_from(participant)
+            if not source_events and not note_source_events:
                 if any(other_event != self.event and other_event.is_participant(interaction.user) for other_event in client.events):
                     content = "You haven't entered availability for any other events."
                 else:
                     content = "You aren't in any other events."
                 await interaction.followup.send(content=content, ephemeral=True)
                 return
-            note_source_events = [source_event for source_event in source_events
-                                  if source_event.find_participant(participant.member.id).note != ""]
-            if len(source_events) == 1:
+            if not source_events:
+                await interaction.followup.send(content="Select another event from which to grab your note.",
+                                                view=ExistingAvailabilitiesSelectView(self.event, [], note_source_events, participant.member.id),
+                                                ephemeral=True)
+            elif len(source_events) == 1:
                 self.event.copy_availability(participant, source_events[0])
                 await self.event.handle_input_received(exclude=[participant])
                 # Notes are often specific to an event, so one is only copied when chosen
