@@ -70,8 +70,8 @@ AVAILABILITY_COOLDOWN_SECONDS = 30
 # Time between attempts to look up participants that could not be found when loading an event
 PARTICIPANT_RESOLVE_RETRY: timedelta = timedelta(minutes=1)
 
-# Time in minutes to delay "immediate" start
-START_TIME_DELAY = 30
+# Time in minutes to delay "immediate" start. Discord requires a scheduled event to start in the future
+START_TIME_DELAY = 1
 
 # Time in minutes before an event start time to send reminder
 REMINDER_TIME_MINUTES = 15
@@ -1384,10 +1384,10 @@ class Event:
             self.ready_to_create = True
             # Make the duration as long as possible
             if self.duration_minutes == 0:
-                shortest_availability = subbed_participants[0].availability[0].end_time - (now() + timedelta(minutes=DEFAULT_EVENT_DURATION))
+                shortest_availability = subbed_participants[0].availability[0].end_time - current_time
                 if len(subbed_participants) > 1:
                     for participant in subbed_participants[1:]:
-                        current_block = participant.availability[0].end_time - (now() + timedelta(minutes=DEFAULT_EVENT_DURATION))
+                        current_block = participant.availability[0].end_time - current_time
                         if current_block < shortest_availability:
                             shortest_availability = current_block
                 self.duration = shortest_availability
@@ -1741,7 +1741,7 @@ class Event:
         """Explains that availability ending as described is too soon to fit the event."""
         duration = get_time_str_from_minutes(int(self.scheduled_duration.total_seconds() // 60))
         return (f"{ends}. That's too soon for {self}, which lasts {duration} "
-                f"and starts at least {START_TIME_DELAY} minutes from now.")
+                f"and starts at least {get_time_str_from_minutes(START_TIME_DELAY)} from now.")
 
     def in_voice_channel_during_event(self, participant: Participant) -> bool:
         """Indicates whether the participant is in the voice channel while the event is running, which resubscribes them."""

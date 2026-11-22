@@ -37,7 +37,7 @@ _topic("scheduling", "Scheduling",
        [("/schedule",
          "Posts an availability message in the channel and mentions every participant so they can enter when they're free."
          "\nWithin about a minute of the last person answering, the bot creates the event at the earliest time everyone is available,"
-         " starting no sooner than 30 minutes from then so people have time to show up. If no time works, scheduling is cancelled."),
+         " starting right away if everyone is free then. If no time works, scheduling is cancelled."),
         ("/schedule options",
          "**event_name:** The event's name, up to 100 characters. Two events can't have the same name at the same time."
          "\n**location:** A voice or stage channel, or a typed location such as an address. See the Locations topic."
@@ -123,7 +123,7 @@ _topic("buttons", "Availability Buttons",
          "Marks you as available from now until midnight Eastern Time, or the time you set with /cutoff."
          "\nDiscord shows times in your own timezone, so outside Eastern Time this can look like it ends early, e.g. at 11 PM in Central Time."
          " Use /cutoff to move it to your midnight."
-         "\nIf that time has already passed today, or is too soon to fit the event starting at least 30 minutes from now, the bot tells you instead."
+         "\nIf that time has already passed today, or is too soon to fit the event starting now, the bot tells you instead."
          "\nIf someone else enters availability later than that, yours is extended to match."),
         ("Copy From Other Event",
          "Copies your availability from another event you're in. If you're in more than one, choose which event to copy from."
@@ -163,7 +163,7 @@ _topic("availability", "Entering Availability",
         ("Note",
          "An optional note shown next to your availability. Leaving it blank when you submit again clears your note."),
         ("Skipped times",
-         "Times that end too soon to fit the event, which starts at least 30 minutes from now, aren't saved."
+         "Times that end too soon to fit the event if it started now aren't saved."
          " The bot tells you which ones it skipped, and whether you still need to respond."),
         ("Other events",
          "If you're in several events, time taken up by a created event is removed from your availability in the others."
@@ -173,7 +173,7 @@ _topic("managing", "Managing Events",
        "Once an event is created, the bot posts a message with these buttons, and mentions participants 15 minutes before it starts.",
        Color.magenta(),
        [("Start Event / End Event",
-         "Starts the event, then changes to an End button. It can be pressed from 30 minutes before the start time."
+         "Starts the event, then changes to an End button. It can be pressed from 15 minutes before the start time."
          "\nVoice channel events also start automatically when every participant joins, and end when everyone leaves,"
          " or when at least half of 4 or more attendees (or all but 5 of more than 10) have been gone for over 5 minutes."
          "\nTyped location events start at their start time and end when their duration has passed."

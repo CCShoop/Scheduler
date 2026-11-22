@@ -329,7 +329,7 @@ class TestRespondTooSoon:
         now = env.sched.now()
         a = env.make_participant("a")
         event = env.make_event([a, env.make_participant("b")], duration=timedelta(minutes=30))
-        too_soon = TimeBlock(now, now + timedelta(minutes=45))
+        too_soon = TimeBlock(now, now + timedelta(minutes=env.sched.START_TIME_DELAY + 29))
         later = TimeBlock(at(1, 20), at(1, 22))
         interaction = self.submit(env, monkeypatch, event, a, [too_soon, later])
         content = interaction.followups[0]["content"]
@@ -343,7 +343,7 @@ class TestRespondTooSoon:
         now = env.sched.now()
         a = env.make_participant("a")
         event = env.make_event([a, env.make_participant("b")], duration=timedelta(minutes=30))
-        interaction = self.submit(env, monkeypatch, event, a, [TimeBlock(now, now + timedelta(minutes=45))])
+        interaction = self.submit(env, monkeypatch, event, a, [TimeBlock(now, now + timedelta(minutes=env.sched.START_TIME_DELAY + 29))])
         assert "still need to respond" in interaction.followups[0]["content"]
         assert a.availability == []
         assert not a.answered

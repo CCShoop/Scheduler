@@ -109,7 +109,7 @@ Run all commands in a server text channel. The bot posts event messages in the c
 
 ### `/schedule`: find a time that works for everyone
 
-This is the main command. The bot posts an availability message in the channel and mentions every participant. Each participant enters when they're free. Within about a minute of the last person answering, the bot creates the event at the earliest time when everyone is available, starting no sooner than 30 minutes from then so people have time to show up. If no time works, it cancels scheduling.
+This is the main command. The bot posts an availability message in the channel and mentions every participant. Each participant enters when they're free. Within about a minute of the last person answering, the bot creates the event at the earliest time when everyone is available, starting right away if everyone is free then. If no time works, it cancels scheduling.
 
 | Option            | Required | Description |
 |-------------------|----------|-------------|
@@ -194,7 +194,7 @@ The availability message has these buttons:
 | Button | What it does |
 |--------|--------------|
 | **Enter Availability** | Opens a form for entering when you're free. |
-| **Full Availability (Today)** | Marks you as available from now until midnight Eastern Time, or the time you set with `/cutoff`. Discord shows times in your own timezone, so outside Eastern Time this can look like it ends early, e.g. at 11 PM in Central Time. Use `/cutoff` to move it to your midnight. If that time has already passed today, or is too soon to fit the event starting at least 30 minutes from now, the bot tells you instead. If someone else enters availability later than that, yours is extended to match. |
+| **Full Availability (Today)** | Marks you as available from now until midnight Eastern Time, or the time you set with `/cutoff`. Discord shows times in your own timezone, so outside Eastern Time this can look like it ends early, e.g. at 11 PM in Central Time. Use `/cutoff` to move it to your midnight. If that time has already passed today, or is too soon to fit the event starting now, the bot tells you instead. If someone else enters availability later than that, yours is extended to match. |
 | **Copy From Other Event** | Copies your availability from another event you're in. If you're in more than one, choose which event to copy from. |
 | **Unsubscribe / Resubscribe** | Stops the bot from mentioning you. You're still a participant. Press it again to resubscribe. Your status shows in the availability message. |
 | **Cancel Scheduling** | Cancels the event, with an optional reason. |
@@ -220,7 +220,7 @@ Time ranges accept several formats:
 | `clear x3` | Remove your availability for the chosen date and the next two days |
 | `none` | Remove all of your availability |
 
-Times that end too soon to fit the event, which starts at least 30 minutes from now, aren't saved. The bot tells you which ones it skipped, and whether you still need to respond.
+Times that end too soon to fit the event if it started now aren't saved. The bot tells you which ones it skipped, and whether you still need to respond.
 
 If you're in several events, time taken up by a created event is automatically removed from your availability in the other events. It's restored if that event is cancelled or ends.
 
@@ -232,7 +232,7 @@ After the event is created, the bot posts a message with these buttons:
 
 | Button | What it does |
 |--------|--------------|
-| **Start Event / End Event** | Starts the event manually, then changes to an End button. It can be pressed from 30 minutes before the start time. Events also start automatically when every participant joins the voice channel, and end when everyone leaves, or when at least half of 4 or more attendees (or all but 5 of more than 10) have been gone for over 5 minutes. Events at a [typed location](#locations) start at their start time and end when their duration has passed. If the previous event in the same voice or stage channel is still going and this one is scheduled right after it, a participant of both can press Start to end the previous event and start this one, after confirming. |
+| **Start Event / End Event** | Starts the event manually, then changes to an End button. It can be pressed from 15 minutes before the start time. Events also start automatically when every participant joins the voice channel, and end when everyone leaves, or when at least half of 4 or more attendees (or all but 5 of more than 10) have been gone for over 5 minutes. Events at a [typed location](#locations) start at their start time and end when their duration has passed. If the previous event in the same voice or stage channel is still going and this one is scheduled right after it, a participant of both can press Start to end the previous event and start this one, after confirming. |
 | **End and Forget** | Ends the event, and the bot stops tracking it. |
 | **Unsubscribe / Resubscribe** | Stops the bot from mentioning you about this event. Press it again to resubscribe. Joining the voice channel while the event is running also resubscribes you, so you can't unsubscribe while you're in it. |
 | **Reschedule Event** | Restarts availability collection with the same participants. |
