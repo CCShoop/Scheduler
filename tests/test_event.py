@@ -53,24 +53,41 @@ class TestCompareAvailabilities:
 
     def test_window_too_short_after_the_start_delay_is_skipped(self, env):
         now = env.sched.now()
-        # 50 minutes fits a 30 minute event now, but not one starting START_TIME_DELAY from now
-        a = env.make_participant("a", [TimeBlock(now, now + timedelta(minutes=50)),
+        # Fits a 30 minute event now, but not one starting START_TIME_DELAY from now
+        a = env.make_participant("a", [TimeBlock(now, now + timedelta(minutes=env.sched.START_TIME_DELAY + 29)),
                                        TimeBlock(at(1, 20), at(1, 22))])
         event = env.make_event([a], duration=timedelta(minutes=30))
         event.compare_availabilities()
         assert event.start_times == [at(1, 20)]
 
-    def test_window_starting_soon_starts_after_the_start_delay(self, env):
+    def test_window_starting_soon_starts_when_it_opens(self, env):
         now = env.sched.now()
         a = env.make_participant("a", [TimeBlock(now + timedelta(minutes=10), now + timedelta(hours=3))])
         b = env.make_participant("b", [TimeBlock(now - timedelta(hours=1), now + timedelta(hours=3))])
         event = env.make_event([a, b], duration=timedelta(minutes=30))
         event.compare_availabilities()
+        assert event.start_times == [now + timedelta(minutes=10)]
+
+    def test_window_starting_within_the_start_delay_starts_after_it(self, env):
+        now = env.sched.now()
+        a = env.make_participant("a", [TimeBlock(now + timedelta(seconds=10), now + timedelta(hours=3))])
+        event = env.make_event([a], duration=timedelta(minutes=30))
+        event.compare_availabilities()
         assert event.start_times == [now + timedelta(minutes=env.sched.START_TIME_DELAY)]
+
+    def test_automatic_duration_lasts_until_availability_ends(self, env):
+        now = env.sched.now()
+        a = env.make_participant("a", [TimeBlock(now - timedelta(hours=1), now + timedelta(hours=2))])
+        b = env.make_participant("b", [TimeBlock(now - timedelta(hours=1), now + timedelta(hours=3))])
+        event = env.make_event([a, b], duration=timedelta(0))
+        event.compare_availabilities()
+        start = now + timedelta(minutes=env.sched.START_TIME_DELAY)
+        assert event.start_times == [start]
+        assert event.duration == now + timedelta(hours=2) - start
 
     def test_created_event_fits_availability_without_being_moved(self, env, caplog):
         now = env.sched.now()
-        a = env.make_participant("a", [TimeBlock(now, now + timedelta(minutes=50)),
+        a = env.make_participant("a", [TimeBlock(now, now + timedelta(minutes=env.sched.START_TIME_DELAY + 29)),
                                        TimeBlock(at(1, 20), at(1, 22))])
         event = env.make_event([a], duration=timedelta(minutes=30))
         run(event.create_if_possible())

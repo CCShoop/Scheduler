@@ -246,7 +246,7 @@ class TestEnd:
     def test_reenables_start_buttons_in_the_same_voice_channel(self, env):
         event, _ = make_created_event(env, started=True)
         waiting = env.make_event([env.make_participant("b")], created=True,
-                                 start_times=[env.sched.now() + timedelta(minutes=30)])
+                                 start_times=[env.sched.now() + env.sched.START_BUTTON_LEAD])
         waiting.event_buttons = fake_event_buttons()
         waiting.event_buttons.start_end_button.disabled = True
         run(event.end())
