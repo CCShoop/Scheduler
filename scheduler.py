@@ -2733,8 +2733,8 @@ class Event:
             return False
         if now() < self.start_times[0] + self.scheduled_duration + MISSED_OCCURRENCE_GRACE:
             return False
-        reason = "It was never started."
-        logger.info(f"[{self}] Cancelling occurrence starting {self.start_times[0]}, it was never started")
+        reason = "The event was never started."
+        logger.info(f"[{self}] Cancelling occurrence starting {self.start_times[0]}, the event was never started")
         if self.on_last_occurrence:
             await self.cancel(reason=reason, canceller="Event Scheduler", schedule_again=True)
         else:
